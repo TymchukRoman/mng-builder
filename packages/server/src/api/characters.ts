@@ -52,14 +52,15 @@ export function registerCharacterRoutes(app: FastifyInstance, { store, bus }: Co
     return character;
   });
 
+  /** Sets refs[slot] in the transaction that re-checks the character still exists. */
   app.post<{ Params: { id: string }; Querystring: { slot?: string } }>('/api/characters/:id/upload', async (req): Promise<Image> => {
     const character = store.characters.require(req.params.id);
     const { slot } = SlotSchema.parse(req.query);
     const upload = await readUpload(req);
-    const image = saveUploadedImage(store, {
-      mangaId: character.mangaId, owner: { type: 'character', id: character.id }, role: slot, bytes: upload.bytes, mimetype: upload.mimetype,
+    const owner = { type: 'character' as const, id: character.id };
+    const image = saveUploadedImage(store, { mangaId: character.mangaId, owner, role: slot, bytes: upload.bytes }, (saved) => {
+      setCharacterRef(store, character.id, slot, saved.id);
     });
-    setCharacterRef(store, character.id, slot, image.id);
     emitEntity(bus, 'image', image.id, 'created', image.mangaId);
     emitEntity(bus, 'character', character.id, 'updated', character.mangaId);
     return image;

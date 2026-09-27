@@ -1,10 +1,12 @@
+import { readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   EMPTY_SCRIPT, panelIds, readingOrder,
   type Chapter, type Character, type Image, type Manga, type Page, type PageDetail, type Panel, type ServerEvent, type TextFrame,
 } from '@manga/shared';
 import { call, makeTestApp, type TestApp } from './helpers/app.js';
-import { multipart } from './helpers/multipart.js';
+import { multipart, uploadWhile } from './helpers/multipart.js';
 import { makePng } from './helpers/png.js';
 
 type ErrorReply = { error: { code: string; message: string; details?: { removedPanelIds?: string[] } } };
@@ -161,6 +163,18 @@ describe('panels', () => {
     const other = (await uploadTo(b, makePng(4, 4))).json() as Image;
     expect((await call(t.app, 'PATCH', `/api/panels/${a}`, { activeImageId: other.id })).status).toBe(400);
     expect(events).toContainEqual({ type: 'entity', entity: 'panel', id: a, op: 'updated', mangaId: manga.id });
+  });
+
+  it('re-checks the panel after reading the upload: deleted meanwhile gives 404 and leaves no Image row or file (F7)', async () => {
+    const { chapter } = await seed();
+    const d = await addPage(chapter.id, { layoutPreset: 'splash' });
+    const panelId = d.panels[0]?.id ?? '';
+    const res = await uploadWhile(t.app, `/api/panels/${panelId}/upload`, makePng(4, 4), async () => {
+      expect((await call(t.app, 'DELETE', `/api/pages/${d.page.id}`)).status).toBe(200);
+    });
+    expect([res.statusCode, res.json()]).toEqual([404, { error: { code: 'not_found', message: `panel ${panelId} not found` } }]);
+    expect(t.deps.store.images.listByManga(d.page.mangaId)).toEqual([]);
+    expect(readdirSync(join(t.lib, 'mangas', d.page.mangaId, 'images'))).toEqual([]);
   });
 
   it('uploads panel images that become the active variant, and lists the variants', async () => {

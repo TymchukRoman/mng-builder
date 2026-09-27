@@ -37,6 +37,9 @@ describe('ApiClient', () => {
     writeFileSync(file, makePng(12, 16));
     const image = await api.upload<Image>(`/api/characters/${character.id}/upload?slot=portrait`, file);
     expect([image.width, image.height, image.role]).toEqual([12, 16, 'portrait']);
+    const unknownExtension = join(h.lib, 'side.dat'); // sent as application/octet-stream; the server reads the bytes (F6)
+    writeFileSync(unknownExtension, makePng(5, 7));
+    expect((await api.upload<Image>(`/api/characters/${character.id}/upload?slot=side`, unknownExtension)).width).toBe(5);
     await expect(api.upload(`/api/characters/${character.id}/upload?slot=portrait`, join(h.lib, 'missing.png'))).rejects.toMatchObject({ code: 'file' });
   });
 

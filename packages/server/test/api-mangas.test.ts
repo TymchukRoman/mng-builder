@@ -1,9 +1,9 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_PAGE_FORMAT, STYLE_PRESETS, type Character, type Image, type Manga, type PageDetail, type ServerEvent } from '@manga/shared';
 import { call, makeTestApp, type TestApp } from './helpers/app.js';
-import { multipart } from './helpers/multipart.js';
+import { multipart, uploadWhile } from './helpers/multipart.js';
 import { makeJpegHeader, makePng } from './helpers/png.js';
 
 type ErrorReply = { error: { code: string; message: string; details?: unknown } };
@@ -126,6 +126,25 @@ describe('characters', () => {
     expect(file.headers['content-type']).toBe('image/png');
     expect(file.rawPayload.equals(png)).toBe(true);
     expect(events).toContainEqual({ type: 'entity', entity: 'image', id: image.id, op: 'created', mangaId: m.id });
+  });
+
+  it('judges an upload by its bytes, not its declared type: a PNG sent as application/octet-stream is accepted (F6)', async () => {
+    const m = await newManga();
+    const c = await newCharacter(m.id);
+    const res = await upload(`/api/characters/${c.id}/upload?slot=back`, 'back.bin', 'application/octet-stream', makePng(6, 9));
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ width: 6, height: 9, role: 'back' });
+  });
+
+  it('re-checks the character after reading the upload: deleted meanwhile gives 404 and leaves no Image row or file (F7)', async () => {
+    const m = await newManga();
+    const c = await newCharacter(m.id);
+    const res = await uploadWhile(t.app, `/api/characters/${c.id}/upload?slot=portrait`, makePng(4, 4), async () => {
+      expect((await call(t.app, 'DELETE', `/api/characters/${c.id}`)).status).toBe(200);
+    });
+    expect([res.statusCode, res.json()]).toEqual([404, { error: { code: 'not_found', message: `character ${c.id} not found` } }]);
+    expect(t.deps.store.images.listByManga(m.id)).toEqual([]);
+    expect(readdirSync(join(t.lib, 'mangas', m.id, 'images'))).toEqual([]);
   });
 
   it('keeps an uploaded JPEG as-is and serves it as image/jpeg', async () => {

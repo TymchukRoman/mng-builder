@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -28,7 +28,7 @@ function character(name = 'Aiko', mangaId = manga.id) {
 }
 
 function characterImage(characterId: string, role: 'portrait' | null = 'portrait') {
-  return saveUploadedImage(t.store, { mangaId: manga.id, owner: { type: 'character', id: characterId }, role, bytes: makePng(8, 8), mimetype: 'image/png' });
+  return saveUploadedImage(t.store, { mangaId: manga.id, owner: { type: 'character', id: characterId }, role, bytes: makePng(8, 8) });
 }
 
 describe('mangas', () => {
@@ -157,17 +157,33 @@ describe('uploads', () => {
     const a = character();
     const png = characterImage(a.id);
     expect(png).toMatchObject({ width: 8, height: 8, source: 'uploaded', role: 'portrait', path: `mangas/${manga.id}/images/${png.id}.png` });
-    const jpg = saveUploadedImage(t.store, { mangaId: manga.id, owner: { type: 'character', id: a.id }, role: null, bytes: makeJpegHeader(300, 200), mimetype: 'image/jpeg' });
+    const jpg = saveUploadedImage(t.store, { mangaId: manga.id, owner: { type: 'character', id: a.id }, role: null, bytes: makeJpegHeader(300, 200) });
     expect([jpg.width, jpg.height]).toEqual([300, 200]);
   });
 
-  it('rejects other types and unreadable files without writing anything', () => {
+  it('rejects other types and unreadable files, judged by their bytes, without writing anything (F6)', () => {
     const a = character();
     const owner = { type: 'character' as const, id: a.id };
-    expect(() => saveUploadedImage(t.store, { mangaId: manga.id, owner, role: null, bytes: makePng(2, 2), mimetype: 'image/gif' })).toThrow(ValidationError);
-    expect(() => saveUploadedImage(t.store, { mangaId: manga.id, owner, role: null, bytes: Buffer.from('not a png'), mimetype: 'image/png' })).toThrow(ValidationError);
+    expect(() => saveUploadedImage(t.store, { mangaId: manga.id, owner, role: null, bytes: Buffer.from('GIF89a\x01\x00\x01\x00', 'latin1') })).toThrow(ValidationError);
+    expect(() => saveUploadedImage(t.store, { mangaId: manga.id, owner, role: null, bytes: Buffer.from('not a png') })).toThrow(ValidationError);
     expect(existsSync(join(t.path, 'mangas'))).toBe(false);
     expect(t.store.images.listByManga(manga.id)).toEqual([]);
+  });
+
+  it('re-checks the owner and runs attach in the transaction that inserts the row; a failure leaves no row or file (F7)', () => {
+    const a = character();
+    const gone = { type: 'character' as const, id: 'cr_missing000' };
+    expect(() => saveUploadedImage(t.store, { mangaId: manga.id, owner: gone, role: null, bytes: makePng(2, 2) })).toThrow(NotFoundError);
+    const owner = { type: 'character' as const, id: a.id };
+    expect(() => saveUploadedImage(t.store, { mangaId: manga.id, owner, role: 'portrait', bytes: makePng(2, 2) }, () => {
+      throw new NotFoundError('character', a.id);
+    })).toThrow(NotFoundError);
+    expect(t.store.images.listByManga(manga.id)).toEqual([]);
+    expect(readdirSync(join(t.path, 'mangas', manga.id, 'images'))).toEqual([]);
+    const kept = saveUploadedImage(t.store, { mangaId: manga.id, owner, role: 'portrait', bytes: makePng(2, 2) }, (image) => {
+      setCharacterRef(t.store, a.id, 'portrait', image.id);
+    });
+    expect(t.store.characters.require(a.id).refs).toEqual({ portrait: kept.id });
   });
 });
 
