@@ -1,9 +1,12 @@
 import { Command, CommanderError } from 'commander';
 import { registerChapterCommands } from './commands/chapters.js';
 import { registerCharacterCommands } from './commands/characters.js';
+import { registerJobCommands } from './commands/jobs.js';
 import { registerMangaCommands } from './commands/mangas.js';
 import { registerPageCommands } from './commands/pages.js';
+import { registerPanelCommands } from './commands/panels.js';
 import { registerServerCommands } from './commands/server.js';
+import { registerTextCommands } from './commands/text.js';
 import { createContext, type CliContext } from './context.js';
 import { CliError } from './errors.js';
 import { processIo, type CliIo } from './io.js';
@@ -31,6 +34,9 @@ export function buildProgram(io: CliIo = processIo, factory: ContextFactory = de
   registerCharacterCommands(program, ctx);
   registerChapterCommands(program, ctx);
   registerPageCommands(program, ctx);
+  registerPanelCommands(program, ctx);
+  registerTextCommands(program, ctx);
+  registerJobCommands(program, ctx);
   return program;
 }
 

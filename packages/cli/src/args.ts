@@ -6,6 +6,12 @@ export function parseNonNegativeInt(value: string): number {
   return n;
 }
 
+export function parsePositiveInt(value: string): number {
+  const n = Number(value);
+  if (value.trim() === '' || !Number.isInteger(n) || n < 1) throw new InvalidArgumentError('expected a whole number >= 1');
+  return n;
+}
+
 export function parseNumber(value: string): number {
   const n = Number(value);
   if (value.trim() === '' || !Number.isFinite(n)) throw new InvalidArgumentError('expected a number');
