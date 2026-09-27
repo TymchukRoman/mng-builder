@@ -1,4 +1,4 @@
-import type { ServerEvent } from '@manga/shared';
+import type { EntityName, ServerEvent } from '@manga/shared';
 
 export type BusListener = (event: ServerEvent) => void;
 
@@ -22,4 +22,9 @@ export class EventBus {
       this.listeners.delete(listener);
     };
   }
+}
+
+/** The one helper for entity events; api/util.ts re-exports it. M2/M4 import it from events/bus.js — never re-implement it. */
+export function emitEntity(bus: EventBus, entity: EntityName, id: string, op: 'created' | 'updated' | 'deleted', mangaId: string | null): void {
+  bus.emit({ type: 'entity', entity, id, op, mangaId });
 }
