@@ -1,5 +1,8 @@
 import { Command, CommanderError } from 'commander';
+import { registerChapterCommands } from './commands/chapters.js';
+import { registerCharacterCommands } from './commands/characters.js';
 import { registerMangaCommands } from './commands/mangas.js';
+import { registerPageCommands } from './commands/pages.js';
 import { registerServerCommands } from './commands/server.js';
 import { createContext, type CliContext } from './context.js';
 import { CliError } from './errors.js';
@@ -25,6 +28,9 @@ export function buildProgram(io: CliIo = processIo, factory: ContextFactory = de
   const ctx = (): Promise<CliContext> => (context ??= factory(program.opts<GlobalOptions>(), io));
   registerServerCommands(program, ctx, io);
   registerMangaCommands(program, ctx);
+  registerCharacterCommands(program, ctx);
+  registerChapterCommands(program, ctx);
+  registerPageCommands(program, ctx);
   return program;
 }
 
