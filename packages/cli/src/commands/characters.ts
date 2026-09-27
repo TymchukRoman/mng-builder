@@ -9,7 +9,7 @@ interface EditOptions {
 }
 
 export function registerCharacterCommands(program: Command, ctx: () => Promise<CliContext>): void {
-  const character = program.command('character').description('characters: add, edit, upload, pick (generate and sheet come with AI imaging)');
+  const character = program.command('character').description('characters: add, edit, upload, pick, generate, sheet, suggest');
 
   character
     .command('add')

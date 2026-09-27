@@ -42,7 +42,7 @@ export async function parseLine(spec: string, speaker: (ref: string) => Promise<
 interface ScriptOptions { action?: string; shot?: string; angle?: string; background?: string; chars?: string; line: string[] }
 
 export function registerPanelCommands(program: Command, ctx: () => Promise<CliContext>): void {
-  const panel = program.command('panel').description('panels: script, variants, pick, upload (prompt, generate and review come with AI imaging)');
+  const panel = program.command('panel').description('panels: script, variants, pick, upload, prompt, generate, review');
 
   panel
     .command('script')

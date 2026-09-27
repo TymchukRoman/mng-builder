@@ -1,4 +1,5 @@
 import { Command, CommanderError } from 'commander';
+import { registerAiCommands } from './commands/ai.js';
 import { registerChapterCommands } from './commands/chapters.js';
 import { registerCharacterCommands } from './commands/characters.js';
 import { registerJobCommands } from './commands/jobs.js';
@@ -37,6 +38,7 @@ export function buildProgram(io: CliIo = processIo, factory: ContextFactory = de
   registerPanelCommands(program, ctx);
   registerTextCommands(program, ctx);
   registerJobCommands(program, ctx);
+  registerAiCommands(program, ctx);
   return program;
 }
 

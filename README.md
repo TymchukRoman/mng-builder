@@ -86,6 +86,9 @@ References take an id or a unique name or title, case-insensitive. A chapter can
 | `manga character upload <char> <file> --slot portrait\|fullbody\|side\|back` | Use your own reference image |
 | `manga character pick <char> <image> [--slot portrait]` | Point a reference slot at one of the character's images |
 | `manga character edit <char> [--manga <m>] [--name] [--role] [--personality] [--speech] [--appearance] [--seed] [--recipe <id>\|-]` | Change a character; only the options you pass change |
+| `manga character generate <char> [--n 4] [--manga <m>]` | Generate portrait variants (AI); pick one with `character pick` |
+| `manga character sheet <char> [--manga <m>]` | Generate full-body, side and back reference views from the picked portrait (AI) |
+| `manga character suggest <char> --description "…" [--manga <m>]` | Turn a description into appearance tags (AI) |
 | `manga chapter add <manga> "<title>"` · `chapter list <manga>` · `chapter rm <chapter>` | Chapters |
 | `manga chapter edit <chapter> [--title] [--synopsis] [--number <n>]` | Change a chapter; the number must be free in the manga |
 | `manga layouts` | The 16 layout presets |
@@ -95,6 +98,10 @@ References take an id or a unique name or title, case-insensitive. A chapter can
 | `manga page show <page>` · `page rm <page>` | Inspect (reading order, rects, split paths) or delete |
 | `manga panel script <panel> [--action] [--shot] [--angle] [--background] [--chars a,b] [--line "Aiko:speech:Hi!" …]` | Show or edit the panel script |
 | `manga panel variants <panel>` · `panel pick <panel> <image>` · `panel upload <panel> <file>` | Panel images |
+| `manga panel prompt <panel> [--ai \| --scene "…"]` | Set the scene prompt by hand (`--scene`) or let the AI write it (`--ai`) |
+| `manga panel generate <panel> [--recipe <id>] [--seed <n>]` | Generate a new image variant for the panel (AI) |
+| `manga panel review <panel>` | Ask the AI to check the panel's active image |
+| `manga recipes` | List image recipes |
 | `manga text add <page> --kind speech --text "…" [--speaker <char>] [--panel <panel>]` | Add a text frame |
 | `manga text edit <frame> [--text] [--box x,y,w,h] [--speaker <char>\|-] …` · `text rm <frame>` | Edit or delete a text frame |
 | `manga jobs [--watch] [--status <s>]` · `manga cancel <job>` | Background jobs |
