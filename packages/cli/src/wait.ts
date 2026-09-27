@@ -9,9 +9,13 @@ export function isTerminalJob(job: Job): boolean {
   return TERMINAL.has(job.status);
 }
 
-/** "label value/max", "label value", "label", the error of a failed job, or ''. */
+/**
+ * "label value/max", "label value", "label", the error of a failed job, "retrying: <error>" for a job back in the
+ * queue after a transient failure (its old progress is stale), or ''.
+ */
 export function progressText(job: Job): string {
   if (job.status === 'failed' && job.error !== null) return `error: ${job.error}`;
+  if (job.status === 'queued' && job.error !== null) return `retrying: ${job.error}`;
   if (job.progress === null) return '';
   const { label, value, max } = job.progress;
   if (value === undefined) return label;
