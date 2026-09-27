@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { computeRects, DEFAULT_TRANSFORM, EMPTY_SCRIPT, LayoutError, panelIds, readingOrder, type Chapter, type Manga } from '@manga/shared';
-import { NotFoundError } from '../src/errors.js';
+import { NotFoundError, ValidationError } from '../src/errors.js';
 import { deletePage } from '../src/domain/delete.js';
 import {
   applyPreset, createCoverPage, createPage, mergePagePanels, NeedsConfirmError, pageDetail, resizePageSplit, splitPagePanel,
@@ -58,6 +58,15 @@ describe('createPage', () => {
 });
 
 describe('createCoverPage', () => {
+  it('keeps covers single-panel: applying a preset or splitting is a validation error (F5)', () => {
+    for (const cover of [createCoverPage(t.store, manga.id, null), createCoverPage(t.store, manga.id, chapter.id)]) {
+      const panelId = cover.panels[0]?.id ?? '';
+      expect(() => applyPreset(t.store, cover.page.id, '2x2', true)).toThrow(new ValidationError('a cover page has exactly one panel'));
+      expect(() => splitPagePanel(t.store, cover.page.id, panelId, 'h')).toThrow(new ValidationError('a cover page has exactly one panel'));
+      expect(pageDetail(t.store, cover.page.id)).toEqual(cover);
+    }
+  });
+
   it('creates one splash cover per manga or chapter and returns it again next time', () => {
     const mc = createCoverPage(t.store, manga.id, null);
     expect(mc.page).toMatchObject({ kind: 'cover', chapterId: null, order: 0 });

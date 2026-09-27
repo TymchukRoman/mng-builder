@@ -1,6 +1,6 @@
 import {
   buildPreset, mergePanels, newId, panelIds, readingOrder, resizeSplit, splitPanel,
-  type Image, type LayoutNode, type PageDetail, type Panel, type SplitDir,
+  type Image, type LayoutNode, type Page, type PageDetail, type Panel, type SplitDir,
 } from '@manga/shared';
 import { HttpError, ValidationError } from '../errors.js';
 import type { Store } from '../store/index.js';
@@ -26,6 +26,11 @@ export function pageDetail(store: Store, pageId: string): PageDetail {
     if (image) images[image.id] = image;
   }
   return { page, panels, frames: store.frames.listByPage(pageId), images };
+}
+
+/** Covers are single-panel pages: layout operations that would add panels are refused. */
+function requireStoryPage(page: Page): void {
+  if (page.kind === 'cover') throw new ValidationError('a cover page has exactly one panel');
 }
 
 function addPanels(store: Store, pageId: string, ids: readonly string[]): void {
@@ -75,6 +80,7 @@ function renameLeaves(tree: LayoutNode, names: ReadonlyMap<string, string>): Lay
 /** Replaces the layout with a preset, mapping existing panels onto the new slots in reading order. */
 export function applyPreset(store: Store, pageId: string, preset: string, confirm: boolean): PageDetail {
   const page = store.pages.require(pageId);
+  requireStoryPage(page);
   const manga = store.mangas.require(page.mangaId);
   const dir = manga.readingDirection;
   const fresh = buildPreset(preset, dir, () => newId('pn'));
@@ -102,6 +108,7 @@ export function applyPreset(store: Store, pageId: string, preset: string, confir
 /** New Panel row: EMPTY_SCRIPT, random seed. */
 export function splitPagePanel(store: Store, pageId: string, panelId: string, dir: SplitDir): PageDetail {
   const page = store.pages.require(pageId);
+  requireStoryPage(page);
   const added = newId('pn');
   const layout = splitPanel(page.layout, panelId, dir, added);
   store.tx(() => {

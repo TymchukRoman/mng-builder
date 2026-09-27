@@ -52,6 +52,15 @@ describe('chapters', () => {
     expect((await call(t.app, 'GET', `/api/chapters/${two.id}`)).status).toBe(404);
   });
 
+  it('refuses to add panels to a cover with 400 validation (F5)', async () => {
+    const { manga } = await seed();
+    const cover = (await call<PageDetail>(t.app, 'POST', `/api/mangas/${manga.id}/cover`)).body;
+    const refused = { status: 400, body: { error: { code: 'validation', message: 'a cover page has exactly one panel' } } };
+    expect(await call(t.app, 'POST', `/api/pages/${cover.page.id}/layout/preset`, { preset: '2x2', confirm: true })).toEqual(refused);
+    expect(await call(t.app, 'POST', `/api/pages/${cover.page.id}/layout/split`, { panelId: cover.panels[0]?.id, dir: 'v' })).toEqual(refused);
+    expect((await call<PageDetail>(t.app, 'GET', `/api/pages/${cover.page.id}`)).body.panels).toHaveLength(1);
+  });
+
   it('creates the chapter cover once, outside the page list', async () => {
     const { chapter } = await seed();
     const cover = await call<PageDetail>(t.app, 'POST', `/api/chapters/${chapter.id}/cover`);
