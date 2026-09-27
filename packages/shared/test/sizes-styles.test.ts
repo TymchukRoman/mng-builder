@@ -52,13 +52,16 @@ describe('STYLE_PRESETS', () => {
     for (const preset of Object.values(STYLE_PRESETS)) {
       expect(STYLE_PRESETS[preset.id]).toBe(preset);
       expect(StyleGuideSchema.safeParse(preset.styleGuide).success).toBe(true);
-      expect(preset.styleGuide.negativePrompt).toBe('lowres, bad anatomy, bad hands, blurry, jpeg artifacts, worst quality');
+      expect(preset.styleGuide.negativePrompt).toBe('lowres, bad anatomy, bad hands, blurry, jpeg artifacts, worst quality, nsfw');
     }
     expect(STYLE_PRESETS['manga-bw']?.styleGuide).toMatchObject({
-      recipe: 'anime', stylePrompt: 'masterpiece, best quality, clean lineart, detailed background',
+      recipe: 'anime', stylePrompt: 'masterpiece, best quality, clean lineart, detailed background, hatching (texture)',
       loras: [{ name: 'Mnga-illustriousXL_v01_V1-CAME.safetensors', strength: 0.8 }],
     });
-    expect(STYLE_PRESETS['manga-hatching']?.styleGuide.loras).toEqual([{ name: 'Ashpwright_style_mix-000033.safetensors', strength: 0.8 }]);
+    expect(STYLE_PRESETS['manga-hatching']?.styleGuide).toMatchObject({
+      stylePrompt: 'masterpiece, best quality, clean lineart, detailed background, ashpwright',
+      loras: [{ name: 'Ashpwright_style_mix-000033.safetensors', strength: 0.8 }],
+    });
     expect(STYLE_PRESETS['anime-color']).toMatchObject({ colorMode: 'color', styleGuide: { loras: [], stylePrompt: 'masterpiece, best quality, vibrant colors, detailed background' } });
     expect(STYLE_PRESETS['anima-bw']?.styleGuide).toMatchObject({ recipe: 'anima', stylePrompt: 'masterpiece, best quality, clean lineart', loras: [{ name: 'Mangalike_Anima.safetensors', strength: 0.8 }] });
   });
