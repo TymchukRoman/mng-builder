@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { DEFAULT_SETTINGS, type ServerEvent, type Settings } from '@manga/shared';
 import { startServer, type AppModule } from '../src/app.js';
+import { exitControl } from '../src/exit-control.js';
 import { fetchHealth, ownBuildStamp, readServerInfo, writeServerInfo } from '../src/config.js';
 import { StoreCorruptError } from '../src/errors.js';
 import { call, makeTestApp, type TestApp } from './helpers/app.js';
@@ -332,5 +333,53 @@ describe('one server per library (F10)', () => {
       await server.stop();
       dir.cleanup();
     }
+  });
+});
+
+describe('forced shutdown (F11)', () => {
+  it('bounds stop(): a job handler that ignores its abort signal cannot hang it', async () => {
+    const dir = tempDir();
+    const server = await startServer({ config: { libraryPath: dir.path, port: 0 }, uiDir: null, stopTimeoutMs: 200 });
+    server.deps.queue.register('export.render', () => new Promise(() => {})); // never settles, ignores ctx.signal
+    const job = server.deps.queue.enqueue({ kind: 'export.render', lane: 'cpu', payload: {} });
+    await vi.waitFor(() => expect(server.deps.store.jobs.require(job.id).status).toBe('running'));
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const started = Date.now();
+      await server.stop();
+      expect(Date.now() - started).toBeLessThan(5_000);
+      expect(logged).toHaveBeenCalledWith('[manga] modules or job handlers did not stop within 200 ms; closing anyway');
+      expect(readServerInfo(dir.path)).toBeNull();
+      expect(await fetchHealth(server.url)).toBeNull();
+    } finally {
+      logged.mockRestore();
+      dir.cleanup();
+    }
+  });
+});
+
+describe('exitControl (main.ts)', () => {
+  it('stops then exits 0 on the first request; a second signal exits at once with 130', async () => {
+    const exits: number[] = [];
+    let stops = 0;
+    const control = exitControl(() => {
+      stops += 1;
+      return new Promise(() => {}); // stuck
+    }, (code) => exits.push(code), () => {});
+    control.request();
+    control.signal(); // the first signal only joins the stop in progress
+    expect([stops, exits]).toEqual([1, []]);
+    control.signal();
+    expect([stops, exits]).toEqual([1, [130]]);
+  });
+
+  it('exits 0 once stop() resolves, and 1 when it fails', async () => {
+    const exits: number[] = [];
+    exitControl(async () => {}, (code) => exits.push(code), () => {}).signal();
+    const failing = exitControl(async () => {
+      throw new Error('boom');
+    }, (code) => exits.push(code), () => {});
+    failing.request();
+    await vi.waitFor(() => expect(exits).toEqual([0, 1]));
   });
 });

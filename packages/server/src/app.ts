@@ -19,6 +19,8 @@ export type { AppModule, CoreDeps, StatusProviders } from './deps.js';
 export { defaultStatusProviders, NOT_CONFIGURED } from './deps.js';
 
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+/** How long stop() waits for modules and job handlers before closing anyway. */
+export const STOP_TIMEOUT_MS = 10_000;
 
 /** `onShutdown`: registers POST /api/shutdown, which calls it once the response is sent (see api/shutdown.ts). */
 export interface BuildOptions { uiDir?: string | null; onShutdown?: () => void }
@@ -38,11 +40,29 @@ export async function buildApp(deps: CoreDeps, modules: AppModule[], options: Bu
 
 /**
  * `onShutdown`: what POST /api/shutdown does once it has answered. Default: `stop()` this server. main.ts stops and
- * exits the process; `manga serve` ends its command.
+ * exits the process; `manga serve` ends its command. `stopTimeoutMs` (default STOP_TIMEOUT_MS) bounds stop().
  */
-export interface StartOptions { config?: Partial<AppConfig>; modules?: (deps: CoreDeps) => AppModule[]; uiDir?: string | null; onShutdown?: () => void }
-/** `stop()` is idempotent: every call returns the same promise. */
+export interface StartOptions {
+  config?: Partial<AppConfig>; modules?: (deps: CoreDeps) => AppModule[]; uiDir?: string | null; onShutdown?: () => void; stopTimeoutMs?: number;
+}
+/**
+ * `stop()` is idempotent: every call returns the same promise. Modules and job handlers get `stopTimeoutMs` to finish
+ * (a handler that ignores its abort signal cannot hang shutdown); then the server and the store close regardless.
+ */
 export interface RunningServer { app: FastifyInstance; deps: CoreDeps; url: string; stop(): Promise<void> }
+
+/** True when `work` settles within `ms`, false when time runs out first (`work` keeps going). Rejections pass through. */
+async function settlesWithin(work: Promise<unknown>, ms: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), ms);
+  });
+  try {
+    return await Promise.race([work.then(() => true), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /**
  * One server per library: refuses to start while `<library>/server.json` names a live server on another port (on the
@@ -66,8 +86,14 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   // Defined before the app so POST /api/shutdown can reach it; it only runs once listening, when `running` is set.
   let stopping: Promise<void> | null = null;
   const stop = (): Promise<void> => (stopping ??= (async () => {
-    for (const mod of [...modules].reverse()) await mod.stop?.();
-    await queue.stop();
+    const drained = (async () => {
+      for (const mod of [...modules].reverse()) await mod.stop?.();
+      await queue.stop();
+    })();
+    const timeoutMs = opts.stopTimeoutMs ?? STOP_TIMEOUT_MS;
+    if (!(await settlesWithin(drained, timeoutMs))) {
+      console.error(`[manga] modules or job handlers did not stop within ${timeoutMs} ms; closing anyway`);
+    }
     await running.close();
     store.close();
     removeServerInfo(config.libraryPath, process.pid);
