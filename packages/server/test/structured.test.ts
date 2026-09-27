@@ -87,4 +87,30 @@ describe('completeStructured', () => {
     expect((err as Error).message).toContain('panel-prompt');
     expect((err as Error).message).toContain('Raw output: nope 2');
   });
+
+  it('rejects with the abort reason and makes no call when the signal is already aborted', async () => {
+    const controller = new AbortController();
+    const reason = new Error('cancelled before start');
+    controller.abort(reason);
+    let calls = 0;
+    const err = await completeStructured(async () => {
+      calls += 1;
+      return '{"scene":"solo"}';
+    }, { ...req, signal: controller.signal }).catch((e: unknown) => e);
+    expect(calls).toBe(0);
+    expect(err).toBe(reason);
+  });
+
+  it('aborts between the two calls when the signal is aborted during the first answer', async () => {
+    const controller = new AbortController();
+    const reason = new Error('cancelled mid-flight');
+    let calls = 0;
+    const err = await completeStructured(async () => {
+      calls += 1;
+      controller.abort(reason);
+      return '{"scene":""}';
+    }, { ...req, signal: controller.signal }).catch((e: unknown) => e);
+    expect(calls).toBe(1);
+    expect(err).toBe(reason);
+  });
 });

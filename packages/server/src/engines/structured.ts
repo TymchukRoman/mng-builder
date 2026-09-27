@@ -63,6 +63,7 @@ export type Ask = (input: { system: string; prompt: string }) => Promise<string>
 
 /** Both engines: prompt → extract JSON → zod safeParse → one correction round → InvalidOutputError. */
 export async function completeStructured<T>(ask: Ask, req: JsonRequest<T>): Promise<T> {
+  req.signal?.throwIfAborted();
   const system = withJsonInstruction(req.system, req.schema);
   const first = await ask({ system, prompt: req.prompt });
   const a = parseAgainst(first, req.schema);
