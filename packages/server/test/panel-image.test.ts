@@ -1,3 +1,4 @@
+import { existsSync, readdirSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { assemblePrompt, type ImageGeneratePayload } from '@manga/shared';
 import { generatePanelImage } from '../src/handlers/panel-image.js';
@@ -6,6 +7,7 @@ import { nodesOf, type Link } from '../src/imaging/comfy-graph.js';
 import { RECIPES } from '../src/imaging/recipes/index.js';
 import { panelSize } from '../src/imaging/size.js';
 import { PermanentError } from '../src/jobs/index.js';
+import { NotFoundError } from '../src/store/index.js';
 import { startFakeComfy, type FakeComfy } from './fakes/fake-comfy.js';
 import { handlerServices, type TestServices } from './helpers/handler-services.js';
 import { jobContext } from './helpers/job-context.js';
@@ -70,6 +72,10 @@ describe('image.generate (panel)', () => {
     expect(nodesOf(graph, 'UNETLoader')[0]!.inputs['unet_name']).toBe('anima-aesthetic-v1.1.safetensors');
     expect(nodesOf(graph, 'KSampler')[0]!.inputs['seed']).toBe(99);
     expect(lib.store.panels.require(panels[0]!.id).seed).toBe(99);
+    // F6: the manga's style guide is SDXL (family 'sdxl'); its LoRA must not cross onto the forced anima
+    // recipe (family 'anima'). The manga's only LoRA is that style LoRA, so no LoRA node at all should appear.
+    expect(nodesOf(graph, 'LoraLoaderModelOnly')).toHaveLength(0);
+    expect(nodesOf(graph, 'LoraLoader')).toHaveLength(0);
   });
 
   it('adds sceneSuffix and negativeExtra for review retries', async () => {
@@ -110,6 +116,9 @@ describe('image.generate (panel)', () => {
     expect(nodesOf(refine!, 'KSampler')[0]!.inputs['denoise']).toBe(0.3);
     expect(nodesOf(refine!, 'LoadImage')[0]!.inputs['image']).toBe(`manga-builder/${first.id}.png`);
     expect(lib.store.panels.require(panel.id).activeImageId).toBe(second.id);
+    // F6: anime-refine is the same family (sdxl) as the manga's style recipe ('anime'), so it does carry the
+    // style LoRA (unlike the qwen-edit-ref pass above, which drops it both by family mismatch and supportsLoras).
+    expect(nodesOf(refine!, 'LoraLoader').map((n) => n.inputs['lora_name'])).toEqual(['Mnga-illustriousXL_v01_V1-CAME.safetensors']);
   });
 
   it('runs exactly one graph under default settings (bwRefine is off)', async () => {
@@ -153,6 +162,9 @@ describe('image.generate (panel)', () => {
     expect(nodesOf(graph, 'IPAdapterAdvanced')).toHaveLength(0);
     expect(nodesOf(graph, 'CheckpointLoaderSimple')).toHaveLength(1);
     expect(String(nodesOf(graph, 'CLIPTextEncode')[0]!.inputs['text'])).toContain('1boy, black hair');
+    // F6: plain SDXL routing (no refs → the style's own recipe, 'anime') keeps the style LoRA, since the
+    // families match.
+    expect(nodesOf(graph, 'LoraLoader').map((n) => n.inputs['lora_name'])).toEqual(['Mnga-illustriousXL_v01_V1-CAME.safetensors']);
   });
 
   it('fails clearly when a forced recipe needs references the panel does not have', async () => {
@@ -160,5 +172,27 @@ describe('image.generate (panel)', () => {
     const err = await run(panels[0]!.id, { recipe: 'anime-ref' }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(PermanentError);
     expect((err as Error).message).toContain('needs at least one reference image');
+  });
+
+  it('rejects and leaves nothing behind when the panel is deleted mid-generation', async () => {
+    const { manga, panels } = seedManga(lib.store);
+    const panelId = panels[0]!.id;
+    const { ctx, events } = jobContext(lib.store, 'image.generate', {});
+    let deleted = false;
+    const originalProgress = ctx.progress;
+    ctx.progress = (label, value, max) => {
+      if (label === 'Sampling' && !deleted) {
+        deleted = true;
+        lib.store.panels.delete(panelId);
+      }
+      originalProgress(label, value, max);
+    };
+
+    await expect(generatePanelImage(ctx, services, { target: 'panel', panelId })).rejects.toThrow(NotFoundError);
+
+    expect(events.some((e) => e.type === 'entity' && e.entity === 'panel' && e.op === 'updated')).toBe(false);
+    expect(lib.store.images.listByOwner('panel', panelId)).toEqual([]);
+    const dir = lib.store.files.abs(`mangas/${manga.id}/images`);
+    expect(existsSync(dir) ? readdirSync(dir) : []).toEqual([]);
   });
 });
