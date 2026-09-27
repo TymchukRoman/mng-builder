@@ -160,10 +160,15 @@ export class JobQueue {
     this.expirePauses();
     for (const lane of LANES) {
       if (this.paused.has(lane)) continue;
-      while (this.runningIn(lane) < this.limits[lane]) {
-        const job = this.store.jobs.claimNext(lane, this.now().toISOString());
-        if (job === null) break;
-        this.launch(job);
+      try {
+        while (this.runningIn(lane) < this.limits[lane]) {
+          const job = this.store.jobs.claimNext(lane, this.now().toISOString());
+          if (job === null) break;
+          this.launch(job);
+        }
+      } catch (error) {
+        // A bad row (e.g. corrupt stored JSON) must not kill the poll loop or stop() start() from booting.
+        console.error(`[manga] job queue: failed to claim from lane ${lane}:`, error);
       }
     }
   }
@@ -173,7 +178,7 @@ export class JobQueue {
     const run: Running = { lane: job.lane, controller: new AbortController(), cancelled: false, done: Promise.resolve() };
     this.running.set(job.id, run);
     run.done = this.execute(job, run).finally(() => {
-      this.running.delete(job.id);
+      if (this.running.get(job.id) === run) this.running.delete(job.id);
       this.kick();
     });
   }
@@ -190,7 +195,27 @@ export class JobQueue {
         outcome = { ok: false, error };
       }
     }
-    this.finish(job.id, run, outcome);
+    try {
+      this.finish(job.id, run, outcome);
+    } catch (error) {
+      this.recordOutcomeFailure(job, run, error);
+    }
+  }
+
+  /**
+   * finish() itself failed to persist the outcome (e.g. a result that can't be JSON-encoded). A job must never be
+   * left stuck 'running' with nothing watching it: mark it failed, or — if even that write fails — settle waiters
+   * from the in-memory job so callers don't hang, and log loudly since the store disagrees with reality.
+   */
+  private recordOutcomeFailure(job: Job, run: Running, error: unknown): void {
+    if (run.cancelled) return; // cancel() already recorded, published and settled it
+    const message = `could not record outcome: ${messageOf(error)}`;
+    try {
+      this.complete(this.store.jobs.update(job.id, { status: 'failed', error: message, finishedAt: this.now().toISOString() }));
+    } catch (writeError) {
+      console.error('[manga] job queue: failed to persist job outcome:', writeError);
+      this.settle({ ...job, status: 'failed', error: message, finishedAt: this.now().toISOString() });
+    }
   }
 
   private finish(id: string, run: Running, outcome: Outcome): void {
@@ -234,6 +259,9 @@ export class JobQueue {
       queue: this,
       progress: (label, value, max) => {
         if (run.controller.signal.aborted) return;
+        // A callback left behind by an earlier, already-finished attempt (e.g. a stray timer after a
+        // TransientError) must not touch the row a newer attempt of the same job id now owns.
+        if (this.running.get(job.id) !== run) return;
         const current = this.store.jobs.get(job.id);
         if (current === null || current.status !== 'running') return;
         const progress: JobProgress = { label, ...(value === undefined ? {} : { value }), ...(max === undefined ? {} : { max }) };

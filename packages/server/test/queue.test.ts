@@ -259,4 +259,41 @@ describe('JobQueue', () => {
     expect(events[2]?.progress).toEqual({ label: 'Loading model' });
     expect(t.store.jobs.require(job.id).progress).toEqual({ label: 'Sampling', value: 3, max: 8 });
   });
+
+  it('fails the job (instead of hanging waitFor forever) when its outcome cannot be persisted', async () => {
+    const q = makeQueue();
+    q.register('image.generate', async () => {
+      const circular: Record<string, unknown> = {};
+      circular['self'] = circular;
+      return circular;
+    });
+    q.start();
+    const done = await q.waitFor(gpuJob(q).id);
+    expect(done.status).toBe('failed');
+    expect(done.error).toMatch(/could not record outcome/i);
+  });
+
+  it('drops a stale progress call left over from an earlier, already-retried attempt', async () => {
+    const q = makeQueue();
+    let call = 0;
+    const gate = deferred();
+    q.register('image.generate', async (ctx) => {
+      call += 1;
+      if (call === 1) {
+        // Simulate a callback the first attempt scheduled before failing, which only fires once a retry is under way.
+        setTimeout(() => ctx.progress('STALE from attempt 1'), 40);
+        throw new TransientError('retry me');
+      }
+      ctx.progress('fresh from attempt 2');
+      await gate.promise;
+      return 'ok';
+    });
+    q.start();
+    const job = gpuJob(q);
+    await vi.waitFor(() => expect(t.store.jobs.require(job.id).progress?.label).toBe('fresh from attempt 2'));
+    await sleep(60); // let attempt 1's stale timer fire while attempt 2 is still running
+    expect(t.store.jobs.require(job.id).progress?.label).toBe('fresh from attempt 2');
+    gate.resolve();
+    expect((await q.waitFor(job.id)).status).toBe('succeeded');
+  });
 });
