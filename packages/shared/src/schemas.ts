@@ -215,7 +215,7 @@ export const DEFAULT_SETTINGS: Settings = {
   claude: { models: { story: 'opus', dialogue: 'opus', prompts: 'sonnet', review: 'sonnet' } },
   ollama: { textModel: 'qwen3:14b', visionModel: 'qwen3-vl:8b' },
   review: { autoInEpisode: true, rounds: 2 },
-  routing: { noChars: 'anime', oneChar: 'anime-ref', multiChar: 'qwen-edit-ref', bwRefine: 'anime-refine', driftFallback: 'qwen-edit-ref' },
+  routing: { noChars: 'anime', oneChar: 'anime-ref', multiChar: 'qwen-edit-ref', bwRefine: null, driftFallback: 'qwen-edit-ref' },
 };
 /** Each top-level section is optional; within a section every key is optional. `engine.tasks` is replaced whole. */
 export const SettingsPatchSchema = z.object({

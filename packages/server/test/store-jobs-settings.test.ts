@@ -92,6 +92,7 @@ describe('settings repo', () => {
     expect(s.claude.models).toEqual({ ...DEFAULT_SETTINGS.claude.models, story: 'sonnet' });
     expect(s.review).toEqual({ autoInEpisode: true, rounds: 1 });
     expect(store.settings.patch({ engine: { tasks: {} } }).engine.tasks).toEqual({});
+    expect(store.settings.patch({ routing: { bwRefine: 'anime-refine' } }).routing.bwRefine).toBe('anime-refine');
     expect(store.settings.patch({ routing: { bwRefine: null } }).routing.bwRefine).toBeNull();
   });
 
