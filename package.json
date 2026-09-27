@@ -1,0 +1,28 @@
+{
+  "name": "manga-builder",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "typecheck": "tsc --build --force",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "tsc --build --watch --preserveWatchOutput",
+    "start": "node packages/server/dist/main.js",
+    "link-cli": "npm link --workspace @manga/cli"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "24.10.1",
+    "@types/ws": "^8.18.1",
+    "typescript": "5.9.3",
+    "vitest": "3.2.4"
+  }
+}
