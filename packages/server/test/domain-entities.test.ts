@@ -1,12 +1,12 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   computeRects, DEFAULT_PAGE_FORMAT, EMPTY_SCRIPT, newId, readingOrder, STYLE_PRESETS, type Manga,
 } from '@manga/shared';
 import { NotFoundError, ValidationError } from '../src/errors.js';
 import {
-  createChapter, createCharacter, createFrame, createManga, createPage, createCoverPage, deleteChapter, deleteCharacter,
+  createChapter, createCharacter, createFrame, createManga, createPage, createCoverPage, deleteChapter, deleteCharacter, deletePage,
   deleteImage, deleteManga, reorderPages, saveUploadedImage, setCharacterRef, updateFrame, updateManga, updatePanel,
 } from '../src/domain/index.js';
 import { makeJpegHeader, makePng } from './helpers/png.js';
@@ -217,6 +217,35 @@ describe('cascade deletes', () => {
     expect(panel.script.dialogue).toEqual([{ speakerId: null, kind: 'speech', text: 'Hi' }]);
     expect(existsSync(t.store.files.abs(img.path))).toBe(false);
     expect(t.store.characters.get(a.id)).toBeNull();
+  });
+
+  it('never throws after the commit when a file cannot be removed: each failure is logged and the rest still go (F8)', () => {
+    const ch = createChapter(t.store, manga.id, { title: 'One', synopsis: '' });
+    const d = createPage(t.store, ch.id, '2-rows');
+    const [locked, free] = [addPanelImage(t.store, manga.id, d.panels[0]?.id ?? ''), addPanelImage(t.store, manga.id, d.panels[1]?.id ?? '')];
+    const remove = t.store.files.remove;
+    t.store.files.remove = (rel) => {
+      if (rel === locked.path) throw new Error('EBUSY: resource busy or locked');
+      remove(rel);
+    };
+    t.store.files.removeMangaDir = () => {
+      throw new Error('EPERM: operation not permitted');
+    };
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(deletePage(t.store, d.page.id).page.id).toBe(d.page.id);
+      expect(t.store.images.get(locked.id)).toBeNull();
+      expect(existsSync(t.store.files.abs(locked.path))).toBe(true);
+      expect(existsSync(t.store.files.abs(free.path))).toBe(false);
+      expect(deleteManga(t.store, manga.id).id).toBe(manga.id);
+      expect(t.store.mangas.get(manga.id)).toBeNull();
+      expect(logged.mock.calls.map((call) => String(call[0]))).toEqual([
+        `[manga] could not remove ${locked.path}:`,
+        `[manga] could not remove the folder of manga ${manga.id}:`,
+      ]);
+    } finally {
+      logged.mockRestore();
+    }
   });
 
   it('deleteChapter removes its pages and their image files; deleteManga removes the manga folder', () => {

@@ -11,9 +11,23 @@ export interface DeletedChapter { chapter: Chapter; pageIds: string[]; panelIds:
 /** `panelIds`: panels whose script or refCharacterIds lost the character; `frameIds`: frames whose speaker was cleared. */
 export interface DeletedCharacter { character: Character; panelIds: string[]; frameIds: string[] }
 
-/** Removes image files after the transaction that deleted their rows has committed. Missing files are ignored. */
+/** A file removal after the DB commit: the rows are already gone, so a failure (e.g. a locked file) is logged, never thrown. */
+function bestEffort(what: string, remove: () => void): void {
+  try {
+    remove();
+  } catch (err) {
+    console.error(`[manga] could not remove ${what}:`, err);
+  }
+}
+
+/** Removes image files after the transaction that deleted their rows has committed, one by one. Missing files are ignored. */
 export function removeFiles(store: Store, rels: readonly string[]): void {
-  for (const rel of rels) store.files.remove(rel);
+  for (const rel of rels) bestEffort(rel, () => store.files.remove(rel));
+}
+
+/** Removes the manga's image folder after its rows are gone. */
+export function removeMangaDir(store: Store, mangaId: string): void {
+  bestEffort(`the folder of manga ${mangaId}`, () => store.files.removeMangaDir(mangaId));
 }
 
 /** Deletes a panel and its image rows (frames anchored to it are un-anchored by the FK). Returns files to remove after commit. */
@@ -72,7 +86,7 @@ export function deleteChapter(store: Store, chapterId: string): DeletedChapter {
 export function deleteManga(store: Store, mangaId: string): Manga {
   const manga = store.mangas.require(mangaId);
   store.tx(() => store.mangas.delete(mangaId));
-  store.files.removeMangaDir(mangaId);
+  removeMangaDir(store, mangaId);
   return manga;
 }
 
