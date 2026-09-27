@@ -3,11 +3,11 @@ import type { Command } from 'commander';
 import {
   EngineNameSchema, TaskSchema, type EngineName, type ServiceState, type ServiceStatus, type Settings, type SettingsPatch, type Task,
 } from '@manga/shared';
-import { loadConfig } from '@manga/server/config';
+import { liveServer, loadConfig } from '@manga/server/config';
 import type { CliContext } from '../context.js';
 import { CliError } from '../errors.js';
 import { onInterrupt, processIo, type CliIo } from '../io.js';
-import { libraryServer, serverAt, stopServer } from '../stop.js';
+import { serverAt, stopServer } from '../stop.js';
 
 function browserCommand(url: string): { cmd: string; args: string[] } {
   if (process.platform === 'win32') return { cmd: 'explorer.exe', args: [url] };
@@ -91,7 +91,7 @@ export function registerServerCommands(program: Command, ctx: () => Promise<CliC
     .description("stop this library's server (the one in <library>/server.json, or the one at --url)")
     .action(async () => {
       const url = program.opts<{ url?: string }>().url?.replace(/\/+$/, '');
-      const running = url === undefined ? await libraryServer(loadConfig().libraryPath) : await serverAt(url);
+      const running = url === undefined ? await liveServer(loadConfig().libraryPath) : await serverAt(url);
       if (running === null) {
         io.stdout('no server running\n');
         return;

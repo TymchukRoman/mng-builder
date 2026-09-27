@@ -8,7 +8,7 @@ import { installErrorHandling } from './api/errors.js';
 import { registerCoreRoutes } from './api/routes.js';
 import { registerShutdownRoute } from './api/shutdown.js';
 import { defaultUiDir, registerStaticUi } from './api/static.js';
-import { loadConfig, removeServerInfo, writeServerInfo } from './config.js';
+import { liveServer, loadConfig, removeServerInfo, writeServerInfo } from './config.js';
 import { defaultStatusProviders, type AppModule, type CoreDeps } from './deps.js';
 import { EventBus } from './events/bus.js';
 import { GpuArbiter } from './jobs/gpu.js';
@@ -45,12 +45,17 @@ export interface StartOptions { config?: Partial<AppConfig>; modules?: (deps: Co
 export interface RunningServer { app: FastifyInstance; deps: CoreDeps; url: string; stop(): Promise<void> }
 
 /**
- * Listen first; only then start modules and the queue and claim server.json. A second server that fails with
- * EADDRINUSE therefore never resets the running server's jobs.
+ * One server per library: refuses to start while `<library>/server.json` names a live server on another port (on the
+ * same port, listen fails with EADDRINUSE). Listen first; only then start modules and the queue and claim
+ * server.json. A second server that fails therefore never resets the running server's jobs.
  */
 export async function startServer(opts: StartOptions = {}): Promise<RunningServer> {
   const config = loadConfig(opts.config ?? {});
   mkdirSync(config.libraryPath, { recursive: true });
+  const live = await liveServer(config.libraryPath);
+  if (live !== null && live.port !== config.port) {
+    throw new Error(`library ${config.libraryPath} is already served by pid ${live.pid} at ${live.url}; stop it first (manga stop)`);
+  }
   const store = openStore(config.libraryPath);
   const bus = new EventBus();
   const gpu = new GpuArbiter();

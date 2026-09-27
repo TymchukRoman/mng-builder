@@ -1,4 +1,4 @@
-import { fetchHealth, readServerInfo, type ServerHealth } from '@manga/server/config';
+import { fetchHealth, type ServerHealth } from '@manga/server/config';
 import { CliError } from './errors.js';
 
 export const STOP_TIMEOUT_MS = 10_000;
@@ -33,20 +33,10 @@ export const realStopDeps: StopDeps = {
   now: () => Date.now(),
 };
 
-export interface LiveServer { url: string; pid: number }
-
 /** The manga server answering at `url`, or null. */
-export async function serverAt(url: string, health: StopDeps['health'] = realStopDeps.health): Promise<LiveServer | null> {
+export async function serverAt(url: string, health: StopDeps['health'] = realStopDeps.health): Promise<{ url: string; pid: number } | null> {
   const found = await health(url);
   return found === null ? null : { url, pid: found.pid };
-}
-
-/** The server recorded in `<library>/server.json`, if it is alive: its /api/health must answer with the recorded pid. */
-export async function libraryServer(libraryPath: string, health: StopDeps['health'] = realStopDeps.health): Promise<LiveServer | null> {
-  const info = readServerInfo(libraryPath);
-  if (info === null) return null;
-  const found = await serverAt(`http://127.0.0.1:${info.port}`, health);
-  return found?.pid === info.pid ? found : null;
 }
 
 /**

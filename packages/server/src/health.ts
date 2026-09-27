@@ -1,6 +1,7 @@
 import { readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readServerInfo } from './server-info.js';
 
 /** GET /api/health. `build` is null for servers built before the stamp existed. */
 export interface ServerHealth { ok: true; pid: number; version: string; build: string | null }
@@ -56,4 +57,14 @@ export async function fetchHealth(url: string, timeoutMs = 1_500): Promise<Serve
   } catch {
     return null;
   }
+}
+
+export interface LiveServer { url: string; pid: number; port: number }
+
+/** The server `<library>/server.json` names, if it is alive: its /api/health must answer with the recorded pid. */
+export async function liveServer(libraryPath: string, health: (url: string) => Promise<ServerHealth | null> = fetchHealth): Promise<LiveServer | null> {
+  const info = readServerInfo(libraryPath);
+  if (info === null) return null;
+  const url = `http://127.0.0.1:${info.port}`;
+  return (await health(url))?.pid === info.pid ? { url, pid: info.pid, port: info.port } : null;
 }

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { DEFAULT_SETTINGS, type ServerEvent, type Settings } from '@manga/shared';
 import { startServer, type AppModule } from '../src/app.js';
-import { fetchHealth, ownBuildStamp, readServerInfo } from '../src/config.js';
+import { fetchHealth, ownBuildStamp, readServerInfo, writeServerInfo } from '../src/config.js';
 import { StoreCorruptError } from '../src/errors.js';
 import { call, makeTestApp, type TestApp } from './helpers/app.js';
 import { tempDir } from './helpers/tmp.js';
@@ -299,6 +299,35 @@ describe('POST /api/shutdown', () => {
       expect((await fetch(`${server.url}/api/shutdown`, { method: 'POST' })).status).toBe(200);
       await vi.waitFor(() => expect(onShutdown).toHaveBeenCalledTimes(1));
       expect((await fetchHealth(server.url))?.pid).toBe(process.pid);
+    } finally {
+      await server.stop();
+      dir.cleanup();
+    }
+  });
+});
+
+describe('one server per library (F10)', () => {
+  it('refuses to start while server.json names a live server of the library on another port', async () => {
+    const dir = tempDir();
+    const first = await startServer({ config: { libraryPath: dir.path, port: 0 }, uiDir: null });
+    try {
+      await expect(startServer({ config: { libraryPath: dir.path, port: 0 }, uiDir: null })).rejects.toThrow(
+        `library ${dir.path} is already served by pid ${process.pid} at ${first.url}; stop it first (manga stop)`,
+      );
+      expect((await fetchHealth(first.url))?.pid).toBe(process.pid);
+      expect(readServerInfo(dir.path)?.port).toBe(Number(new URL(first.url).port));
+    } finally {
+      await first.stop();
+      dir.cleanup();
+    }
+  });
+
+  it('starts over a stale server.json whose server is gone', async () => {
+    const dir = tempDir();
+    writeServerInfo(dir.path, { pid: process.pid, port: 9, startedAt: '2026-09-27T00:00:00.000Z' });
+    const server = await startServer({ config: { libraryPath: dir.path, port: 0 }, uiDir: null });
+    try {
+      expect(readServerInfo(dir.path)?.port).toBe(Number(new URL(server.url).port));
     } finally {
       await server.stop();
       dir.cleanup();
