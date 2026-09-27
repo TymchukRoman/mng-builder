@@ -1,4 +1,5 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -401,5 +402,64 @@ describe('exitControl (main.ts)', () => {
     }, (code) => exits.push(code), () => {});
     failing.request();
     await vi.waitFor(() => expect(exits).toEqual([0, 1]));
+  });
+});
+
+describe('Host and Origin guard (F13)', () => {
+  /** A GET with a hand-picked Host header (fetch always sends the URL's). */
+  function getWithHost(url: string, host: string): Promise<{ status: number; body: string }> {
+    return new Promise((resolve, reject) => {
+      const req = httpRequest(url, { headers: { host } }, (res) => {
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => {
+          body += chunk;
+        });
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  /** 101 when the socket opens (and gets its hello), else the HTTP status the upgrade was refused with. */
+  function upgradeStatus(url: string, origin?: string): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(`${url.replace('http:', 'ws:')}/api/events`, origin === undefined ? {} : { origin });
+      ws.on('message', () => {
+        ws.close();
+        resolve(101);
+      });
+      ws.on('unexpected-response', (req, res) => {
+        resolve(res.statusCode ?? 0);
+        req.destroy();
+      });
+      ws.on('error', (err) => {
+        if (ws.readyState !== WebSocket.CLOSED) reject(err);
+      });
+    });
+  }
+
+  it('answers only Host 127.0.0.1:<port> or localhost:<port>, and WebSocket upgrades only from those origins', async () => {
+    const dir = tempDir();
+    const server = await startServer({ config: { libraryPath: dir.path, port: 0 }, uiDir: null });
+    const port = new URL(server.url).port;
+    try {
+      expect((await getWithHost(`${server.url}/api/health`, `localhost:${port}`)).status).toBe(200);
+      expect((await getWithHost(`${server.url}/api/health`, `127.0.0.1:${port}`)).status).toBe(200);
+      for (const host of ['evil.example', `evil.example:${port}`, '127.0.0.1:1', `localhost.evil.example:${port}`]) {
+        const res = await getWithHost(`${server.url}/api/health`, host);
+        expect([res.status, JSON.parse(res.body)], host).toEqual([403, { error: { code: 'forbidden', message: `host ${host} is not allowed` } }]);
+      }
+      expect(await upgradeStatus(server.url)).toBe(101);
+      expect(await upgradeStatus(server.url, `http://localhost:${port}`)).toBe(101);
+      expect(await upgradeStatus(server.url, `http://127.0.0.1:${port}`)).toBe(101);
+      expect(await upgradeStatus(server.url, 'http://evil.example')).toBe(403);
+      expect(await upgradeStatus(server.url, `https://127.0.0.1:${port}`)).toBe(403);
+      expect((await fetch(`${server.url}/api/settings`, { headers: { origin: 'http://evil.example' } })).status).toBe(200); // plain HTTP: Origin not checked
+    } finally {
+      await server.stop();
+      dir.cleanup();
+    }
   });
 });

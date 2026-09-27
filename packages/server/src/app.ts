@@ -5,6 +5,7 @@ import fastifyWebsocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { AppConfig } from '@manga/shared';
 import { installErrorHandling } from './api/errors.js';
+import { installRequestGuards } from './api/guards.js';
 import { registerCoreRoutes } from './api/routes.js';
 import { registerShutdownRoute } from './api/shutdown.js';
 import { defaultUiDir, registerStaticUi } from './api/static.js';
@@ -29,6 +30,8 @@ export async function buildApp(deps: CoreDeps, modules: AppModule[], options: Bu
   const app = Fastify({ logger: false, forceCloseConnections: true });
   installErrorHandling(app);
   await app.register(fastifyWebsocket);
+  // After the WebSocket plugin: its onRequest hook marks upgrades first, so a refused upgrade's socket is destroyed.
+  installRequestGuards(app);
   await app.register(fastifyMultipart, { limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 } });
   for (const mod of modules) await mod.register(app, deps);
   await app.after();
