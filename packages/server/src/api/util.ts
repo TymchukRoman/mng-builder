@@ -1,5 +1,6 @@
 import type { FastifyRequest } from 'fastify';
 import { ValidationError } from '../errors.js';
+import type { Store } from '../store/index.js';
 
 export interface IdParams { Params: { id: string } }
 
@@ -9,6 +10,12 @@ export const OK = { ok: true } as const;
 // M4 — which may only import from events/bus.js — can use it without copying it. This re-export keeps every
 // importer of api/util.js (as the brief shows them) working unchanged.
 export { emitEntity } from '../events/bus.js';
+
+// Controller ruling (task 16 pre-flight R2): the brief repeats a `mangaOf`/`mangaIdOfPage` lookup across
+// pages.ts, panels.ts and frames.ts. One helper here covers every call site.
+export function mangaIdOfPage(store: Store, pageId: string): string {
+  return store.pages.require(pageId).mangaId;
+}
 
 export interface Upload { bytes: Buffer; mimetype: string; filename: string }
 
