@@ -72,12 +72,12 @@ export function registerServerCommands(program: Command, ctx: () => Promise<CliC
     .description('run the server in this terminal until Ctrl+C')
     .option('--open', 'open the UI in the browser')
     .action(async (opts: { open?: boolean }) => {
-      const { startServer } = await import('@manga/server');
+      const { defaultModules, startServer } = await import('@manga/server');
       let end = (): void => {};
       const ended = new Promise<void>((resolve) => {
         end = resolve;
       });
-      const server = await startServer({ onShutdown: () => end() }); // `manga stop` ends this command too
+      const server = await startServer({ modules: defaultModules, onShutdown: () => end() }); // `manga stop` ends this command too
       io.stdout(`manga server listening on ${server.url} (library: ${server.deps.config.libraryPath})\n`);
       if (opts.open === true) openBrowser(server.url);
       const dispose = onInterrupt(io.signal, end);

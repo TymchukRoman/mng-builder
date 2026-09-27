@@ -127,6 +127,8 @@ describe('serve', () => {
       const url = /(http:\/\/127\.0\.0\.1:\d+)/.exec(out)?.[1] ?? '';
       expect(out).toContain(`(library: ${lib})`);
       expect((await fetch(`${url}/api/health`)).status).toBe(200);
+      // `manga serve` starts the same modules as main.ts (defaultModules): the imaging module's own route proves it.
+      expect((await fetch(`${url}/api/recipes`)).status).toBe(200);
       expect(existsSync(join(lib, 'server.json'))).toBe(true);
       ac.abort();
       expect(await done).toBe(0);

@@ -1,3 +1,4 @@
+export * from './all-modules.js';
 export * from './app.js';
 export * from './config.js';
 export * from './domain/index.js';
