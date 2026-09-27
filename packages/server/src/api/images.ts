@@ -23,11 +23,15 @@ async function head(path: string): Promise<{ size: number; bytes: Buffer }> {
 export function registerImageRoutes(app: FastifyInstance, { store, bus }: CoreDeps): void {
   app.get<IdParams>('/api/images/:id', async (req): Promise<Image> => store.images.require(req.params.id));
 
-  /** Also clears the active/ref pointers that referenced it. */
+  /** Also deletes the images derived from it and clears the active/ref pointers: `image deleted` each, then `updated` per owner. */
   app.delete<IdParams>('/api/images/:id', async (req) => {
-    const image = deleteImage(store, req.params.id);
-    emitEntity(bus, 'image', image.id, 'deleted', image.mangaId);
-    emitEntity(bus, image.ownerType, image.ownerId, 'updated', image.mangaId);
+    const { images } = deleteImage(store, req.params.id);
+    const owners = new Map<string, Image>();
+    for (const image of images) {
+      emitEntity(bus, 'image', image.id, 'deleted', image.mangaId);
+      owners.set(`${image.ownerType}:${image.ownerId}`, image);
+    }
+    for (const image of owners.values()) emitEntity(bus, image.ownerType, image.ownerId, 'updated', image.mangaId);
     return OK;
   });
 

@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { DEFAULT_PAGE_FORMAT, STYLE_PRESETS, type Character, type Image, type Manga, type PageDetail, type ServerEvent } from '@manga/shared';
+import { DEFAULT_PAGE_FORMAT, newId, STYLE_PRESETS, type Character, type Image, type Manga, type PageDetail, type ServerEvent } from '@manga/shared';
 import { call, makeTestApp, type TestApp } from './helpers/app.js';
 import { multipart, uploadWhile } from './helpers/multipart.js';
 import { makeJpegHeader, makePng } from './helpers/png.js';
@@ -191,6 +191,25 @@ describe('characters', () => {
     expect((await call<ErrorReply>(t.app, 'POST', `/api/characters/${b.id}/refs/portrait`, { imageId: image.id })).body.error.code).toBe('validation');
     expect((await call(t.app, 'POST', `/api/characters/${a.id}/refs/face`, { imageId: image.id })).status).toBe(400);
     expect((await call(t.app, 'POST', `/api/characters/${a.id}/refs/portrait`, { imageId: 'im_missing000' })).status).toBe(404);
+  });
+
+  it('deletes the images derived from a deleted image too: image deleted for each, then character updated (F17)', async () => {
+    const m = await newManga();
+    const c = await newCharacter(m.id);
+    const image = (await upload(`/api/characters/${c.id}/upload?slot=portrait`, 'p.png', 'image/png', makePng(4, 4))).json() as Image;
+    const derive = (parent: Image): Image => {
+      const id = newId('im');
+      return t.deps.store.images.create({ ...parent, id, path: t.deps.store.files.writeImage(m.id, id, makePng(8, 8)), width: parent.width * 2, source: 'upscaled', parentImageId: parent.id });
+    };
+    const child = derive(image);
+    const grandchild = derive(child);
+    events.length = 0;
+    expect(await call(t.app, 'DELETE', `/api/images/${image.id}`)).toEqual({ status: 200, body: { ok: true } });
+    expect(events).toEqual([
+      ...[image, child, grandchild].map((i) => ({ type: 'entity', entity: 'image', id: i.id, op: 'deleted', mangaId: m.id })),
+      { type: 'entity', entity: 'character', id: c.id, op: 'updated', mangaId: m.id },
+    ]);
+    expect((await call<Image[]>(t.app, 'GET', `/api/characters/${c.id}/images`)).body).toEqual([]);
   });
 
   it('deletes an image, clearing the refs and the file', async () => {

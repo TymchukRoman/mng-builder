@@ -10,6 +10,8 @@ export interface DeletedPage { page: Page; panelIds: string[]; clearedCoverOf: {
 export interface DeletedChapter { chapter: Chapter; pageIds: string[]; panelIds: string[] }
 /** `panelIds`: panels whose script or refCharacterIds lost the character; `frameIds`: frames whose speaker was cleared. */
 export interface DeletedCharacter { character: Character; panelIds: string[]; frameIds: string[] }
+/** `images`: the image and every image derived from it, at any depth, root first. */
+export interface DeletedImages { image: Image; images: Image[] }
 
 /** A file removal after the DB commit: the rows are already gone, so a failure (e.g. a locked file) is logged, never thrown. */
 function bestEffort(what: string, remove: () => void): void {
@@ -118,25 +120,41 @@ export function deleteCharacter(store: Store, characterId: string): DeletedChara
   return { character, panelIds, frameIds };
 }
 
-/** Deletes the image and images derived from it; clears character refs (panel active pointers clear by FK). */
-export function deleteImage(store: Store, imageId: string): Image {
-  const image = store.images.require(imageId);
-  const doomed = [image, ...store.images.listByOwner(image.ownerType, image.ownerId).filter((i) => i.parentImageId === image.id)];
-  const ids = new Set(doomed.map((i) => i.id));
-  store.tx(() => {
-    if (image.ownerType === 'character') {
-      const character = store.characters.get(image.ownerId);
-      if (character !== null) {
-        const refs: Character['refs'] = {};
-        for (const slot of RefSlotSchema.options) {
-          const ref = character.refs[slot];
-          if (ref !== undefined && !ids.has(ref)) refs[slot] = ref;
-        }
-        store.characters.update(character.id, { refs });
-      }
+/** The image and its whole derivation chain (children of children via parentImageId), root first. */
+function derivationChain(store: Store, root: Image): Image[] {
+  const all = store.images.listByManga(root.mangaId);
+  const chain = [root];
+  const seen = new Set([root.id]);
+  for (let i = 0; i < chain.length; i += 1) {
+    const parentId = chain[i]?.id;
+    for (const image of all) {
+      if (image.parentImageId !== parentId || seen.has(image.id)) continue;
+      seen.add(image.id);
+      chain.push(image);
     }
-    for (const doomedImage of doomed) store.images.delete(doomedImage.id);
+  }
+  return chain;
+}
+
+/** Deletes the image and everything derived from it; clears the character refs they filled (panel active pointers clear by FK). */
+export function deleteImage(store: Store, imageId: string): DeletedImages {
+  const image = store.images.require(imageId);
+  const images = derivationChain(store, image);
+  const ids = new Set(images.map((i) => i.id));
+  const characterIds = new Set(images.filter((i) => i.ownerType === 'character').map((i) => i.ownerId));
+  store.tx(() => {
+    for (const characterId of characterIds) {
+      const character = store.characters.get(characterId);
+      if (character === null) continue;
+      const refs: Character['refs'] = {};
+      for (const slot of RefSlotSchema.options) {
+        const ref = character.refs[slot];
+        if (ref !== undefined && !ids.has(ref)) refs[slot] = ref;
+      }
+      store.characters.update(character.id, { refs });
+    }
+    for (const doomed of images) store.images.delete(doomed.id);
   });
-  removeFiles(store, doomed.map((i) => i.path));
-  return image;
+  removeFiles(store, images.map((i) => i.path));
+  return { image, images };
 }

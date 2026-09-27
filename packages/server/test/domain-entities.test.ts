@@ -2,7 +2,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  computeRects, DEFAULT_PAGE_FORMAT, EMPTY_SCRIPT, newId, readingOrder, STYLE_PRESETS, type Manga,
+  computeRects, DEFAULT_PAGE_FORMAT, EMPTY_SCRIPT, newId, readingOrder, STYLE_PRESETS, type Image, type Manga,
 } from '@manga/shared';
 import { NotFoundError, ValidationError } from '../src/errors.js';
 import {
@@ -198,6 +198,28 @@ describe('cascade deletes', () => {
     expect(t.store.images.get(upscaled.id)).toBeNull();
     expect(existsSync(t.store.files.abs(img.path))).toBe(false);
     expect(existsSync(t.store.files.abs(upscaled.path))).toBe(false);
+  });
+
+  it('deleteImage removes the whole derivation chain (children of children) and their files, and nothing else (F17)', () => {
+    const a = character();
+    const img = characterImage(a.id);
+    const derived = (parent: Image, width: number): Image => {
+      const id = newId('im');
+      return t.store.images.create({ ...parent, id, path: t.store.files.writeImage(manga.id, id, makePng(width, width)), width, height: width, source: 'upscaled', parentImageId: parent.id });
+    };
+    const child = derived(img, 16);
+    const grandchild = derived(child, 32);
+    const sibling = characterImage(a.id);
+    setCharacterRef(t.store, a.id, 'portrait', grandchild.id);
+    setCharacterRef(t.store, a.id, 'side', sibling.id);
+    expect(deleteImage(t.store, img.id).images.map((i) => i.id)).toEqual([img.id, child.id, grandchild.id]);
+    for (const gone of [img, child, grandchild]) {
+      expect(t.store.images.get(gone.id)).toBeNull();
+      expect(existsSync(t.store.files.abs(gone.path))).toBe(false);
+    }
+    expect(t.store.images.get(sibling.id)).not.toBeNull();
+    expect(existsSync(t.store.files.abs(sibling.path))).toBe(true);
+    expect(t.store.characters.require(a.id).refs).toEqual({ side: sibling.id });
   });
 
   it('deleteCharacter removes its images and strips it from panel scripts and refs', () => {
