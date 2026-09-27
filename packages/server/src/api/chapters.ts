@@ -1,8 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { CreateChapterSchema, CreatePageSchema, ReorderSchema, UpdateChapterSchema, type Chapter, type Page, type PageDetail } from '@manga/shared';
 import type { CoreDeps } from '../deps.js';
-import { chapterPages, createChapter, createCoverPage, createPage, deleteChapter, reorderPages } from '../domain/index.js';
-import { defined } from '../util/defined.js';
+import { chapterPages, createChapter, createCoverPage, createPage, deleteChapter, reorderPages, updateChapter } from '../domain/index.js';
 import { emitEntity, OK, type IdParams } from './util.js';
 
 export function registerChapterRoutes(app: FastifyInstance, { store, bus }: CoreDeps): void {
@@ -19,8 +18,9 @@ export function registerChapterRoutes(app: FastifyInstance, { store, bus }: Core
 
   app.get<IdParams>('/api/chapters/:id', async (req): Promise<Chapter> => store.chapters.require(req.params.id));
 
+  /** 409 conflict when another chapter of the manga has the requested number. */
   app.patch<IdParams>('/api/chapters/:id', async (req): Promise<Chapter> => {
-    const chapter = store.chapters.update(req.params.id, defined(UpdateChapterSchema.parse(req.body ?? {})));
+    const chapter = updateChapter(store, req.params.id, UpdateChapterSchema.parse(req.body ?? {}));
     emitEntity(bus, 'chapter', chapter.id, 'updated', chapter.mangaId);
     return chapter;
   });

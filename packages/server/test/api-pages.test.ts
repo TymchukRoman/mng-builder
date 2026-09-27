@@ -54,6 +54,19 @@ describe('chapters', () => {
     expect((await call(t.app, 'GET', `/api/chapters/${two.id}`)).status).toBe(404);
   });
 
+  it('renumbers a chapter only to a number no other chapter of the manga has: 409 conflict otherwise (F9)', async () => {
+    const { manga, chapter } = await seed();
+    const two = (await call<Chapter>(t.app, 'POST', `/api/mangas/${manga.id}/chapters`, { title: 'Two' })).body;
+    const clash = await call<ErrorReply>(t.app, 'PATCH', `/api/chapters/${two.id}`, { number: 1, title: 'Renamed' });
+    expect([clash.status, clash.body.error.code, clash.body.error.message]).toEqual([409, 'conflict', `chapter number 1 is already used by ${chapter.id}`]);
+    expect((await call<Chapter>(t.app, 'GET', `/api/chapters/${two.id}`)).body).toMatchObject({ number: 2, title: 'Two' });
+    expect((await call<Chapter>(t.app, 'PATCH', `/api/chapters/${two.id}`, { number: 2 })).status).toBe(200);
+    expect((await call<Chapter>(t.app, 'PATCH', `/api/chapters/${two.id}`, { number: 5 })).body.number).toBe(5);
+    const other = (await call<Manga>(t.app, 'POST', '/api/mangas', { title: 'Other' })).body;
+    const elsewhere = (await call<Chapter>(t.app, 'POST', `/api/mangas/${other.id}/chapters`, { title: 'Elsewhere' })).body;
+    expect((await call<Chapter>(t.app, 'PATCH', `/api/chapters/${elsewhere.id}`, { number: 5 })).body.number).toBe(5);
+  });
+
   it('refuses to add panels to a cover with 400 validation (F5)', async () => {
     const { manga } = await seed();
     const cover = (await call<PageDetail>(t.app, 'POST', `/api/mangas/${manga.id}/cover`)).body;
