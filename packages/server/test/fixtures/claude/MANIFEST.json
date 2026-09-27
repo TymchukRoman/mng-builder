@@ -8,6 +8,7 @@
     "review-reply.ndjson": "Hand-written: one Read tool call, then a JSON review.",
     "rate-limited.ndjson": "Hand-written: a rejected five_hour window (resets 2100-01-01) followed by an allowed seven_day window, then an error result.",
     "not-logged-in.ndjson": "Hand-written: an error result asking to /login.",
-    "tools-leak.ndjson": "Hand-written: system/init reporting tools the run must not have."
+    "tools-leak.ndjson": "Hand-written: system/init reporting tools the run must not have.",
+    "no-init.ndjson": "Hand-written: an assistant reply and a success result with no system/init event at all, so the toolset was never reported."
   }
 }

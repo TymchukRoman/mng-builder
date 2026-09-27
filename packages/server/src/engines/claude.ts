@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { ServiceState, Settings } from '@manga/shared';
 import { PermanentError, TransientError } from '../jobs/index.js';
@@ -29,13 +29,21 @@ export interface ClaudeEngineOptions {
 
 export interface ClaudeArgsInput { model: string; system: string; vision: boolean; mcpConfigPath: string; mangasDir: string }
 
-/** The prompt itself goes to stdin. Never --bare: it forces API-key auth and bypasses the subscription login. */
+/**
+ * The prompt itself goes to stdin. Never --bare: it forces API-key auth and bypasses the subscription
+ * login. `--safe-mode` disables user-level CLAUDE.md, skills, plugins, hooks and any MCP servers other
+ * than --mcp-config's; it does not affect auth, model selection or built-in tools (verified against
+ * `claude --help` on 2.1.281). `--system-prompt-file` was considered, to keep the system prompt (which
+ * embeds a JSON Schema) off the command line and under Windows' ~32,767-char limit, but does not exist
+ * on this CLI version — see the claude.ts header comment / task-6 fix report.
+ */
 export function buildClaudeArgs(i: ClaudeArgsInput): string[] {
   const args = [
     '-p', '--output-format', 'stream-json', '--verbose',
     '--model', i.model,
     '--system-prompt', i.system,
     '--tools', i.vision ? 'Read' : '',
+    '--safe-mode',
     '--strict-mcp-config', '--mcp-config', i.mcpConfigPath,
     '--permission-mode', 'dontAsk',
     '--no-session-persistence',
@@ -93,12 +101,12 @@ export class ClaudeEngine implements TextEngine {
     return state;
   }
 
+  /** Rewritten on every call, never just-if-missing: a previous crash or an external actor could have
+   *  left something else at this path, and `--strict-mcp-config` must always see a genuinely empty file. */
   private mcpConfigPath(): string {
     const file = join(dirname(this.opts.cwd), '.claude-empty-mcp.json');
-    if (!existsSync(file)) {
-      mkdirSync(dirname(file), { recursive: true });
-      writeFileSync(file, '{"mcpServers":{}}\n');
-    }
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, '{"mcpServers":{}}\n');
     return file;
   }
 
@@ -120,6 +128,8 @@ export class ClaudeEngine implements TextEngine {
       let settled = false;
       let stderr = '';
       let timer: NodeJS.Timeout | undefined;
+      let escalateTimer: NodeJS.Timeout | undefined;
+      let deadlineTimer: NodeJS.Timeout | undefined;
       // Set once a proactive kill (toolset breach, timeout, abort) is in flight. The promise settles
       // from 'close', never before: on Windows the child holds a lock on its own cwd until it actually
       // exits, and callers routinely rmSync that directory right after completeJson settles.
@@ -131,19 +141,41 @@ export class ClaudeEngine implements TextEngine {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        clearTimeout(escalateTimer);
+        clearTimeout(deadlineTimer);
         req.signal?.removeEventListener('abort', onAbort);
         if (err) reject(err);
         else resolve(text);
       };
+      // `child.killed` only means a signal was *sent*, not that the process actually exited — it flips
+      // true synchronously inside child.kill(), so `if (!child.killed) …` below it never ran. Whether the
+      // process is still alive is `exitCode`/`signalCode` staying null. A kill must always settle within
+      // a bounded time even if the child traps or ignores termination (SIGTERM, then SIGKILL after 2s,
+      // then force-settle 2s after that, tearing down stdout/stderr so nothing keeps the promise pending).
       const kill = (err: Error): void => {
         if (settled || pendingError) return;
         pendingError = err;
         child.kill();
-        setTimeout(() => { if (!child.killed) child.kill('SIGKILL'); }, 2_000).unref();
+        escalateTimer = setTimeout(() => {
+          if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+          deadlineTimer = setTimeout(() => {
+            child.stdout?.destroy();
+            child.stderr?.destroy();
+            finish(pendingError);
+          }, 2_000);
+          deadlineTimer.unref();
+        }, 2_000);
+        escalateTimer.unref();
       };
       const onAbort = (): void => kill(abortError(req.signal));
       const acc = createClaudeAccumulator({
         onInit: (tools) => {
+          // `tools === null` means the init event carried no tools array at all — the toolset could not
+          // be verified, so this must fail closed exactly like an actually-unlocked toolset would.
+          if (tools === null) {
+            kill(new PermanentError('claude toolset could not be verified'));
+            return;
+          }
           const unexpected = tools.filter((t) => !allowed.includes(t));
           if (unexpected.length > 0) {
             kill(new PermanentError(`claude run aborted: unexpected tools available (${unexpected.join(', ')}). The --tools flag did not take effect with this CLI version.`));
@@ -168,8 +200,14 @@ export class ClaudeEngine implements TextEngine {
       child.on('close', (code) => {
         if (settled) return;
         if (pendingError) { finish(pendingError); return; }
+        // No init event ever arrived: same "could not verify the toolset" failure as a malformed one.
+        const state = acc.end();
+        if (state.tools === null) {
+          finish(new PermanentError('claude toolset could not be verified'));
+          return;
+        }
         try {
-          finish(null, this.interpret(acc.end(), code, stderr));
+          finish(null, this.interpret(state, code, stderr));
         } catch (err) {
           finish(err as Error);
         }
@@ -190,7 +228,10 @@ export class ClaudeEngine implements TextEngine {
       throw new QuotaExceededError(resetsAt);
     }
     if (failed) {
-      if (/not logged in|\/login|log ?in|authenticat|invalid api key|oauth|credential/i.test(blob)) throw new EngineUnavailableError(LOGIN_HINT);
+      // Anchored to the CLI's actual wording, not generic words like "login"/"credential"/"oauth" that
+      // a transient failure could also mention in passing (that would misfile it as unavailable instead
+      // of retryable).
+      if (/not logged in|please run \/login|invalid api key|oauth token/i.test(blob)) throw new EngineUnavailableError(LOGIN_HINT);
       throw new TransientError(`claude failed${code !== null ? ` (exit ${code})` : ''}: ${blob.trim().slice(0, 500) || 'no output'}`);
     }
     return text;
@@ -200,33 +241,53 @@ export class ClaudeEngine implements TextEngine {
     mkdirSync(this.opts.cwd, { recursive: true });
     return new Promise<ServiceState>((resolve) => {
       let out = '';
+      let settled = false;
       let timedOut = false;
+      let escalateTimer: NodeJS.Timeout | undefined;
+      let deadlineTimer: NodeJS.Timeout | undefined;
       const child = spawn(this.opts.bin, [...(this.opts.binArgs ?? []), 'auth', 'status', '--json'], {
         ...HIDDEN, cwd: this.opts.cwd, shell: false, env: claudeEnv(process.env), stdio: ['ignore', 'pipe', 'pipe'],
       });
-      // Resolve only from 'close', same reasoning as ask(): on Windows the child holds its cwd open
-      // until it actually exits, and a timed-out or missing binary must not race that exit.
+      // Settles only from 'close' (or 'error'), same reasoning as ask(): on Windows the child holds its
+      // cwd open until it actually exits. A kill must always settle within a bounded time — see ask().
+      const finish = (state: ServiceState): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        clearTimeout(escalateTimer);
+        clearTimeout(deadlineTimer);
+        resolve(state);
+      };
       const timer = setTimeout(() => {
         timedOut = true;
         child.kill();
+        escalateTimer = setTimeout(() => {
+          if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+          deadlineTimer = setTimeout(() => {
+            child.stdout?.destroy();
+            child.stderr?.destroy();
+            finish({ ok: false, detail: 'claude auth status did not answer within 10 s' });
+          }, 2_000);
+          deadlineTimer.unref();
+        }, 2_000);
+        escalateTimer.unref();
       }, 10_000);
       child.on('error', (err: NodeJS.ErrnoException) => {
-        clearTimeout(timer);
-        resolve({ ok: false, detail: err.code === 'ENOENT' ? `claude CLI not found ("${this.opts.bin}")` : err.message });
+        finish({ ok: false, detail: err.code === 'ENOENT' ? `claude CLI not found ("${this.opts.bin}")` : err.message });
       });
       child.stdout.setEncoding('utf8');
       child.stdout.on('data', (chunk: string) => { out += chunk; });
       child.on('close', () => {
-        clearTimeout(timer);
+        if (settled) return;
         if (timedOut) {
-          resolve({ ok: false, detail: 'claude auth status did not answer within 10 s' });
+          finish({ ok: false, detail: 'claude auth status did not answer within 10 s' });
           return;
         }
         try {
           const status = JSON.parse(out) as { loggedIn?: boolean; authMethod?: string };
-          resolve(status.loggedIn ? { ok: true, detail: `logged in (${status.authMethod ?? 'unknown'})` } : { ok: false, detail: LOGIN_HINT });
+          finish(status.loggedIn ? { ok: true, detail: `logged in (${status.authMethod ?? 'unknown'})` } : { ok: false, detail: LOGIN_HINT });
         } catch {
-          resolve({ ok: false, detail: `unexpected output from claude auth status: ${out.slice(0, 200)}` });
+          finish({ ok: false, detail: `unexpected output from claude auth status: ${out.slice(0, 200)}` });
         }
       });
     });

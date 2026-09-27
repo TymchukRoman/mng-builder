@@ -34,12 +34,17 @@ describe('claude stream-json parsing', () => {
   });
 
   it('reports the init toolset and tool uses through hooks', () => {
-    const inits: string[][] = [];
+    const inits: Array<string[] | null> = [];
     const uses: string[] = [];
     const state = parseClaudeStream(fixture('review-reply'), { onInit: (t) => inits.push(t), onToolUse: (n) => uses.push(n) });
     expect(inits).toEqual([['Read']]);
     expect(uses).toEqual(['Read']);
     expect(state.result?.text).toContain('"pass":false');
+  });
+
+  it('reports a null toolset when system/init carries no tools array, distinct from a declared empty one', () => {
+    expect(classifyLine('{"type":"system","subtype":"init"}')).toEqual({ kind: 'init', tools: null });
+    expect(classifyLine('{"type":"system","subtype":"init","tools":[]}')).toEqual({ kind: 'init', tools: [] });
   });
 
   it('ignores garbage and host chatter', () => {

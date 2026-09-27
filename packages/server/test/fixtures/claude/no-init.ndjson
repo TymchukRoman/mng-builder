@@ -1,0 +1,2 @@
+{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"{}"}]},"session_id":"00000000-0000-4000-8000-000000000006"}
+{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"{}","session_id":"00000000-0000-4000-8000-000000000006"}

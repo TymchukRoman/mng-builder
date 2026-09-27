@@ -15,7 +15,7 @@ export interface RateLimitInfo {
 }
 
 export type StreamEvent =
-  | { kind: 'init'; tools: string[] }
+  | { kind: 'init'; tools: string[] | null }
   | { kind: 'assistant'; text: string; toolUses: string[] }
   | { kind: 'rate_limit'; info: RateLimitInfo }
   | { kind: 'result'; isError: boolean; text: string | null }
@@ -44,8 +44,11 @@ export function classify(raw: unknown): StreamEvent {
   switch (raw['type']) {
     case 'system': {
       if (raw['subtype'] !== 'init') return IGNORE;
+      // `null` means the init event carried no tools array at all (malformed/unexpected shape), distinct
+      // from a genuinely empty array (a run that legitimately declared zero tools). Callers that must
+      // verify the toolset (ClaudeEngine) fail closed on `null`; they must not treat it as "no tools".
       const tools = raw['tools'];
-      return { kind: 'init', tools: Array.isArray(tools) ? tools.filter((t): t is string => typeof t === 'string') : [] };
+      return { kind: 'init', tools: Array.isArray(tools) ? tools.filter((t): t is string => typeof t === 'string') : null };
     }
     case 'assistant': {
       const message = raw['message'];
@@ -97,7 +100,7 @@ export interface ClaudeRunState {
 }
 
 export interface AccumulatorHooks {
-  onInit?: (tools: string[]) => void;
+  onInit?: (tools: string[] | null) => void;
   onToolUse?: (name: string) => void;
 }
 
