@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_PAGE_FORMAT, STYLE_PRESETS, type Character, type Image, type Manga, type PageDetail, type ServerEvent } from '@manga/shared';
@@ -206,6 +206,18 @@ describe('characters', () => {
 });
 
 describe('/files/images', () => {
+  it('streams the file from disk with its length and sniffed type, and 404s when the file is gone (F16)', async () => {
+    const m = await newManga();
+    const c = await newCharacter(m.id);
+    const png = makePng(640, 480);
+    const image = (await upload(`/api/characters/${c.id}/upload?slot=portrait`, 'p.png', 'image/png', png)).json() as Image;
+    const res = await t.app.inject({ method: 'GET', url: `/files/images/${image.id}.png` });
+    expect([res.statusCode, res.headers['content-type'], res.headers['content-length']]).toEqual([200, 'image/png', String(png.length)]);
+    expect(res.rawPayload.equals(png)).toBe(true);
+    rmSync(join(t.lib, image.path));
+    expect(await call(t.app, 'GET', `/files/images/${image.id}.png`)).toMatchObject({ status: 404, body: { error: { code: 'not_found' } } });
+  });
+
   it('404s for unknown ids, other extensions and path tricks', async () => {
     for (const url of ['/files/images/im_missing000.png', '/files/images/im_missing000', '/files/images/..%2F..%2Flibrary.sqlite', '/files/images/..%2Fx.png']) {
       expect((await t.app.inject({ method: 'GET', url })).statusCode, url).toBe(404);
