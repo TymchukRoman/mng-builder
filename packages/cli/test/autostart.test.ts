@@ -18,28 +18,41 @@ function library(): string {
   return d;
 }
 const config = (libraryPath: string, port = 4317): AppConfig => AppConfigSchema.parse({ libraryPath, port });
+const CURRENT = 'build-2';
 
-/** A fake world: a clock advanced by sleep, a probe answering per URL, and a spawn that may bring the server up. */
-function fakeDeps(opts: { healthy?: (url: string) => boolean; upAfterSpawn?: boolean } = {}) {
+/**
+ * A fake world: a clock advanced by sleep, a health check answering per URL with a build stamp (a spawned server runs
+ * the CURRENT build), a spawn that may bring the server up, and a stop that takes a server down.
+ */
+function fakeDeps(opts: { healthy?: (url: string) => boolean; upAfterSpawn?: boolean; build?: string | null } = {}) {
   let clock = 0;
   let up = false;
+  const down = new Set<string>();
   const probes: string[] = [];
   const spawned: string[] = [];
+  const stopped: Array<[string, number]> = [];
   const deps: EnsureDeps = {
-    probe: async (url) => {
+    health: async (url) => {
       probes.push(url);
-      return up || (opts.healthy?.(url) ?? false);
+      if (up) return { ok: true, pid: 5151, version: '0.1.0', build: CURRENT };
+      const alive = !down.has(url) && (opts.healthy?.(url) ?? false);
+      return alive ? { ok: true, pid: 4242, version: '0.1.0', build: opts.build === undefined ? CURRENT : opts.build } : null;
     },
+    build: () => CURRENT,
     spawnServer: (lib) => {
       spawned.push(lib);
       if (opts.upAfterSpawn) up = true;
+    },
+    stopServer: async (url, pid) => {
+      stopped.push([url, pid]);
+      down.add(url);
     },
     sleep: async (ms) => {
       clock += ms;
     },
     now: () => clock,
   };
-  return { deps, probes, spawned };
+  return { deps, probes, spawned, stopped };
 }
 
 describe('ensureServer', () => {
@@ -78,6 +91,33 @@ describe('ensureServer', () => {
     const f = fakeDeps();
     await expect(ensureServer({ url: 'http://127.0.0.1:7777/', deps: f.deps })).rejects.toThrow('server not reachable at http://127.0.0.1:7777');
     expect(f.spawned).toEqual([]);
+  });
+
+  it('stops a server that runs an outdated build and starts the current one, with one line for the user (F2)', async () => {
+    const lib = library();
+    writeServerInfo(lib, { pid: 4242, port: 5555, startedAt: 'x' });
+    const f = fakeDeps({ healthy: (url) => url === 'http://127.0.0.1:5555', build: 'build-1', upAfterSpawn: true });
+    const lines: string[] = [];
+    expect(await ensureServer({ config: config(lib), deps: f.deps, log: (line) => lines.push(line) })).toBe('http://127.0.0.1:4317');
+    expect(f.stopped).toEqual([['http://127.0.0.1:5555', 4242]]);
+    expect(f.spawned).toEqual([lib]);
+    expect(lines).toEqual(['restarting the manga server (pid 4242): it runs an outdated build']);
+  });
+
+  it('also restarts a server too old to report a build at all', async () => {
+    const f = fakeDeps({ healthy: (url) => url === 'http://127.0.0.1:4317', build: null, upAfterSpawn: true });
+    expect(await ensureServer({ config: config(library()), deps: f.deps })).toBe('http://127.0.0.1:4317');
+    expect(f.stopped).toEqual([['http://127.0.0.1:4317', 4242]]);
+    expect(f.spawned).toHaveLength(1);
+  });
+
+  it('keeps a server of the current build, and never restarts the server of an explicit --url', async () => {
+    const same = fakeDeps({ healthy: () => true });
+    expect(await ensureServer({ config: config(library()), deps: same.deps })).toBe('http://127.0.0.1:4317');
+    expect([same.stopped, same.spawned]).toEqual([[], []]);
+    const old = fakeDeps({ healthy: () => true, build: 'build-1' });
+    expect(await ensureServer({ url: 'http://127.0.0.1:7777', deps: old.deps })).toBe('http://127.0.0.1:7777');
+    expect([old.stopped, old.spawned]).toEqual([[], []]);
   });
 });
 

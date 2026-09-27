@@ -18,7 +18,7 @@ export interface ContextOptions { json: boolean; wait: boolean; url: string | un
 
 /** Finds (or auto-starts) the server and builds the context every command uses. */
 export async function createContext(opts: ContextOptions): Promise<CliContext> {
-  const baseUrl = await ensureServer({ url: opts.url });
+  const baseUrl = await ensureServer({ url: opts.url, log: (line) => opts.io.stderr(`${line}\n`) });
   const api = new ApiClient(baseUrl);
   return {
     api,

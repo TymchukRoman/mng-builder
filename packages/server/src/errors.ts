@@ -36,6 +36,14 @@ export class ConflictError extends HttpError {
   }
 }
 
+/** A request from somewhere the server does not serve (not loopback, a foreign Host or Origin). */
+export class ForbiddenError extends HttpError {
+  constructor(message: string) {
+    super(403, 'forbidden', message);
+    this.name = 'ForbiddenError';
+  }
+}
+
 /** A row whose stored JSON no longer matches its schema. Never shown to clients in detail. */
 export class StoreCorruptError extends HttpError {
   constructor(entity: string, id: string, detail: string) {

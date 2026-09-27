@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { DEFAULT_SETTINGS, type ServerEvent, type Settings } from '@manga/shared';
 import { startServer, type AppModule } from '../src/app.js';
-import { readServerInfo } from '../src/config.js';
+import { fetchHealth, ownBuildStamp, readServerInfo } from '../src/config.js';
 import { StoreCorruptError } from '../src/errors.js';
 import { call, makeTestApp, type TestApp } from './helpers/app.js';
 import { tempDir } from './helpers/tmp.js';
@@ -21,8 +21,8 @@ describe('system routes', () => {
     await t.close();
   });
 
-  it('GET /api/health reports ok, pid and version', async () => {
-    expect(await call(t.app, 'GET', '/api/health')).toEqual({ status: 200, body: { ok: true, pid: process.pid, version: '0.1.0' } });
+  it('GET /api/health reports ok, pid, version and the build stamp fixed at start', async () => {
+    expect(await call(t.app, 'GET', '/api/health')).toEqual({ status: 200, body: { ok: true, pid: process.pid, version: '0.1.0', build: ownBuildStamp() } });
   });
 
   it('GET /api/status reports unconfigured services and the queue', async () => {
@@ -246,6 +246,61 @@ describe('startServer', () => {
       expect(readServerInfo(dir.path)?.port).toBe(port);
     } finally {
       await first.stop();
+      dir.cleanup();
+    }
+  });
+});
+
+describe('POST /api/shutdown', () => {
+  it('does not exist on an app built without onShutdown (the test app)', async () => {
+    const t = await makeTestApp();
+    try {
+      expect((await call(t.app, 'POST', '/api/shutdown')).status).toBe(404);
+    } finally {
+      await t.close();
+    }
+  });
+
+  it('answers {ok:true} and then calls onShutdown once; refuses callers that are not on this machine', async () => {
+    const onShutdown = vi.fn();
+    const t = await makeTestApp({ onShutdown });
+    try {
+      const remote = await t.app.inject({ method: 'POST', url: '/api/shutdown', remoteAddress: '10.0.0.7' });
+      expect([remote.statusCode, remote.json()]).toEqual([403, { error: { code: 'forbidden', message: 'shutdown is only accepted from this machine' } }]);
+      expect(await call(t.app, 'POST', '/api/shutdown')).toEqual({ status: 200, body: { ok: true } });
+      await vi.waitFor(() => expect(onShutdown).toHaveBeenCalledTimes(1));
+      expect((await call(t.app, 'POST', '/api/shutdown')).status).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(onShutdown).toHaveBeenCalledTimes(1);
+    } finally {
+      await t.close();
+    }
+  });
+
+  it('stops a server started with startServer: health stops answering and server.json goes', async () => {
+    const dir = tempDir();
+    const server = await startServer({ config: { libraryPath: dir.path, port: 0 }, uiDir: null });
+    try {
+      const res = await fetch(`${server.url}/api/shutdown`, { method: 'POST' });
+      expect([res.status, await res.json()]).toEqual([200, { ok: true }]);
+      await vi.waitFor(() => expect(readServerInfo(dir.path)).toBeNull());
+      expect(await fetchHealth(server.url)).toBeNull();
+    } finally {
+      await server.stop();
+      dir.cleanup();
+    }
+  });
+
+  it("runs startServer's onShutdown instead when one is given (main.ts exits the process from there)", async () => {
+    const dir = tempDir();
+    const onShutdown = vi.fn();
+    const server = await startServer({ config: { libraryPath: dir.path, port: 0 }, uiDir: null, onShutdown });
+    try {
+      expect((await fetch(`${server.url}/api/shutdown`, { method: 'POST' })).status).toBe(200);
+      await vi.waitFor(() => expect(onShutdown).toHaveBeenCalledTimes(1));
+      expect((await fetchHealth(server.url))?.pid).toBe(process.pid);
+    } finally {
+      await server.stop();
       dir.cleanup();
     }
   });

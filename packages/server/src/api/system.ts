@@ -4,6 +4,7 @@ import {
   type AppConfig, type PresetInfo, type ServiceState, type ServiceStatus, type Settings, type StylePreset,
 } from '@manga/shared';
 import type { CoreDeps } from '../deps.js';
+import { ownBuildStamp, type ServerHealth } from '../health.js';
 import { VERSION } from '../version.js';
 import { emitEntity } from './util.js';
 
@@ -16,7 +17,8 @@ async function probe(check: () => Promise<ServiceState>): Promise<ServiceState> 
 }
 
 export function registerSystemRoutes(app: FastifyInstance, deps: CoreDeps): void {
-  app.get('/api/health', async () => ({ ok: true, pid: process.pid, version: VERSION }));
+  const build = ownBuildStamp(); // fixed at start: the CLI restarts a server whose build differs from the code on disk
+  app.get('/api/health', async (): Promise<ServerHealth> => ({ ok: true, pid: process.pid, version: VERSION, build }));
 
   app.get('/api/status', async (): Promise<ServiceStatus> => {
     const providers = deps.statusProviders;

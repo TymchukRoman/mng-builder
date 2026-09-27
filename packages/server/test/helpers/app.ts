@@ -9,8 +9,8 @@ import { tempDir } from './tmp.js';
 
 export interface TestApp { app: FastifyInstance; deps: CoreDeps; lib: string; close(): Promise<void> }
 
-/** An app over a temp library, not listening (use app.inject). The job queue is NOT started. */
-export async function makeTestApp(opts: { modules?: AppModule[]; uiDir?: string | null } = {}): Promise<TestApp> {
+/** An app over a temp library, not listening (use app.inject). The job queue is NOT started. POST /api/shutdown exists only with `onShutdown`. */
+export async function makeTestApp(opts: { modules?: AppModule[]; uiDir?: string | null; onShutdown?: () => void } = {}): Promise<TestApp> {
   const dir = tempDir('manga-api-');
   const store = openStore(dir.path);
   const bus = new EventBus();
@@ -21,7 +21,7 @@ export async function makeTestApp(opts: { modules?: AppModule[]; uiDir?: string 
     queue: new JobQueue({ store, bus, gpu, pollMs: 10 }),
     statusProviders: defaultStatusProviders(),
   };
-  const app = await buildApp(deps, opts.modules ?? [], { uiDir: opts.uiDir ?? null });
+  const app = await buildApp(deps, opts.modules ?? [], { uiDir: opts.uiDir ?? null, ...(opts.onShutdown ? { onShutdown: opts.onShutdown } : {}) });
   await app.ready();
   return {
     app, deps, lib: dir.path,

@@ -30,6 +30,8 @@ npm start               # or: manga serve [--open]
 
 The server listens on `http://127.0.0.1:4317`, on loopback only. You rarely need to start it by hand: when no server is running, any other `manga` command starts one in the background. That server runs without a window and logs to `<library>/logs/server.log`.
 
+`manga stop` stops the library's server (the one named in `<library>/server.json`), wherever it was started. After `npm run build`, you don't need to stop it yourself: the next `manga` command notices that the running server is an older build, stops it and starts the new one, printing one line to stderr.
+
 ## Configuration
 
 `%USERPROFILE%\.manga-builder\config.json` is optional, and so is every key in it:
@@ -73,6 +75,7 @@ References take an id or a unique name or title, case-insensitive. A chapter can
 | Command | What it does |
 |---|---|
 | `manga serve [--open]` | Run the server in this terminal |
+| `manga stop` | Stop the library's server; prints `no server running` if there is none |
 | `manga status` | Server, engines, ComfyUI and queue status |
 | `manga engine [claude\|local] [--task story=local …]` | Show or set the AI engine; `task=default` clears an override |
 | `manga create "<title>" [--lang en\|uk] [--color bw\|color] [--dir rtl\|ltr] [--style <preset>]` | Create a manga |

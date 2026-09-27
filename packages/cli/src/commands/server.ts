@@ -3,9 +3,11 @@ import type { Command } from 'commander';
 import {
   EngineNameSchema, TaskSchema, type EngineName, type ServiceState, type ServiceStatus, type Settings, type SettingsPatch, type Task,
 } from '@manga/shared';
+import { loadConfig } from '@manga/server/config';
 import type { CliContext } from '../context.js';
 import { CliError } from '../errors.js';
 import { onInterrupt, processIo, type CliIo } from '../io.js';
+import { libraryServer, serverAt, stopServer } from '../stop.js';
 
 function browserCommand(url: string): { cmd: string; args: string[] } {
   if (process.platform === 'win32') return { cmd: 'explorer.exe', args: [url] };
@@ -71,13 +73,31 @@ export function registerServerCommands(program: Command, ctx: () => Promise<CliC
     .option('--open', 'open the UI in the browser')
     .action(async (opts: { open?: boolean }) => {
       const { startServer } = await import('@manga/server');
-      const server = await startServer();
+      let end = (): void => {};
+      const ended = new Promise<void>((resolve) => {
+        end = resolve;
+      });
+      const server = await startServer({ onShutdown: () => end() }); // `manga stop` ends this command too
       io.stdout(`manga server listening on ${server.url} (library: ${server.deps.config.libraryPath})\n`);
       if (opts.open === true) openBrowser(server.url);
-      await new Promise<void>((resolve) => {
-        onInterrupt(io.signal, resolve);
-      });
+      const dispose = onInterrupt(io.signal, end);
+      await ended;
+      dispose();
       await server.stop();
+    });
+
+  program
+    .command('stop')
+    .description("stop this library's server (the one in <library>/server.json, or the one at --url)")
+    .action(async () => {
+      const url = program.opts<{ url?: string }>().url?.replace(/\/+$/, '');
+      const running = url === undefined ? await libraryServer(loadConfig().libraryPath) : await serverAt(url);
+      if (running === null) {
+        io.stdout('no server running\n');
+        return;
+      }
+      await stopServer(running.url, running.pid);
+      io.stdout(`stopped ${running.pid}\n`);
     });
 
   program

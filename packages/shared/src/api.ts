@@ -78,4 +78,4 @@ export interface PresetInfo { name: string; panelCount: number }
 export interface RecipeInfo { id: string; label: string; maxRefs: number; requiresRefs: boolean; supportsPose: boolean; supportsLineart: boolean; supportsLoras: boolean; supportsInit: boolean }
 export interface ServiceState { ok: boolean; detail: string }
 export interface ServiceStatus { claude: ServiceState; ollama: ServiceState; comfy: ServiceState; queue: { queued: number; running: number; pausedLanes: Array<{ lane: Lane; until: string | null; reason: string }> } }
-export interface ApiErrorBody { error: { code: 'not_found' | 'validation' | 'conflict' | 'needs_confirm' | 'engine_unavailable' | 'internal'; message: string; details?: unknown } }
+export interface ApiErrorBody { error: { code: 'not_found' | 'validation' | 'conflict' | 'needs_confirm' | 'engine_unavailable' | 'forbidden' | 'internal'; message: string; details?: unknown } }

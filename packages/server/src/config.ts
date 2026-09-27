@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { AppConfigSchema, type AppConfig } from '@manga/shared';
 
+export * from './health.js';
 export * from './server-info.js';
 
 export function configPath(): string {
