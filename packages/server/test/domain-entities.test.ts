@@ -36,6 +36,11 @@ describe('mangas', () => {
     expect(manga).toMatchObject({ title: 'Oni', pageFormat: DEFAULT_PAGE_FORMAT, styleGuide: STYLE_PRESETS['manga-bw']?.styleGuide, coverPageId: null });
   });
 
+  it("uses the style preset's colour mode when none is given (F3)", () => {
+    expect(createManga(t.store, { title: 'Neon', synopsis: '', language: 'en', readingDirection: 'rtl', stylePreset: 'anime-color' }).colorMode).toBe('color');
+    expect(createManga(t.store, { title: 'Ink', synopsis: '', language: 'en', colorMode: 'bw', readingDirection: 'rtl', stylePreset: 'anime-color' }).colorMode).toBe('bw');
+  });
+
   it('rejects an unknown style preset, including prototype keys', () => {
     for (const stylePreset of ['nope', 'constructor']) {
       expect(() => createManga(t.store, { title: 'X', synopsis: '', language: 'en', colorMode: 'bw', readingDirection: 'rtl', stylePreset })).toThrow(ValidationError);

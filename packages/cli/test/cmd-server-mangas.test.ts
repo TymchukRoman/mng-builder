@@ -72,6 +72,14 @@ describe('mangas', () => {
     expect(gone.stderr).toBe('error: no manga matches "Sunny"\n');
   });
 
+  it('create takes the colour mode from --style, and warns when an explicit --color disagrees (F3)', async () => {
+    const styled = await h.run('--json', 'create', 'Neon Alley', '--style', 'anime-color');
+    expect([styled.code, (JSON.parse(styled.stdout) as Manga).colorMode, styled.stderr]).toEqual([0, 'color', '']);
+    const mixed = await h.run('--json', 'create', 'Ink Alley', '--color', 'bw', '--style', 'anime-color');
+    expect([mixed.code, (JSON.parse(mixed.stdout) as Manga).colorMode]).toEqual([0, 'bw']);
+    expect(mixed.stderr).toBe('warning: style anime-color is a color preset; keeping --color bw\n');
+  });
+
   it('reports API validation errors on stderr with exit 1', async () => {
     const r = await h.run('create', 'X', '--lang', 'fr');
     expect(r.code).toBe(1);

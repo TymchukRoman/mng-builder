@@ -32,20 +32,25 @@ export function registerMangaCommands(program: Command, ctx: () => Promise<CliCo
     .description('create a manga')
     .argument('<title>')
     .option('--lang <lang>', 'en or uk', 'en')
-    .option('--color <mode>', 'bw or color', 'bw')
+    .option('--color <mode>', "bw or color (default: the style preset's)")
     .option('--dir <dir>', 'reading direction: rtl or ltr', 'rtl')
     .option('--style <preset>', `style preset: ${Object.keys(STYLE_PRESETS).join(', ')} (default manga-bw; anime-color with --color color)`)
     .option('--synopsis <text>', 'short synopsis', '')
-    .action(async (title: string, opts: { lang: string; color: string; dir: string; style?: string; synopsis: string }) => {
+    .action(async (title: string, opts: { lang: string; color?: string; dir: string; style?: string; synopsis: string }) => {
       const c = await ctx();
+      const stylePreset = opts.style ?? (opts.color === 'color' ? 'anime-color' : 'manga-bw');
       const manga = await c.api.post<Manga>('/api/mangas', {
         title,
         synopsis: opts.synopsis,
         language: opts.lang,
-        colorMode: opts.color,
+        ...(opts.color === undefined ? {} : { colorMode: opts.color }),
         readingDirection: opts.dir,
-        stylePreset: opts.style ?? (opts.color === 'color' ? 'anime-color' : 'manga-bw'),
+        stylePreset,
       });
+      const presetMode = Object.hasOwn(STYLE_PRESETS, stylePreset) ? STYLE_PRESETS[stylePreset]?.colorMode : undefined;
+      if (presetMode !== undefined && presetMode !== manga.colorMode) {
+        c.io.stderr(`warning: style ${stylePreset} is a ${presetMode} preset; keeping --color ${manga.colorMode}\n`);
+      }
       c.out(manga, () => `created ${describeManga(manga)}`);
     });
 

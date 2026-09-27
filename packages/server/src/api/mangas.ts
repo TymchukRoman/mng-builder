@@ -7,8 +7,14 @@ import { emitEntity, OK, type IdParams } from './util.js';
 export function registerMangaRoutes(app: FastifyInstance, { store, bus }: CoreDeps): void {
   app.get('/api/mangas', async (): Promise<Manga[]> => store.mangas.list());
 
+  /**
+   * CreateMangaSchema defaults colorMode to 'bw', so the raw body tells whether the client chose it: when it did not,
+   * the style preset's colour mode applies.
+   */
   app.post('/api/mangas', async (req): Promise<Manga> => {
-    const manga = createManga(store, CreateMangaSchema.parse(req.body ?? {}));
+    const { colorMode, ...rest } = CreateMangaSchema.parse(req.body ?? {});
+    const chosen = typeof req.body === 'object' && req.body !== null && (req.body as Record<string, unknown>)['colorMode'] !== undefined;
+    const manga = createManga(store, chosen ? { ...rest, colorMode } : rest);
     emitEntity(bus, 'manga', manga.id, 'created', manga.id);
     return manga;
   });

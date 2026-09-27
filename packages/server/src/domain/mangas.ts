@@ -1,12 +1,13 @@
 import type { z } from 'zod';
 import {
-  DEFAULT_PAGE_FORMAT, mirrorLayout, STYLE_PRESETS, type CreateMangaSchema, type Manga, type StylePreset, type UpdateMangaSchema,
+  DEFAULT_PAGE_FORMAT, mirrorLayout, STYLE_PRESETS, type ColorMode, type CreateMangaSchema, type Manga, type StylePreset, type UpdateMangaSchema,
 } from '@manga/shared';
 import { ValidationError } from '../errors.js';
 import type { Store } from '../store/index.js';
 import { defined } from '../util/defined.js';
 
-export type CreateMangaInput = z.infer<typeof CreateMangaSchema>;
+/** `colorMode` omitted = the style preset's colour mode. */
+export type CreateMangaInput = Omit<z.infer<typeof CreateMangaSchema>, 'colorMode'> & { colorMode?: ColorMode };
 export type UpdateMangaInput = z.infer<typeof UpdateMangaSchema>;
 
 export function stylePreset(id: string): StylePreset {
@@ -15,13 +16,14 @@ export function stylePreset(id: string): StylePreset {
   return preset;
 }
 
+/** An explicit colorMode wins over the preset's, even when they disagree (the CLI warns about that). */
 export function createManga(store: Store, input: CreateMangaInput): Manga {
   const preset = stylePreset(input.stylePreset);
   return store.mangas.create({
     title: input.title,
     synopsis: input.synopsis,
     language: input.language,
-    colorMode: input.colorMode,
+    colorMode: input.colorMode ?? preset.colorMode,
     readingDirection: input.readingDirection,
     pageFormat: structuredClone(DEFAULT_PAGE_FORMAT),
     styleGuide: structuredClone(preset.styleGuide),

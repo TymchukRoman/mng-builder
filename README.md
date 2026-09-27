@@ -78,7 +78,7 @@ References take an id or a unique name or title, case-insensitive. A chapter can
 | `manga stop` | Stop the library's server; prints `no server running` if there is none |
 | `manga status` | Server, engines, ComfyUI and queue status |
 | `manga engine [claude\|local] [--task story=local …]` | Show or set the AI engine; `task=default` clears an override |
-| `manga create "<title>" [--lang en\|uk] [--color bw\|color] [--dir rtl\|ltr] [--style <preset>]` | Create a manga |
+| `manga create "<title>" [--lang en\|uk] [--color bw\|color] [--dir rtl\|ltr] [--style <preset>]` | Create a manga. The colour mode follows the style preset unless `--color` is given (it then wins, with a warning if they disagree) |
 | `manga list` · `manga show <manga>` · `manga rm <manga>` | List, inspect (characters, chapters, pages, panel ids) or delete |
 | `manga character add <manga> --name … [--role] [--appearance] [--personality] [--speech] [--seed]` | Add a character |
 | `manga character upload <char> <file> --slot portrait\|fullbody\|side\|back` | Use your own reference image |

@@ -49,6 +49,14 @@ describe('mangas', () => {
     ]);
   });
 
+  it('takes the colour mode from the style preset unless the request sets one, which then wins (F3)', async () => {
+    const create = async (body: Record<string, unknown>) => (await call<Manga>(t.app, 'POST', '/api/mangas', { title: 'X', ...body })).body.colorMode;
+    expect(await create({ stylePreset: 'anime-color' })).toBe('color');
+    expect(await create({ stylePreset: 'anime-color', colorMode: 'bw' })).toBe('bw');
+    expect(await create({ stylePreset: 'manga-bw', colorMode: 'color' })).toBe('color');
+    expect(await create({})).toBe('bw');
+  });
+
   it('rejects bad input with 400 validation and unknown ids with 404 not_found', async () => {
     const noTitle = await call<ErrorReply>(t.app, 'POST', '/api/mangas', {});
     expect(noTitle.status).toBe(400);
