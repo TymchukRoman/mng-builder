@@ -47,18 +47,18 @@ export function registerMangaCommands(program: Command, ctx: () => Promise<CliCo
     .option('--synopsis <text>', 'short synopsis', '')
     .action(async (title: string, opts: { lang: string; color?: string; dir: string; style?: string; synopsis: string }) => {
       const c = await ctx();
-      const stylePreset = opts.style ?? (opts.color === 'color' ? 'anime-color' : 'manga-bw');
+      const presetId = opts.style ?? (opts.color === 'color' ? 'anime-color' : 'manga-bw');
       const manga = await c.api.post<Manga>('/api/mangas', {
         title,
         synopsis: opts.synopsis,
         language: opts.lang,
         ...(opts.color === undefined ? {} : { colorMode: opts.color }),
         readingDirection: opts.dir,
-        stylePreset,
+        stylePreset: presetId,
       });
-      const presetMode = Object.hasOwn(STYLE_PRESETS, stylePreset) ? STYLE_PRESETS[stylePreset]?.colorMode : undefined;
+      const presetMode = Object.hasOwn(STYLE_PRESETS, presetId) ? STYLE_PRESETS[presetId]?.colorMode : undefined;
       if (presetMode !== undefined && presetMode !== manga.colorMode) {
-        c.io.stderr(`warning: style ${stylePreset} is a ${presetMode} preset; keeping --color ${manga.colorMode}\n`);
+        c.io.stderr(`warning: style ${presetId} is a ${presetMode} preset; keeping --color ${manga.colorMode}\n`);
       }
       c.out(manga, () => `created ${describeManga(manga)}`);
     });

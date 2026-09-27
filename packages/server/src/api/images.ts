@@ -9,7 +9,7 @@ import { sniffImageMime } from '../files/image-meta.js';
 import { emitEntity, OK, type IdParams } from './util.js';
 
 /** The size and the first bytes (enough to tell PNG from JPEG) of a file. */
-async function head(path: string): Promise<{ size: number; bytes: Buffer }> {
+async function readStart(path: string): Promise<{ size: number; bytes: Buffer }> {
   const file = await open(path, 'r');
   try {
     const bytes = Buffer.alloc(8);
@@ -43,7 +43,7 @@ export function registerImageRoutes(app: FastifyInstance, { store, bus }: CoreDe
     const path = store.files.abs(image.path);
     let start: { size: number; bytes: Buffer };
     try {
-      start = await head(path);
+      start = await readStart(path);
     } catch {
       throw new NotFoundError('image file', image.path);
     }
