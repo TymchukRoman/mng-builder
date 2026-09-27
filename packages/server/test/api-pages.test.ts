@@ -105,6 +105,9 @@ describe('layout', () => {
     const applied = await call<PageDetail>(t.app, 'POST', `/api/pages/${d.page.id}/layout/preset`, { preset: '2-rows', confirm: true });
     expect(applied.status).toBe(200);
     expect(readingOrder(applied.body.page.layout, 'ltr')).toEqual(order.slice(0, 2));
+    for (const id of order.slice(2)) {
+      expect(events).toContainEqual({ type: 'entity', entity: 'panel', id, op: 'deleted', mangaId: d.page.mangaId });
+    }
     expect((await call<PageDetail>(t.app, 'POST', `/api/pages/${d.page.id}/layout/preset`, { preset: '3-rows' })).body.panels).toHaveLength(3);
     expect((await call(t.app, 'POST', `/api/pages/${d.page.id}/layout/preset`, { preset: 'nope' })).status).toBe(400);
   });
@@ -116,9 +119,11 @@ describe('layout', () => {
     const split = await call<PageDetail>(t.app, 'POST', `/api/pages/${d.page.id}/layout/split`, { panelId: top, dir: 'v' });
     expect(split.body.panels).toHaveLength(3);
     const added = panelIds(split.body.page.layout).find((id) => id !== top && id !== bottom) ?? '';
+    expect(events).toContainEqual({ type: 'entity', entity: 'panel', id: added, op: 'created', mangaId: d.page.mangaId });
     expect(await call(t.app, 'POST', `/api/pages/${d.page.id}/layout/merge`, { panelIdA: added, panelIdB: bottom })).toMatchObject({ status: 400, body: { error: { code: 'validation' } } });
     const merged = await call<PageDetail>(t.app, 'POST', `/api/pages/${d.page.id}/layout/merge`, { panelIdA: top, panelIdB: added });
     expect(panelIds(merged.body.page.layout)).toEqual([top, bottom]);
+    expect(events).toContainEqual({ type: 'entity', entity: 'panel', id: added, op: 'deleted', mangaId: d.page.mangaId });
     expect((await call<PageDetail>(t.app, 'POST', `/api/pages/${d.page.id}/layout/resize`, { path: [], ratio: 0.99 })).body.page.layout).toMatchObject({ ratio: 0.92 });
     expect((await call(t.app, 'POST', `/api/pages/${d.page.id}/layout/resize`, { path: ['a', 'a'], ratio: 0.5 })).status).toBe(404);
     expect((await call(t.app, 'POST', `/api/pages/${d.page.id}/layout/resize`, { path: ['x'], ratio: 0.5 })).status).toBe(400);
