@@ -131,6 +131,10 @@ export class ComfyClient {
       onProgress?.(label, value, max);
     };
     const socket = await this.openSocket(clientId);
+    if (signal?.aborted) {
+      socket?.close();
+      throw abortError(signal);
+    }
     socket?.on('message', (data, isBinary) => {
       if (isBinary) return;
       let message: { type?: string; data?: { prompt_id?: string; node?: unknown; value?: unknown; max?: unknown } };
@@ -151,14 +155,14 @@ export class ComfyClient {
       say('Queued');
       const res = await this.request('/prompt', {
         method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ prompt: graph, client_id: clientId, prompt_id: promptId }),
-      });
+      }, 60_000, signal);
       if (res.status === 400) {
         const body: unknown = await res.json().catch(() => null);
         throw new ComfyRejectedError(formatRejection(body), body);
       }
       if (!res.ok) throw new PermanentError(`ComfyUI answered ${res.status} on /prompt`);
       const entry = await this.waitForHistory(promptId, signal);
-      const images = await this.fetchOutputs(entry);
+      const images = await this.fetchOutputs(entry, signal);
       if (images.length === 0) throw new PermanentError('ComfyUI finished without producing an image');
       return { promptId, images, durationMs: Date.now() - started };
     } catch (err) {
@@ -173,15 +177,19 @@ export class ComfyClient {
   }
 
   /** POST /free {unload_models, free_memory}. Never throws: a down ComfyUI holds no VRAM (G2), so a stopped or
-   *  unreachable server must not block the GpuArbiter from handing the GPU to ollama. */
+   *  unreachable server must not block the GpuArbiter from handing the GPU to ollama. Logs either way, so a
+   *  persistent failure (wrong URL, API mismatch) is still visible instead of silently swallowed. */
   async free(): Promise<void> {
+    let res: Response;
     try {
-      await fetch(`${this.url}/free`, {
+      res = await fetch(`${this.url}/free`, {
         method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ unload_models: true, free_memory: true }), signal: AbortSignal.timeout(10_000),
       });
-    } catch {
-      // not running: nothing to free
+    } catch (err) {
+      console.error(`[manga] comfy free: not reachable at ${this.url}, treating as already released:`, err);
+      return;
     }
+    if (!res.ok) console.error(`[manga] comfy free: ${this.url} answered ${res.status}, treating as already released`);
   }
 
   /** With a prompt id ComfyUI interrupts only that prompt, and only if it is the one running. */
@@ -203,11 +211,17 @@ export class ComfyClient {
     }
   }
 
-  private async request(path: string, init: RequestInit, timeoutMs = 60_000): Promise<Response> {
+  /** `signal` is the caller's abort signal (run()'s opts.signal), composed with the per-call timeout so an
+   *  abort interrupts the in-flight fetch immediately instead of waiting for it to settle. A caller abort is
+   *  always reported as `abortError(signal)`, never as a `TransientError`, so run()'s catch block can tell
+   *  "user cancelled" from "network trouble" and still run the cancel path either way. */
+  private async request(path: string, init: RequestInit, timeoutMs = 60_000, signal?: AbortSignal): Promise<Response> {
+    const composite = signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
     let res: Response;
     try {
-      res = await fetch(`${this.url}${path}`, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+      res = await fetch(`${this.url}${path}`, { ...init, signal: composite });
     } catch (err) {
+      if (signal?.aborted) throw abortError(signal);
       throw new TransientError(`ComfyUI not reachable at ${this.url} (${(err as Error).message})`);
     }
     if (res.status >= 500) throw new TransientError(`ComfyUI answered ${res.status} on ${path}`);
@@ -215,9 +229,13 @@ export class ComfyClient {
   }
 
   private async waitForHistory(promptId: string, signal: AbortSignal | undefined): Promise<HistoryEntry> {
+    const path = `/history/${encodeURIComponent(promptId)}`;
     for (;;) {
       if (signal?.aborted) throw abortError(signal);
-      const res = await this.request(`/history/${encodeURIComponent(promptId)}`, { method: 'GET' });
+      const res = await this.request(path, { method: 'GET' }, 60_000, signal);
+      // Not 5xx (already thrown by request()) but still not OK: an unexpected status (e.g. 404) must not be
+      // parsed as a history body — it isn't retryable by polling again, so it's permanent, not transient.
+      if (!res.ok) throw new PermanentError(`ComfyUI ${path} answered ${res.status}`);
       const body = (await res.json()) as Record<string, HistoryEntry>;
       const entry = body[promptId];
       if (entry) {
@@ -228,13 +246,13 @@ export class ComfyClient {
     }
   }
 
-  private async fetchOutputs(entry: HistoryEntry): Promise<Uint8Array[]> {
+  private async fetchOutputs(entry: HistoryEntry, signal?: AbortSignal): Promise<Uint8Array[]> {
     const images: Uint8Array[] = [];
     for (const node of Object.values(entry.outputs ?? {})) {
       for (const image of node.images ?? []) {
         if ((image.type ?? 'output') !== 'output') continue;
         const query = new URLSearchParams({ filename: image.filename, subfolder: image.subfolder ?? '', type: 'output' });
-        const res = await this.request(`/view?${query.toString()}`, { method: 'GET' }, 120_000);
+        const res = await this.request(`/view?${query.toString()}`, { method: 'GET' }, 120_000, signal);
         if (!res.ok) throw new TransientError(`ComfyUI could not serve ${image.filename}: HTTP ${res.status}`);
         images.push(new Uint8Array(await res.arrayBuffer()));
       }

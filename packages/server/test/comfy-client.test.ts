@@ -1,8 +1,10 @@
 import type { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ComfyClient, ComfyRejectedError, stageLabel } from '../src/imaging/comfy.js';
 import type { ComfyGraph } from '../src/imaging/comfy-graph.js';
 import { ComfyLauncher } from '../src/imaging/launcher.js';
@@ -102,6 +104,26 @@ describe('ComfyClient.run', () => {
     const dead = new ComfyClient({ url: 'http://127.0.0.1:9', launcher: null, pollMs: 20 });
     await expect(dead.run(miniGraph())).rejects.toBeInstanceOf(TransientError);
   });
+
+  it('aborts before the prompt is submitted when the signal fires immediately, never reporting it as transient', async () => {
+    const controller = new AbortController();
+    const run = client.run(miniGraph(), { signal: controller.signal });
+    // Synchronous, right after starting run(): its first await is openSocket(), so this always lands
+    // while the socket is still connecting — before the /prompt POST is ever sent.
+    controller.abort();
+    const err = await run.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).name).toBe('AbortError');
+    // request() must never turn a caller abort into a TransientError: it must always be the abort error.
+    expect(err).not.toBeInstanceOf(TransientError);
+    if (fake.promptIds.length > 0) {
+      // If the POST still slipped out (timing-dependent), the cancel path must still run for that id.
+      const id = fake.promptIds[0]!;
+      expect(fake.calls).toContainEqual({ method: 'POST', path: '/queue', body: { delete: [id] } });
+    } else {
+      expect(fake.calls.some((c) => c.path === '/prompt')).toBe(false);
+    }
+  });
 });
 
 describe('ComfyClient helpers', () => {
@@ -117,15 +139,27 @@ describe('ComfyClient helpers', () => {
     }
   });
 
-  it('frees VRAM with unload_models and free_memory, and never throws when down', async () => {
+  it('frees VRAM with unload_models and free_memory, and never throws when unreachable (G2), but logs it', async () => {
     await client.free();
     expect(fake.calls).toContainEqual({ method: 'POST', path: '/free', body: { unload_models: true, free_memory: true } });
-    await expect(new ComfyClient({ url: 'http://127.0.0.1:9' }).free()).resolves.toBeUndefined();
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(new ComfyClient({ url: 'http://127.0.0.1:9' }).free()).resolves.toBeUndefined();
+      expect(spy).toHaveBeenCalledWith(expect.stringContaining('not reachable at http://127.0.0.1:9'), expect.anything());
+    } finally {
+      spy.mockRestore();
+    }
   });
 
-  it('never throws from free() when ComfyUI answers but is not up (G2)', async () => {
+  it('never throws from free() when ComfyUI answers but is not up (G2), but logs it', async () => {
     fake.up = false;
-    await expect(client.free()).resolves.toBeUndefined();
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(client.free()).resolves.toBeUndefined();
+      expect(spy).toHaveBeenCalledWith(expect.stringContaining(`${fake.url} answered 503`));
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('health shows the GPU, or why it is not ok', async () => {
@@ -133,6 +167,28 @@ describe('ComfyClient helpers', () => {
     fake.up = false;
     await expect(client.health()).resolves.toEqual({ ok: false, detail: 'ComfyUI answered 503' });
     await expect(new ComfyClient({ url: 'http://127.0.0.1:9' }).health()).resolves.toEqual({ ok: false, detail: 'not reachable at http://127.0.0.1:9' });
+  });
+});
+
+describe('ComfyClient history polling', () => {
+  // FakeComfy's /history/<id> route always answers 200 (with {} for an unknown id), so an unexpected
+  // status can't be produced through it. This uses a bare HTTP stand-in to exercise the guard directly.
+  it('treats a non-OK, non-5xx /history response as permanent, never parsing it as a history entry', async () => {
+    const odd = createServer((_req, res) => {
+      res.writeHead(404, { 'content-type': 'text/plain' });
+      res.end('not found');
+    });
+    await new Promise<void>((resolve) => odd.listen(0, '127.0.0.1', resolve));
+    try {
+      const { port } = odd.address() as AddressInfo;
+      const oddClient = new ComfyClient({ url: `http://127.0.0.1:${port}`, launcher: null, pollMs: 20 });
+      const internals = oddClient as unknown as { waitForHistory(promptId: string, signal?: AbortSignal): Promise<unknown> };
+      const err = await internals.waitForHistory('any-id').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(PermanentError);
+      expect((err as Error).message).toBe('ComfyUI /history/any-id answered 404');
+    } finally {
+      await new Promise<void>((resolve) => odd.close(() => resolve()));
+    }
   });
 });
 
