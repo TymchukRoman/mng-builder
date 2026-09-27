@@ -29,9 +29,13 @@ export function createManga(store: Store, input: CreateMangaInput): Manga {
   });
 }
 
-/** Mirrors every layout and frame of the manga left↔right, so a direction change keeps the story order. */
-function mirrorPages(store: Store, mangaId: string): void {
-  for (const page of store.pages.listByManga(mangaId)) {
+/** `mirroredPageIds`: pages whose layout and frames were mirrored by a reading-direction change (frames are part of the page detail). */
+export interface UpdatedManga { manga: Manga; mirroredPageIds: string[] }
+
+/** Mirrors every layout and frame of the manga left↔right, so a direction change keeps the story order. Returns the page ids. */
+function mirrorPages(store: Store, mangaId: string): string[] {
+  const pages = store.pages.listByManga(mangaId);
+  for (const page of pages) {
     store.pages.update(page.id, { layout: mirrorLayout(page.layout) });
     for (const frame of store.frames.listByPage(page.id)) {
       store.frames.update(frame.id, {
@@ -41,13 +45,14 @@ function mirrorPages(store: Store, mangaId: string): void {
       });
     }
   }
+  return pages.map((page) => page.id);
 }
 
-export function updateManga(store: Store, mangaId: string, patch: UpdateMangaInput): Manga {
+export function updateManga(store: Store, mangaId: string, patch: UpdateMangaInput): UpdatedManga {
   const before = store.mangas.require(mangaId);
   return store.tx(() => {
-    const after = store.mangas.update(mangaId, defined(patch));
-    if (after.readingDirection !== before.readingDirection) mirrorPages(store, mangaId);
-    return after;
+    const manga = store.mangas.update(mangaId, defined(patch));
+    const mirroredPageIds = manga.readingDirection !== before.readingDirection ? mirrorPages(store, mangaId) : [];
+    return { manga, mirroredPageIds };
   });
 }

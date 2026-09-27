@@ -25,8 +25,11 @@ export function registerChapterRoutes(app: FastifyInstance, { store, bus }: Core
     return chapter;
   });
 
+  /** Emits `panel deleted` and `page deleted` (its cover included) for everything that went with the chapter. */
   app.delete<IdParams>('/api/chapters/:id', async (req) => {
-    const chapter = deleteChapter(store, req.params.id);
+    const { chapter, pageIds, panelIds } = deleteChapter(store, req.params.id);
+    for (const id of panelIds) emitEntity(bus, 'panel', id, 'deleted', chapter.mangaId);
+    for (const id of pageIds) emitEntity(bus, 'page', id, 'deleted', chapter.mangaId);
     emitEntity(bus, 'chapter', chapter.id, 'deleted', chapter.mangaId);
     return OK;
   });

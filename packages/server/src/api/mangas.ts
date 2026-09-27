@@ -15,8 +15,10 @@ export function registerMangaRoutes(app: FastifyInstance, { store, bus }: CoreDe
 
   app.get<IdParams>('/api/mangas/:id', async (req): Promise<Manga> => store.mangas.require(req.params.id));
 
+  /** A reading-direction change mirrors every page: one `page updated` per page (the page detail includes its frames). */
   app.patch<IdParams>('/api/mangas/:id', async (req): Promise<Manga> => {
-    const manga = updateManga(store, req.params.id, UpdateMangaSchema.parse(req.body ?? {}));
+    const { manga, mirroredPageIds } = updateManga(store, req.params.id, UpdateMangaSchema.parse(req.body ?? {}));
+    for (const pageId of mirroredPageIds) emitEntity(bus, 'page', pageId, 'updated', manga.id);
     emitEntity(bus, 'manga', manga.id, 'updated', manga.id);
     return manga;
   });

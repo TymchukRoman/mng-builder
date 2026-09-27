@@ -29,9 +29,12 @@ export function registerPageRoutes(app: FastifyInstance, { store, bus }: CoreDep
 
   app.get<IdParams>('/api/pages/:id', async (req): Promise<PageDetail> => pageDetail(store, req.params.id));
 
+  /** Also emits `panel deleted` for its panels and, for a cover, `manga`/`chapter updated` (its coverPageId is cleared). */
   app.delete<IdParams>('/api/pages/:id', async (req) => {
-    const page = deletePage(store, req.params.id);
+    const { page, panelIds, clearedCoverOf } = deletePage(store, req.params.id);
+    for (const id of panelIds) emitEntity(bus, 'panel', id, 'deleted', page.mangaId);
     emitEntity(bus, 'page', page.id, 'deleted', page.mangaId);
+    if (clearedCoverOf !== null) emitEntity(bus, clearedCoverOf.entity, clearedCoverOf.id, 'updated', page.mangaId);
     return OK;
   });
 
@@ -52,11 +55,21 @@ export function registerPageRoutes(app: FastifyInstance, { store, bus }: CoreDep
     return changed(detail);
   });
 
+  /**
+   * The removed panel's variants move to the kept panel: one `image updated` each, which invalidates the panel image
+   * lists. Frames re-anchored to the kept panel are covered by `page updated` (the page detail includes its frames).
+   */
   app.post<IdParams>('/api/pages/:id/layout/merge', async (req): Promise<PageDetail> => {
     const { panelIdA, panelIdB } = MergeSchema.parse(req.body ?? {});
     const before = panelIds(store.pages.require(req.params.id).layout);
+    const variantsBefore = new Map([panelIdA, panelIdB].map((id) => [id, store.images.listByOwner('panel', id)]));
     const detail = mergePagePanels(store, req.params.id, panelIdA, panelIdB);
     emitPanelDelta(before, detail);
+    const kept = new Set(detail.panels.map((panel) => panel.id));
+    for (const [panelId, images] of variantsBefore) {
+      if (kept.has(panelId)) continue;
+      for (const image of images) emitEntity(bus, 'image', image.id, 'updated', detail.page.mangaId);
+    }
     return changed(detail);
   });
 

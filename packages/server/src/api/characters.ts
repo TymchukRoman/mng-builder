@@ -30,8 +30,11 @@ export function registerCharacterRoutes(app: FastifyInstance, { store, bus }: Co
     return character;
   });
 
+  /** Also emits `panel updated` for scripts/refs that lost the character and `textFrame updated` for frames that lost their speaker. */
   app.delete<IdParams>('/api/characters/:id', async (req) => {
-    const character = deleteCharacter(store, req.params.id);
+    const { character, panelIds, frameIds } = deleteCharacter(store, req.params.id);
+    for (const id of panelIds) emitEntity(bus, 'panel', id, 'updated', character.mangaId);
+    for (const id of frameIds) emitEntity(bus, 'textFrame', id, 'updated', character.mangaId);
     emitEntity(bus, 'character', character.id, 'deleted', character.mangaId);
     return OK;
   });

@@ -2,6 +2,15 @@ import { RefSlotSchema, type Chapter, type Character, type Image, type Manga, ty
 import type { Store } from '../store/index.js';
 import { chapterPages, renumberPages } from './order.js';
 
+/**
+ * What a cascade removed or changed besides its main entity, so the route can emit one entity event for each
+ * (Contract B). Frames and images that go with their page, panel or character are covered by that owner's event.
+ */
+export interface DeletedPage { page: Page; panelIds: string[]; clearedCoverOf: { entity: 'manga' | 'chapter'; id: string } | null }
+export interface DeletedChapter { chapter: Chapter; pageIds: string[]; panelIds: string[] }
+/** `panelIds`: panels whose script or refCharacterIds lost the character; `frameIds`: frames whose speaker was cleared. */
+export interface DeletedCharacter { character: Character; panelIds: string[]; frameIds: string[] }
+
 /** Removes image files after the transaction that deleted their rows has committed. Missing files are ignored. */
 export function removeFiles(store: Store, rels: readonly string[]): void {
   for (const rel of rels) store.files.remove(rel);
@@ -15,29 +24,48 @@ export function deletePanelRows(store: Store, panelId: string): string[] {
   return images.map((image) => image.path);
 }
 
-export function deletePage(store: Store, pageId: string): Page {
+/** The manga or chapter whose coverPageId points at this page (the FK clears it when the page goes). */
+function coverOwner(store: Store, page: Page): DeletedPage['clearedCoverOf'] {
+  if (page.kind !== 'cover') return null;
+  if (page.chapterId === null) return store.mangas.get(page.mangaId)?.coverPageId === page.id ? { entity: 'manga', id: page.mangaId } : null;
+  return store.chapters.get(page.chapterId)?.coverPageId === page.id ? { entity: 'chapter', id: page.chapterId } : null;
+}
+
+export function deletePage(store: Store, pageId: string): DeletedPage {
   const page = store.pages.require(pageId);
+  const clearedCoverOf = coverOwner(store, page);
+  const panelIds: string[] = [];
   const files: string[] = [];
   store.tx(() => {
-    for (const panel of store.panels.listByPage(pageId)) files.push(...deletePanelRows(store, panel.id));
+    for (const panel of store.panels.listByPage(pageId)) {
+      panelIds.push(panel.id);
+      files.push(...deletePanelRows(store, panel.id));
+    }
     store.pages.delete(pageId);
     if (page.kind === 'page' && page.chapterId !== null) renumberPages(store, chapterPages(store, page.chapterId));
   });
   removeFiles(store, files);
-  return page;
+  return { page, panelIds, clearedCoverOf };
 }
 
-export function deleteChapter(store: Store, chapterId: string): Chapter {
+/** Removes the chapter with all its pages (its cover included), their panels and image files. */
+export function deleteChapter(store: Store, chapterId: string): DeletedChapter {
   const chapter = store.chapters.require(chapterId);
+  const pageIds: string[] = [];
+  const panelIds: string[] = [];
   const files: string[] = [];
   store.tx(() => {
     for (const page of store.pages.listByChapter(chapterId)) {
-      for (const panel of store.panels.listByPage(page.id)) files.push(...deletePanelRows(store, panel.id));
+      pageIds.push(page.id);
+      for (const panel of store.panels.listByPage(page.id)) {
+        panelIds.push(panel.id);
+        files.push(...deletePanelRows(store, panel.id));
+      }
     }
     store.chapters.delete(chapterId); // cascades pages, frames and episode runs
   });
   removeFiles(store, files);
-  return chapter;
+  return { chapter, pageIds, panelIds };
 }
 
 /** Everything under the manga goes by FK cascade; the image folder goes with it. */
@@ -49,11 +77,16 @@ export function deleteManga(store: Store, mangaId: string): Manga {
 }
 
 /** Deletes the character's images and strips it from panel scripts and reference lists; frames lose their speaker by FK. */
-export function deleteCharacter(store: Store, characterId: string): Character {
+export function deleteCharacter(store: Store, characterId: string): DeletedCharacter {
   const character = store.characters.require(characterId);
   const images = store.images.listByOwner('character', characterId);
+  const panelIds: string[] = [];
+  const frameIds: string[] = [];
   store.tx(() => {
     for (const page of store.pages.listByManga(character.mangaId)) {
+      for (const frame of store.frames.listByPage(page.id)) {
+        if (frame.speakerId === characterId) frameIds.push(frame.id);
+      }
       for (const panel of store.panels.listByPage(page.id)) {
         const refCharacterIds = panel.refCharacterIds.filter((id) => id !== characterId);
         const characters = panel.script.characters.filter((c) => c.characterId !== characterId);
@@ -61,13 +94,14 @@ export function deleteCharacter(store: Store, characterId: string): Character {
         if (refCharacterIds.length === panel.refCharacterIds.length && characters.length === panel.script.characters.length && !spoke) continue;
         const dialogue = panel.script.dialogue.map((line) => (line.speakerId === characterId ? { ...line, speakerId: null } : line));
         store.panels.update(panel.id, { refCharacterIds, script: { ...panel.script, characters, dialogue } });
+        panelIds.push(panel.id);
       }
     }
     for (const image of images) store.images.delete(image.id);
     store.characters.delete(characterId);
   });
   removeFiles(store, images.map((image) => image.path));
-  return character;
+  return { character, panelIds, frameIds };
 }
 
 /** Deletes the image and images derived from it; clears character refs (panel active pointers clear by FK). */
