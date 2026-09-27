@@ -1,7 +1,7 @@
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { loadConfig, readServerInfo, removeServerInfo, writeServerInfo } from '../src/config.js';
+import { configPath, loadConfig, readServerInfo, removeServerInfo, writeServerInfo } from '../src/config.js';
 import { tempDir, type TempDir } from './helpers/tmp.js';
 
 const dirs: TempDir[] = [];
@@ -39,6 +39,22 @@ describe('loadConfig', () => {
     const file = join(dir(), 'config.json');
     writeFileSync(file, '{ not json');
     expect(() => loadConfig({}, { env: {}, file })).toThrow(/invalid config file .*config\.json/);
+  });
+
+  it('reads the file MANGA_CONFIG names instead of ~/.manga-builder/config.json; an explicit file still wins (F15)', () => {
+    const file = join(dir(), 'custom.json');
+    writeFileSync(file, JSON.stringify({ port: 5151, claudeBin: 'claude-dev' }));
+    expect(configPath({ MANGA_CONFIG: file })).toBe(file);
+    expect(configPath({})).toMatch(/[\\/]\.manga-builder[\\/]config\.json$/);
+    expect(loadConfig({}, { env: { MANGA_CONFIG: file } })).toMatchObject({ port: 5151, claudeBin: 'claude-dev' });
+    expect(loadConfig({}, { env: { MANGA_CONFIG: file }, file: join(dir(), 'missing.json') }).port).toBe(4317);
+  });
+
+  it('is hermetic under vitest: MANGA_CONFIG points at a file that cannot exist (F15)', () => {
+    const path = process.env['MANGA_CONFIG'] ?? '';
+    expect(path).toMatch(/no-config\.json$/);
+    expect(existsSync(path)).toBe(false);
+    expect(configPath()).toBe(path);
   });
 
   it('rejects a non-numeric MANGA_PORT', () => {

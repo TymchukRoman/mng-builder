@@ -13,6 +13,9 @@ export default defineConfig({
     ],
   },
   test: {
+    // Hermetic config: loadConfig never reads the developer's real ~/.manga-builder/config.json. A path below a file
+    // can never exist, so this is always "no config file".
+    env: { MANGA_CONFIG: src('./vitest.config.ts/no-config.json') },
     include: ['packages/*/test/**/*.test.ts?(x)'],
     environment: 'node',
     testTimeout: 30_000,

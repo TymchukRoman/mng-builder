@@ -47,7 +47,7 @@ The server listens on `http://127.0.0.1:4317`, on loopback only. You rarely need
 }
 ```
 
-The environment variables `MANGA_LIBRARY` and `MANGA_PORT` override `libraryPath` and `port`. Everything else lives in the database: engines per task, models and review settings. Change it with `manga engine …` or `PATCH /api/settings`.
+The environment variables `MANGA_LIBRARY` and `MANGA_PORT` override `libraryPath` and `port`, and `MANGA_CONFIG` reads another config file instead. Everything else lives in the database: engines per task, models and review settings. Change it with `manga engine …` or `PATCH /api/settings`.
 
 Keep the library out of OneDrive-synced folders such as Documents, because syncing corrupts SQLite.
 
@@ -111,4 +111,4 @@ npm run dev             # tsc --build --watch
 
 The packages are `@manga/shared` (schemas, layout engine and prompt helpers, safe for browsers), `@manga/server` (Fastify, SQLite, jobs) and `@manga/cli` (`manga`). `docs/superpowers/` holds the design spec and the milestone plans.
 
-Server tests that start the app (e.g. `startServer`) call `loadConfig`, which also reads your real `%USERPROFILE%\.manga-builder\config.json` if one exists. Tests pin `libraryPath` and `port` through explicit overrides or the `MANGA_LIBRARY`/`MANGA_PORT` env vars, so a valid personal config file is harmless — but a malformed one (invalid JSON) makes `loadConfig` throw before those overrides are applied, which fails the tests until you fix or remove that file.
+The environment variable `MANGA_CONFIG` names another config file to read instead of `%USERPROFILE%\.manga-builder\config.json`. The root `vitest.config.ts` points it at a file that cannot exist, so the tests never read your personal config; they pin `libraryPath` and `port` through explicit overrides or `MANGA_LIBRARY`/`MANGA_PORT`.

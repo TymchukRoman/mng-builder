@@ -6,8 +6,9 @@ import { AppConfigSchema, type AppConfig } from '@manga/shared';
 export * from './health.js';
 export * from './server-info.js';
 
-export function configPath(): string {
-  return join(homedir(), '.manga-builder', 'config.json');
+/** `MANGA_CONFIG` (the path of a config file) replaces the default `~/.manga-builder/config.json`. */
+export function configPath(env: NodeJS.ProcessEnv = process.env): string {
+  return env['MANGA_CONFIG'] || join(homedir(), '.manga-builder', 'config.json');
 }
 
 /** Not under Documents: OneDrive syncs Documents and would corrupt SQLite. */
@@ -28,10 +29,10 @@ function readConfigFile(file: string): Record<string, unknown> {
   }
 }
 
-/** defaults < config.json < MANGA_LIBRARY / MANGA_PORT < explicit overrides. */
+/** defaults < config.json (`opts.file`, else `configPath(env)`) < MANGA_LIBRARY / MANGA_PORT < explicit overrides. */
 export function loadConfig(overrides: Partial<AppConfig> = {}, opts: LoadConfigOptions = {}): AppConfig {
   const env = opts.env ?? process.env;
-  const merged: Record<string, unknown> = { libraryPath: defaultLibraryPath(), ...readConfigFile(opts.file ?? configPath()) };
+  const merged: Record<string, unknown> = { libraryPath: defaultLibraryPath(), ...readConfigFile(opts.file ?? configPath(env)) };
   const library = env['MANGA_LIBRARY'];
   if (library) merged['libraryPath'] = library;
   const port = env['MANGA_PORT'];
