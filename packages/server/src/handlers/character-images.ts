@@ -46,15 +46,19 @@ function slotSpec(ctx: JobContext, character: Character, manga: Manga, slot: Slo
 
 /**
  * Spec §6.4: bust, front view, plain background, from `appearanceTags` + `seed` — never auto-picked as a ref.
- * F6 (controller ruling): the default recipe is the manga's own style recipe when it can draw a character from
- * tags alone, else 'anime'; style LoRAs go through `styleLoras()` so they never cross onto a mismatched family.
+ * F6 (controller ruling, clarified 2026-09-28): "anime" unless the character has a prompt-only recipe set —
+ * `character.recipe` wins when it is set and can draw from tags alone; otherwise fall back to the manga's own
+ * style recipe when that can too, else 'anime'. Style LoRAs go through `styleLoras()` with the final recipe so
+ * they never cross onto a mismatched family (e.g. an 'anima' portrait in an SDXL-styled manga gets no LoRA).
  */
 export async function generatePortrait(
   ctx: JobContext, services: HandlerServices, p: { characterId: string; seed?: number | null },
 ): Promise<ImageGenerateResult> {
   const character = ctx.store.characters.require(p.characterId);
   const manga = ctx.store.mangas.require(character.mangaId);
-  const recipe = PORTRAIT_RECIPES.has(manga.styleGuide.recipe) ? manga.styleGuide.recipe : 'anime';
+  const recipe = character.recipe && PORTRAIT_RECIPES.has(character.recipe)
+    ? character.recipe
+    : PORTRAIT_RECIPES.has(manga.styleGuide.recipe) ? manga.styleGuide.recipe : 'anime';
   const { prompt, negative } = assemblePrompt({
     styleGuide: manga.styleGuide, colorMode: manga.colorMode, characterTags: [character.appearanceTags].filter(nonEmpty),
     scene: PORTRAIT_SCENE, extraNegative: SHEET_NEGATIVE,

@@ -42,6 +42,19 @@ describe('character images', () => {
     expect(lib.store.images.require(second.imageId).gen?.seed).toBe(77);
   });
 
+  it("prefers the character's own recipe over the manga's style recipe when it can draw from tags alone", async () => {
+    // F6 (clarified 2026-09-28): spec §6.4 "anime unless the character has a prompt-only recipe set" — the
+    // manga's style recipe here is 'anime' (SDXL), but the character overrides it with 'anima'.
+    const { manga } = seedManga(lib.store);
+    const created = seedCharacter(lib.store, manga.id, 'Ren', '1boy, black hair');
+    const ren = lib.store.characters.update(created.id, { recipe: 'anima' });
+    const result = await generatePortrait(ctx(), services, { characterId: ren.id });
+    expect(lib.store.images.require(result.imageId).gen?.recipe).toBe('anima');
+    // The manga's SDXL style LoRA must not cross onto the 'anima'-family portrait.
+    expect(nodesOf(fake.graphs[0]!, 'LoraLoader')).toHaveLength(0);
+    expect(nodesOf(fake.graphs[0]!, 'LoraLoaderModelOnly')).toHaveLength(0);
+  });
+
   it('refuses a sheet view without a portrait', async () => {
     const { manga } = seedManga(lib.store);
     const aiko = seedCharacter(lib.store, manga.id, 'Aiko', '1girl');
