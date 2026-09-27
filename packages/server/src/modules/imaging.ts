@@ -1,10 +1,9 @@
-import type { RecipeInfo } from '@manga/shared';
 import type { AppModule, CoreDeps } from '../app.js';
+import { registerImagingRoutes } from '../api/imaging-routes.js';
 import { startFakeComfy } from '../dev/fake-comfy.js';
 import { registerImagingJobs } from '../handlers/index.js';
 import { ComfyClient } from '../imaging/comfy.js';
 import { ComfyLauncher } from '../imaging/launcher.js';
-import { RECIPES, recipeInfo } from '../imaging/recipes/index.js';
 import { servicesFor, type M2Services } from './services.js';
 
 export function imagingModule(deps: CoreDeps, services: M2Services = servicesFor(deps)): AppModule {
@@ -26,7 +25,7 @@ export function imagingModule(deps: CoreDeps, services: M2Services = servicesFor
       deps.gpu.setReleaser('comfy', () => comfy.free());
       deps.statusProviders.comfy = () => comfy.health();
       registerImagingJobs(deps.queue, services);
-      app.get('/api/recipes', async (): Promise<RecipeInfo[]> => Object.values(RECIPES).map(recipeInfo));
+      registerImagingRoutes(app, deps, services);
     },
     async stop(): Promise<void> {
       await services.fakeComfy?.close();
