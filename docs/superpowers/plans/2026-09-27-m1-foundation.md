@@ -6391,7 +6391,7 @@ export { VERSION } from './version.js';
 - [ ] **Step 6: Run the test to verify it passes**
 
 Run: `npx vitest run packages/server/test/app.test.ts`
-Expected: PASS (13 tests).
+Expected: PASS (14 tests).
 
 - [ ] **Step 7: Type-check and try the real entry point**
 
@@ -8023,7 +8023,7 @@ export class ApiClient {
     return this.send<T>(method, path, body === undefined ? {} : { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } });
   }
 
-  private async send<T>(method: string, path: string, init: { body?: RequestInit['body']; headers?: Record<string, string> }): Promise<T> {
+  private async send<T>(method: string, path: string, init: { body?: NonNullable<RequestInit['body']>; headers?: Record<string, string> }): Promise<T> {
     let res: Response;
     try {
       res = await fetch(`${this.baseUrl}${path}`, { method, ...init });
@@ -8609,7 +8609,7 @@ describe('serve', () => {
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run packages/cli/test/cmd-server-mangas.test.ts`
-Expected: FAIL. `status` exits 2 with "unknown command 'status'".
+Expected: FAIL. `status` exits 2 (commander: "too many arguments. Expected 0 arguments but got 1"), because no subcommands exist yet.
 
 - [ ] **Step 3: Write the command groups**
 

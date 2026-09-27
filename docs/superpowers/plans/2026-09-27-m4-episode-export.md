@@ -1893,6 +1893,8 @@ git commit -m "feat(server): scripted episode.* answers for MANGA_FAKES and test
 
 ### Task 6: Server — step effects (chapter, characters, pages, prompts)
 
+> **Controller ruling (M1 pre-flight R6):** `emitEntity` already exists in `packages/server/src/events/bus.ts` (M1). Make `workflows/emit.ts` a one-line re-export, `export { emitEntity } from '../events/bus.js';`, instead of a copy. Importers stay unchanged.
+
 **Files:**
 - Create: `packages/server/src/workflows/emit.ts`
 - Create: `packages/server/src/workflows/episode/effects.ts`
@@ -3629,6 +3631,11 @@ git commit -m "feat(server): EpisodeRunner — durable step machine with review 
 ---
 
 ### Task 10: Server — episode routes, `episodeModule`, `defaultModules`
+
+> **Controller ruling (M1 pre-flight F4):** M2 Task 21 already created `packages/server/src/all-modules.ts` with `defaultModules(deps)`. It is re-exported from `@manga/server` and used by both `main.ts` and the CLI `manga serve`.
+>
+> - **Modify** that file to this task's version, keeping the export name `defaultModules`. Do not create it anew.
+> - Keep `main.ts` and the CLI `serve` both passing `modules: defaultModules`. If this task's version adds an optional second parameter, wrap it: `modules: (d) => defaultModules(d)`.
 
 **Files:**
 - Create: `packages/server/src/workflows/episode/routes.ts`, `packages/server/src/workflows/episode/module.ts`

@@ -5038,6 +5038,8 @@ git commit -m "feat(server): llm.step dispatcher with a per-type handler registr
 
 ### Task 17: `image.generate` for panels
 
+> **Controller ruling (M1 pre-flight R6):** M1 defines `emitEntity` in `packages/server/src/events/bus.ts`, re-exported from `api/util.ts`. Do NOT re-implement it in `src/handlers/context.ts`. Instead, re-export it there with `export { emitEntity } from '../events/bus.js';`, so this task's importers keep working unchanged.
+
 **Files:**
 - Create: `packages/server/src/handlers/types.ts`, `packages/server/src/handlers/context.ts`, `packages/server/src/handlers/panel-image.ts`
 - Create: `packages/server/test/helpers/handler-services.ts`
@@ -6048,6 +6050,15 @@ git commit -m "feat(server): AI panel scene prompts (tags or sentences) and appe
 ```
 
 ### Task 21: M2 services, the `ai` and `imaging` modules, `main.ts` and `MANGA_FAKES=1`
+
+> **Controller ruling (M1 pre-flight F4):** `manga serve` must start the same modules as `main.ts`.
+>
+> In addition to this task's steps:
+> 1. Create `packages/server/src/all-modules.ts` with `export function defaultModules(deps: CoreDeps): AppModule[] { return [aiModule(deps), imagingModule(deps)]; }`.
+> 2. Re-export it from `packages/server/src/index.ts`.
+> 3. Make `main.ts` pass `modules: defaultModules`, not the inline array.
+> 4. In `packages/cli/src/commands/server.ts`, make `serve` call `startServer({ modules: defaultModules })`, importing `defaultModules` from `@manga/server` next to `startServer`.
+> 5. Extend the M1 CLI `serve` test, or add one, so it asserts that `GET /api/recipes` is 200 on a `serve`-started server.
 
 **Files:**
 - Create: `packages/server/src/handlers/index.ts`
