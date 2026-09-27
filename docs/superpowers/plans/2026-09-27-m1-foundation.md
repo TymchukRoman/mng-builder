@@ -5730,7 +5730,7 @@ git commit -m "feat(server): add manga, character, chapter, panel, frame and upl
     - Anything else → 500 `internal` with the message `internal error`, and it is logged.
   - `emitEntity(bus, entity, id, op, mangaId)`, `readUpload(req)`, `interface IdParams`, `OK`.
   - `registerCoreRoutes(app, deps)`.
-  - Routes: `GET /api/health`, `GET /api/status`, `GET/PATCH /api/settings`, `GET /api/layouts`, `GET /api/style-presets`, and the WebSocket `/api/events` (`hello` first, then every bus event).
+  - Routes: `GET /api/health`, `GET /api/status`, `GET/PATCH /api/settings`, `GET /api/layouts`, `GET /api/style-presets`, `GET /api/config` (read-only `AppConfig`), and the WebSocket `/api/events` (`hello` first, then every bus event).
   - `defaultUiDir()`, i.e. `packages/ui/dist` relative to the server package.
   - `registerStaticUi(app, uiDir | null)`: SPA fallback for extension-less GETs outside `/api` and `/files`; everything else unmatched → 404 `not_found` JSON.
   - Test helpers `makeTestApp({ modules?, uiDir? })` (queue not started) → `{ app, deps, lib, close }`, `call(app, method, url, payload?)` → `{ status, body }`, and `multipart(field, filename, contentType, data)`.
@@ -5866,6 +5866,13 @@ describe('system routes', () => {
     expect(layouts.body.find((l) => l.name === '2x3')).toEqual({ name: '2x3', panelCount: 6 });
     const styles = await call<Array<{ id: string }>>(t.app, 'GET', '/api/style-presets');
     expect(styles.body.map((s) => s.id)).toEqual(['manga-bw', 'manga-hatching', 'anime-color', 'anima-bw']);
+  });
+
+  it('GET /api/config returns the read-only AppConfig', async () => {
+    const res = await call<{ libraryPath: string; port: number; comfyRoot: string; comfyUrl: string; ollamaUrl: string; claudeBin: string }>(t.app, 'GET', '/api/config');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(t.deps.config);
+    expect(Object.keys(res.body).sort()).toEqual(['claudeBin', 'comfyRoot', 'comfyUrl', 'libraryPath', 'ollamaUrl', 'port']);
   });
 
   it('does not register GET /api/recipes (M2 owns that route)', async () => {
@@ -6132,7 +6139,7 @@ export async function readUpload(req: FastifyRequest): Promise<Upload> {
 import type { FastifyInstance } from 'fastify';
 import {
   PRESET_NAMES, presetPanelCount, SettingsPatchSchema, STYLE_PRESETS,
-  type PresetInfo, type ServiceState, type ServiceStatus, type Settings, type StylePreset,
+  type AppConfig, type PresetInfo, type ServiceState, type ServiceStatus, type Settings, type StylePreset,
 } from '@manga/shared';
 import type { CoreDeps } from '../deps.js';
 import { VERSION } from '../version.js';
@@ -6168,6 +6175,9 @@ export function registerSystemRoutes(app: FastifyInstance, deps: CoreDeps): void
   app.get('/api/layouts', async (): Promise<PresetInfo[]> => PRESET_NAMES.map((name) => ({ name, panelCount: presetPanelCount(name) })));
 
   app.get('/api/style-presets', async (): Promise<StylePreset[]> => Object.values(STYLE_PRESETS));
+
+  /** Read-only: the Settings page shows where the library and ComfyUI live. Changed only via config.json. */
+  app.get('/api/config', async (): Promise<AppConfig> => ({ ...deps.config }));
 }
 ```
 
