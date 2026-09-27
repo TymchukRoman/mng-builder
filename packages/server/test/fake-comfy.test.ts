@@ -64,4 +64,104 @@ describe('FakeComfy', () => {
     await fake.close();
     await fake.close();
   });
+
+  it('streams WebSocket execution events in order for a sampler node', async () => {
+    fake = await startFakeComfy();
+    const { WebSocket } = await import('ws');
+    const ws = new WebSocket(`${fake.url.replace(/^http/, 'ws')}/ws?clientId=c1`);
+    const messages: Array<{ type: string; data: unknown }> = [];
+    await new Promise<void>((resolve) => {
+      ws.on('open', () => resolve());
+      ws.on('message', (data) => { messages.push(JSON.parse(String(data))); });
+    });
+
+    const graph: ComfyGraph = {
+      '1': { class_type: 'KSampler', inputs: { seed: 0, steps: 1, cfg: 7, sampler_name: 'euler', scheduler: 'normal', denoise: 1, model: ['2', 0], positive: ['3', 0], negative: ['4', 0], latent_image: ['5', 0] } },
+      '2': { class_type: 'SaveImage', inputs: { images: ['6', 0], filename_prefix: 't' } },
+    };
+    const res = await fetch(`${fake.url}/prompt`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: graph, client_id: 'c1' }),
+    });
+    const { prompt_id } = (await res.json()) as { prompt_id: string };
+
+    await new Promise<void>((resolve) => {
+      const check = () => {
+        const types = messages.filter((m) => m.type !== 'status').map((m) => m.type);
+        if (types.includes('execution_success')) {
+          expect(types.slice(0, -2)).toContain('execution_start');
+          expect(types).toContain('progress'); // sampler produces progress
+          expect(types.slice(-2)).toEqual(['executing', 'execution_success']);
+          resolve();
+        } else {
+          setTimeout(check, 10);
+        }
+      };
+      check();
+    });
+
+    ws.close();
+  });
+
+  it('injects execution_error when failNext is set', async () => {
+    fake = await startFakeComfy();
+    fake.failNext = 'boom';
+    const graph: ComfyGraph = {
+      '1': { class_type: 'KSampler', inputs: { seed: 0 } },
+      '2': { class_type: 'SaveImage', inputs: { images: ['1', 0], filename_prefix: 't' } },
+    };
+    const res = await fetch(`${fake.url}/prompt`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: graph }),
+    });
+    const { prompt_id } = (await res.json()) as { prompt_id: string };
+
+    type HistoryEntry = {
+      status: { status_str: string; messages: Array<[string, Record<string, unknown>]> };
+    };
+    let history: Record<string, HistoryEntry> = {};
+    for (let i = 0; i < 100 && !history[prompt_id]; i++) {
+      history = (await (await fetch(`${fake.url}/history/${prompt_id}`)).json()) as typeof history;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    const entry = history[prompt_id];
+    expect(entry?.status.status_str).toBe('error');
+    expect(entry?.status.messages[0]?.[0]).toBe('execution_error');
+    const error = entry?.status.messages[0]?.[1] as Record<string, unknown>;
+    expect(error?.exception_message).toBe('boom');
+    expect(error?.node_id).toBe('1');
+  });
+
+  it('rejectNext is one-shot and next prompt succeeds', async () => {
+    fake = await startFakeComfy();
+    fake.rejectNext = { error: { type: 'test_error', message: 'nope' }, node_errors: { '1': 'failed' } };
+    const graph: ComfyGraph = { '1': { class_type: 'SaveImage', inputs: { images: ['2', 0], filename_prefix: 't' } } };
+
+    const res1 = await fetch(`${fake.url}/prompt`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: graph }),
+    });
+    expect(res1.status).toBe(400);
+    const body1 = await res1.json();
+    expect(body1.error.type).toBe('test_error');
+
+    const res2 = await fetch(`${fake.url}/prompt`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: graph }),
+    });
+    expect(res2.status).toBe(200);
+    const body2 = (await res2.json()) as { prompt_id: string };
+    expect(body2.prompt_id).toBeDefined();
+  });
+
+  it('closes promptly even with large completionDelayMs', async () => {
+    fake = await startFakeComfy();
+    fake.completionDelayMs = 60_000;
+    const graph: ComfyGraph = { '1': { class_type: 'SaveImage', inputs: { images: ['2', 0], filename_prefix: 't' } } };
+    const res = await fetch(`${fake.url}/prompt`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: graph }),
+    });
+    expect((await res.json()) as { prompt_id: string }).toHaveProperty('prompt_id');
+
+    const start = Date.now();
+    await fake.close();
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(1000); // close should not wait for the 60s delay
+  });
 });

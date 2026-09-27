@@ -88,8 +88,6 @@ function send(res: ServerResponse, status: number, body?: unknown): void {
   res.end(JSON.stringify(body));
 }
 
-const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
 class FakeComfyServer implements FakeComfy {
   url = '';
   readonly graphs: ComfyGraph[] = [];
@@ -103,10 +101,22 @@ class FakeComfyServer implements FakeComfy {
   private readonly history = new Map<string, HistoryEntry>();
   private readonly outputs = new Map<string, Uint8Array>();
   private readonly clients = new Map<string, Set<WebSocket>>();
-  private readonly server = createServer((req, res) => { void this.handle(req, res); });
+  private readonly server = createServer((req, res) => { void this.handle(req, res).catch((err) => {
+    if (!res.headersSent) send(res, 500, { error: 'Internal server error', message: String(err) });
+    else res.destroy();
+  }); });
   private readonly wss = new WebSocketServer({ noServer: true });
   private closed = false;
   private counter = 0;
+  private readonly pendingTimeouts: NodeJS.Timeout[] = [];
+
+  private async delayMs(ms: number): Promise<void> {
+    if (this.closed) return;
+    return new Promise((resolve) => {
+      const handle = setTimeout(resolve, ms);
+      this.pendingTimeouts.push(handle);
+    });
+  }
 
   async listen(): Promise<void> {
     this.server.on('upgrade', (req, socket, head) => {
@@ -116,6 +126,7 @@ class FakeComfyServer implements FakeComfy {
         return;
       }
       this.wss.handleUpgrade(req, socket, head, (ws) => {
+        ws.on('error', () => {}); // no-op, 'close' already cleans up
         const clientId = url.searchParams.get('clientId') ?? randomUUID();
         const set = this.clients.get(clientId) ?? new Set<WebSocket>();
         set.add(ws);
@@ -132,6 +143,8 @@ class FakeComfyServer implements FakeComfy {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    for (const handle of this.pendingTimeouts) clearTimeout(handle);
+    this.pendingTimeouts.length = 0;
     for (const set of this.clients.values()) for (const ws of set) ws.terminate();
     this.wss.close();
     this.server.closeAllConnections();
@@ -219,17 +232,24 @@ class FakeComfyServer implements FakeComfy {
     const nodes = Object.entries(graph);
     this.emit(clientId, 'execution_start', { prompt_id: id });
     for (const [nodeId, node] of nodes) {
+      if (this.closed) return;
       this.emit(clientId, 'executing', { node: nodeId, display_node: nodeId, prompt_id: id });
       if (WORKERS.has(node.class_type)) {
         for (let step = 1; step <= 3; step++) {
           this.emit(clientId, 'progress', { value: step, max: 3, prompt_id: id, node: nodeId });
-          await delay(2);
+          await this.delayMs(2);
+          if (this.closed) return;
         }
       }
-      await delay(2);
+      await this.delayMs(2);
+      if (this.closed) return;
     }
-    if (this.completionDelayMs > 0) await delay(this.completionDelayMs);
-    await delay(25);
+    if (this.completionDelayMs > 0) {
+      await this.delayMs(this.completionDelayMs);
+      if (this.closed) return;
+    }
+    await this.delayMs(25);
+    if (this.closed) return;
     if (this.failNext) {
       const message = this.failNext;
       this.failNext = null;
