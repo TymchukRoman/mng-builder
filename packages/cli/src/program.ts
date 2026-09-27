@@ -1,4 +1,6 @@
 import { Command, CommanderError } from 'commander';
+import { registerMangaCommands } from './commands/mangas.js';
+import { registerServerCommands } from './commands/server.js';
 import { createContext, type CliContext } from './context.js';
 import { CliError } from './errors.js';
 import { processIo, type CliIo } from './io.js';
@@ -21,7 +23,8 @@ export function buildProgram(io: CliIo = processIo, factory: ContextFactory = de
     .configureOutput({ writeOut: (s) => io.stdout(s), writeErr: (s) => io.stderr(s) });
   let context: Promise<CliContext> | null = null;
   const ctx = (): Promise<CliContext> => (context ??= factory(program.opts<GlobalOptions>(), io));
-  void ctx; // command groups are registered in Tasks 19–21
+  registerServerCommands(program, ctx, io);
+  registerMangaCommands(program, ctx);
   return program;
 }
 
