@@ -462,4 +462,28 @@ describe('Host and Origin guard (F13)', () => {
       dir.cleanup();
     }
   });
+
+  it('rejects a non-GET/HEAD request whose Origin is foreign, and passes same-origin or Origin-less requests (G4)', async () => {
+    const dir = tempDir();
+    const server = await startServer({ config: { libraryPath: dir.path, port: 0 }, uiDir: null });
+    const port = new URL(server.url).port;
+    const post = (origin?: string): Promise<Response> =>
+      fetch(`${server.url}/api/mangas`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(origin === undefined ? {} : { origin }) },
+        body: JSON.stringify({ title: 'Cross-site' }),
+      });
+    try {
+      const foreign = await post('http://evil.example');
+      expect(foreign.status).toBe(403);
+      expect(await foreign.json()).toEqual({ error: { code: 'forbidden', message: 'origin http://evil.example is not allowed' } });
+
+      expect((await post(`http://localhost:${port}`)).status).toBe(200);
+      expect((await post(`http://127.0.0.1:${port}`)).status).toBe(200);
+      expect((await post(undefined)).status).toBe(200); // Origin-less, e.g. the CLI
+    } finally {
+      await server.stop();
+      dir.cleanup();
+    }
+  });
 });

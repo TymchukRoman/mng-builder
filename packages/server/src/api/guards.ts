@@ -9,9 +9,12 @@ function boundPort(app: FastifyInstance): number | null {
 }
 
 /**
- * Against DNS rebinding and cross-site WebSockets: the Host header must be `127.0.0.1:<port>` or `localhost:<port>`,
- * and a WebSocket upgrade that carries an Origin must come from `http://127.0.0.1:<port>` or `http://localhost:<port>`.
- * Anything else is 403 forbidden. A dev proxy (M3's Vite) must rewrite Host and Origin to the server's.
+ * Against DNS rebinding, cross-site WebSockets and cross-site "simple" POSTs (e.g. multipart uploads, which
+ * browsers send without a CORS preflight): the Host header must be `127.0.0.1:<port>` or `localhost:<port>`, and
+ * an Origin header — sent on a WebSocket upgrade or any non-GET/HEAD request — must be `http://127.0.0.1:<port>`
+ * or `http://localhost:<port>` *(M2 fix-wave G4 widens this from WebSocket upgrades only)*. A request with no
+ * Origin (GET/HEAD, or a non-browser client like the CLI) is not checked. Anything else is 403 forbidden. A dev
+ * proxy (M3's Vite) must rewrite Host and Origin to the server's.
  */
 export function installRequestGuards(app: FastifyInstance): void {
   app.addHook('onRequest', async (req) => {
@@ -22,7 +25,9 @@ export function installRequestGuards(app: FastifyInstance): void {
     if (host === undefined || !hosts.includes(host)) throw new ForbiddenError(`host ${host ?? '(none)'} is not allowed`);
     const origin = req.headers.origin?.toLowerCase();
     const upgrade = req.headers.upgrade?.toLowerCase() === 'websocket';
-    if (upgrade && origin !== undefined && !hosts.some((h) => origin === `http://${h}`)) {
+    const method = req.method.toUpperCase();
+    const originChecked = upgrade || (method !== 'GET' && method !== 'HEAD');
+    if (originChecked && origin !== undefined && !hosts.some((h) => origin === `http://${h}`)) {
       throw new ForbiddenError(`origin ${origin} is not allowed`);
     }
   });
