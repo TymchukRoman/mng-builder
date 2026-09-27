@@ -43,6 +43,24 @@ describe('routeRecipe', () => {
     expect(['qwen-edit-ref', 'klein-ref'].map(promptStyleFor)).toEqual(['natural', 'natural']);
     expect(refineFor(DEFAULT_SETTINGS, manga('bw'), 'anime')).toBeNull();
   });
+
+  it('rejects unknown recipe in panel override', () => {
+    expect(() => routeRecipe({ settings: DEFAULT_SETTINGS, manga: manga('bw'), panel: panel('no-such-recipe'), refCount: 0, charCount: 0 })).toThrow(PermanentError);
+  });
+
+  it('rejects unknown recipe in settings routing', () => {
+    const badSettings = { ...DEFAULT_SETTINGS, routing: { ...DEFAULT_SETTINGS.routing, multiChar: 'gone' } };
+    expect(() => routeRecipe({ settings: badSettings, manga: manga('bw'), panel: panel(), refCount: 2, charCount: 2 })).toThrow(PermanentError);
+  });
+
+  it('rejects unknown recipe in bwRefine', () => {
+    const badSettings = { ...DEFAULT_SETTINGS, routing: { ...DEFAULT_SETTINGS.routing, bwRefine: 'gone' } };
+    expect(() => routeRecipe({ settings: badSettings, manga: manga('bw'), panel: panel(), refCount: 2, charCount: 2 })).toThrow(PermanentError);
+  });
+
+  it('skips upscale style (works on existing image, not panel generation)', () => {
+    expect(routeRecipe({ settings: DEFAULT_SETTINGS, manga: manga('bw', 'upscale'), panel: panel(), refCount: 0, charCount: 0 })).toEqual({ recipe: 'anime', refineWith: null });
+  });
 });
 
 describe('panel sizes', () => {

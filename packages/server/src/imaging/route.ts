@@ -1,4 +1,5 @@
 import type { Manga, Panel, Settings } from '@manga/shared';
+import { PermanentError } from '../jobs/index.js';
 import { RECIPES } from './recipes/index.js';
 
 export type PromptStyle = 'tags' | 'natural';
@@ -21,11 +22,15 @@ export function routeRecipe(input: { settings: Settings; manga: Manga; panel: Pa
     recipe = panel.recipe;
   } else if (refCount === 0) {
     const style = RECIPES[manga.styleGuide.recipe];
+    // Upscale works on an existing image, not on generating a new panel from scratch.
     recipe = style && style.family !== 'sdxl' && style.family !== 'upscale' && !style.requiresRefs ? style.id : settings.routing.noChars;
   } else if (charCount <= 1) {
     recipe = settings.routing.oneChar;
   } else {
     recipe = settings.routing.multiChar;
   }
-  return { recipe, refineWith: refineFor(settings, manga, recipe) };
+  if (!RECIPES[recipe]) throw new PermanentError(`unknown recipe "${recipe}" (check the panel's recipe or Settings → routing)`);
+  const refineWith = refineFor(settings, manga, recipe);
+  if (refineWith && !RECIPES[refineWith]) throw new PermanentError(`unknown refine recipe "${refineWith}" (check Settings → routing.bwRefine)`);
+  return { recipe, refineWith };
 }
