@@ -1,7 +1,16 @@
 import type { Command } from 'commander';
-import { readingOrder, STYLE_PRESETS, type Chapter, type Character, type Manga, type Page } from '@manga/shared';
+import { readingOrder, STYLE_PRESETS, type Chapter, type Character, type Manga, type Page, type PageDetail, type StylePreset } from '@manga/shared';
 import type { CliContext } from '../context.js';
+import { CliError } from '../errors.js';
 import { table } from '../format.js';
+
+interface EditOptions { title?: string; synopsis?: string; lang?: string; color?: string; dir?: string; style?: string }
+
+function stylePreset(id: string): StylePreset {
+  const preset = Object.hasOwn(STYLE_PRESETS, id) ? STYLE_PRESETS[id] : undefined;
+  if (preset === undefined) throw new CliError(`unknown style preset "${id}"; presets are ${Object.keys(STYLE_PRESETS).join(', ')}`, 2);
+  return preset;
+}
 
 interface ShowData {
   manga: Manga;
@@ -84,6 +93,53 @@ export function registerMangaCommands(program: Command, ctx: () => Promise<CliCo
       }));
       const data: ShowData = { manga, characters, chapters: withPages };
       c.out(data, () => formatShow(data));
+    });
+
+  program
+    .command('edit')
+    .description('change a manga; only the options you pass are sent')
+    .argument('<manga>', 'id or title')
+    .option('--title <title>', 'title')
+    .option('--synopsis <text>', 'synopsis')
+    .option('--lang <lang>', 'en or uk')
+    .option('--color <mode>', 'bw or color')
+    .option('--dir <dir>', 'reading direction: rtl or ltr (mirrors every page, keeping the story order)')
+    .option('--style <preset>', `style preset whose style guide to use: ${Object.keys(STYLE_PRESETS).join(', ')}`)
+    .action(async (ref: string, opts: EditOptions) => {
+      const patch: Record<string, unknown> = {};
+      if (opts.title !== undefined) patch['title'] = opts.title;
+      if (opts.synopsis !== undefined) patch['synopsis'] = opts.synopsis;
+      if (opts.lang !== undefined) patch['language'] = opts.lang;
+      if (opts.color !== undefined) patch['colorMode'] = opts.color;
+      if (opts.dir !== undefined) patch['readingDirection'] = opts.dir;
+      const preset = opts.style === undefined ? undefined : stylePreset(opts.style);
+      if (preset !== undefined) patch['styleGuide'] = preset.styleGuide;
+      if (Object.keys(patch).length === 0) throw new CliError('nothing to change; pass at least one option (see: manga edit --help)', 2);
+      const c = await ctx();
+      const manga = await c.resolve.manga(ref);
+      const updated = await c.api.patch<Manga>(`/api/mangas/${manga.id}`, patch);
+      if (preset !== undefined && preset.colorMode !== updated.colorMode) {
+        c.io.stderr(`warning: style ${preset.id} is a ${preset.colorMode} preset but the manga is ${updated.colorMode}\n`);
+      }
+      c.out(updated, () => `updated ${describeManga(updated)}`);
+    });
+
+  program
+    .command('cover')
+    .description('create the cover page of a manga or of one of its chapters (an existing cover is returned as is)')
+    .argument('<manga>', 'id or title')
+    .option('--chapter <chapter>', 'the chapter: its number in this manga, its id, or <manga>/<number>')
+    .action(async (ref: string, opts: { chapter?: string }) => {
+      const c = await ctx();
+      const manga = await c.resolve.manga(ref);
+      let path = `/api/mangas/${manga.id}/cover`;
+      if (opts.chapter !== undefined) {
+        const chapter = await c.resolve.chapter(/^\d+$/.test(opts.chapter) ? `${manga.id}/${opts.chapter}` : opts.chapter);
+        if (chapter.mangaId !== manga.id) throw new CliError(`chapter ${chapter.id} belongs to another manga`);
+        path = `/api/chapters/${chapter.id}/cover`;
+      }
+      const detail = await c.api.post<PageDetail>(path);
+      c.out(detail, () => `cover ${detail.page.id}  panel ${detail.panels.map((p) => p.id).join(' ')}`);
     });
 
   program

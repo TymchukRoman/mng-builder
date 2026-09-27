@@ -1,6 +1,8 @@
 import type { Command } from 'commander';
 import type { Chapter } from '@manga/shared';
+import { parsePositiveInt } from '../args.js';
 import type { CliContext } from '../context.js';
+import { CliError } from '../errors.js';
 import { table } from '../format.js';
 
 export function registerChapterCommands(program: Command, ctx: () => Promise<CliContext>): void {
@@ -28,6 +30,25 @@ export function registerChapterCommands(program: Command, ctx: () => Promise<Cli
       const manga = await c.resolve.manga(mangaRef);
       const chapters = await c.api.get<Chapter[]>(`/api/mangas/${manga.id}/chapters`);
       c.out(chapters, () => (chapters.length === 0 ? 'no chapters yet' : table(chapters.map((ch) => [`#${ch.number}`, ch.id, ch.title, ch.status]))));
+    });
+
+  chapter
+    .command('edit')
+    .description('change a chapter; only the options you pass are sent')
+    .argument('<chapter>', 'id or <manga>/<number>')
+    .option('--title <title>', 'title')
+    .option('--synopsis <text>', 'synopsis')
+    .option('--number <n>', 'chapter number (must be free in the manga)', parsePositiveInt)
+    .action(async (ref: string, opts: { title?: string; synopsis?: string; number?: number }) => {
+      const patch: Record<string, unknown> = {};
+      if (opts.title !== undefined) patch['title'] = opts.title;
+      if (opts.synopsis !== undefined) patch['synopsis'] = opts.synopsis;
+      if (opts.number !== undefined) patch['number'] = opts.number;
+      if (Object.keys(patch).length === 0) throw new CliError('nothing to change; pass at least one option (see: manga chapter edit --help)', 2);
+      const c = await ctx();
+      const target = await c.resolve.chapter(ref);
+      const updated = await c.api.patch<Chapter>(`/api/chapters/${target.id}`, patch);
+      c.out(updated, () => `updated ${updated.id}  #${updated.number}  ${updated.title}`);
     });
 
   chapter

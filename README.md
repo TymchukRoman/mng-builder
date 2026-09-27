@@ -80,10 +80,14 @@ References take an id or a unique name or title, case-insensitive. A chapter can
 | `manga engine [claude\|local] [--task story=local …]` | Show or set the AI engine; `task=default` clears an override |
 | `manga create "<title>" [--lang en\|uk] [--color bw\|color] [--dir rtl\|ltr] [--style <preset>]` | Create a manga. The colour mode follows the style preset unless `--color` is given (it then wins, with a warning if they disagree) |
 | `manga list` · `manga show <manga>` · `manga rm <manga>` | List, inspect (characters, chapters, pages, panel ids) or delete |
+| `manga edit <manga> [--title] [--synopsis] [--lang en\|uk] [--color bw\|color] [--dir rtl\|ltr] [--style <preset>]` | Change a manga; only the options you pass change. `--dir` mirrors every page; `--style` takes the preset's style guide |
+| `manga cover <manga> [--chapter <chapter>]` | Create the manga (or chapter) cover page; prints its page and panel ids |
 | `manga character add <manga> --name … [--role] [--appearance] [--personality] [--speech] [--seed]` | Add a character |
 | `manga character upload <char> <file> --slot portrait\|fullbody\|side\|back` | Use your own reference image |
 | `manga character pick <char> <image> [--slot portrait]` | Point a reference slot at one of the character's images |
+| `manga character edit <char> [--manga <m>] [--name] [--role] [--personality] [--speech] [--appearance] [--seed] [--recipe <id>\|-]` | Change a character; only the options you pass change |
 | `manga chapter add <manga> "<title>"` · `chapter list <manga>` · `chapter rm <chapter>` | Chapters |
+| `manga chapter edit <chapter> [--title] [--synopsis] [--number <n>]` | Change a chapter; the number must be free in the manga |
 | `manga layouts` | The 16 layout presets |
 | `manga page add <chapter> [--layout 2x2] [--at <index>]` | Add a page |
 | `manga page layout <page> <preset> [--confirm]` | Apply a preset. Panels map in reading order. Without `--confirm` it refuses to drop panels and lists them |
