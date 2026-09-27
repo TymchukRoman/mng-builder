@@ -6,6 +6,7 @@ import WebSocket from 'ws';
 import { DEFAULT_SETTINGS, type ServerEvent, type Settings } from '@manga/shared';
 import { startServer, type AppModule } from '../src/app.js';
 import { readServerInfo } from '../src/config.js';
+import { StoreCorruptError } from '../src/errors.js';
 import { call, makeTestApp, type TestApp } from './helpers/app.js';
 import { tempDir } from './helpers/tmp.js';
 
@@ -97,6 +98,33 @@ describe('modules', () => {
       expect((await call(t.app, 'GET', '/api/recipes')).body).toEqual([{ id: 'anime' }]);
       expect(await call(t.app, 'GET', '/api/boom')).toEqual({ status: 500, body: { error: { code: 'internal', message: 'internal error' } } });
       expect(logged).toHaveBeenCalled();
+    } finally {
+      logged.mockRestore();
+      await t.close();
+    }
+  });
+
+  it('hides a 500 HttpError (e.g. StoreCorruptError) behind 500 internal, but still logs the raw detail', async () => {
+    const mod: AppModule = {
+      name: 'fake-store',
+      register(app) {
+        app.get('/api/corrupt', async () => {
+          throw new StoreCorruptError('character', 'cr_secret123', 'column tags is not valid JSON');
+        });
+      },
+    };
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const t = await makeTestApp({ modules: [mod] });
+    try {
+      const res = await call<ErrorReply>(t.app, 'GET', '/api/corrupt');
+      expect(res).toEqual({ status: 500, body: { error: { code: 'internal', message: 'internal error' } } });
+      const responseText = JSON.stringify(res.body);
+      expect(responseText).not.toContain('cr_secret123');
+      expect(responseText).not.toContain('not valid JSON');
+      expect(logged).toHaveBeenCalled();
+      const loggedText = logged.mock.calls.flat().map(String).join('\n');
+      expect(loggedText).toContain('cr_secret123');
+      expect(loggedText).toContain('not valid JSON');
     } finally {
       logged.mockRestore();
       await t.close();

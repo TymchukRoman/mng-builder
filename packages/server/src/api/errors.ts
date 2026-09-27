@@ -17,7 +17,12 @@ export function toApiError(err: unknown): ApiErrorReply {
       .join('; ');
     return { status: 400, body: errorBody('validation', message, err.issues) };
   }
-  if (err instanceof HttpError) return { status: err.status, body: errorBody(err.code, err.message, err.details) };
+  if (err instanceof HttpError) {
+    // A 5xx HttpError (e.g. StoreCorruptError) can carry raw SQLite text, file paths or entity ids in its
+    // message/details. Those go to the log (installErrorHandling logs every 500+ below), never to the client.
+    if (err.status >= 500) return { status: err.status, body: errorBody('internal', 'internal error') };
+    return { status: err.status, body: errorBody(err.code, err.message, err.details) };
+  }
   if (err instanceof LayoutError) {
     return err.code === 'not-found'
       ? { status: 404, body: errorBody('not_found', err.message, { layoutError: err.code }) }
