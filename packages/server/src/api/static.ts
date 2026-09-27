@@ -11,11 +11,13 @@ export function defaultUiDir(): string {
 
 /**
  * Serves the built UI when the folder exists, with an SPA fallback: a GET outside /api and /files with no file
- * extension gets index.html. Everything else that matches no route is a JSON 404.
+ * extension gets index.html. Everything else that matches no route is a JSON 404. The wildcard route looks files up
+ * per request, so a UI rebuilt while the server runs (new hashed asset names) is served without a restart; a file it
+ * cannot find falls through to the not-found handler below.
  */
 export async function registerStaticUi(app: FastifyInstance, uiDir: string | null): Promise<void> {
   const root = uiDir !== null && existsSync(uiDir) ? uiDir : null;
-  if (root !== null) await app.register(fastifyStatic, { root, wildcard: false });
+  if (root !== null) await app.register(fastifyStatic, { root, wildcard: true });
   const hasUi = root !== null;
   app.setNotFoundHandler((req, reply) => {
     const path = req.url.split('?')[0] ?? '/';

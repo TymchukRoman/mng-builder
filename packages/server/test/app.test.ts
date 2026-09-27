@@ -160,6 +160,26 @@ describe('UI static files', () => {
     }
   });
 
+  it('serves files written into the UI folder after the app started, e.g. by a UI rebuild (F12)', async () => {
+    const ui = tempDir('manga-ui-');
+    writeFileSync(join(ui.path, 'index.html'), '<!doctype html><title>Manga</title>');
+    const t = await makeTestApp({ uiDir: ui.path });
+    try {
+      mkdirSync(join(ui.path, 'assets'));
+      writeFileSync(join(ui.path, 'assets', 'index-B4x9.js'), 'console.log(2)');
+      writeFileSync(join(ui.path, 'index.html'), '<!doctype html><title>Manga 2</title>');
+      const js = await t.app.inject({ method: 'GET', url: '/assets/index-B4x9.js' });
+      expect([js.statusCode, js.body]).toEqual([200, 'console.log(2)']);
+      expect((await t.app.inject({ method: 'HEAD', url: '/assets/index-B4x9.js' })).statusCode).toBe(200);
+      for (const url of ['/', '/m/mg_abc']) expect((await t.app.inject({ method: 'GET', url })).body, url).toContain('<title>Manga 2</title>');
+      expect((await t.app.inject({ method: 'GET', url: '/assets/index-old.js' })).json()).toMatchObject({ error: { code: 'not_found' } });
+      expect((await t.app.inject({ method: 'POST', url: '/assets/index-B4x9.js' })).statusCode).toBe(404);
+    } finally {
+      await t.close();
+      ui.cleanup();
+    }
+  });
+
   it('serves no UI when the folder does not exist', async () => {
     const t = await makeTestApp({ uiDir: join(tmpdir(), 'manga-no-ui-here') });
     try {
