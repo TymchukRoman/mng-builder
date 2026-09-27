@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","cwd":"C:\\MangaBuilder\\.claude-cwd","session_id":"00000000-0000-4000-8000-000000000004","tools":[],"mcp_servers":[],"model":"claude-sonnet-5","permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.281"}
+{"type":"result","subtype":"success","is_error":true,"num_turns":1,"result":"Invalid API key · Please run /login","session_id":"00000000-0000-4000-8000-000000000004"}

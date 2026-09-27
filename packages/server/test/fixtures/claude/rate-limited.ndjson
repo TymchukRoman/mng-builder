@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","cwd":"C:\\MangaBuilder\\.claude-cwd","session_id":"00000000-0000-4000-8000-000000000003","tools":[],"mcp_servers":[],"model":"claude-sonnet-5","permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.281"}
+{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":4102444800,"rateLimitType":"five_hour","isUsingOverage":false},"session_id":"00000000-0000-4000-8000-000000000003"}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":4102531200,"rateLimitType":"seven_day","isUsingOverage":false},"session_id":"00000000-0000-4000-8000-000000000003"}
+{"type":"result","subtype":"success","is_error":true,"num_turns":1,"result":"You've hit your limit · resets 4pm","session_id":"00000000-0000-4000-8000-000000000003"}

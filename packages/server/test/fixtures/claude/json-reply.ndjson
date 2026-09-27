@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","cwd":"C:\\MangaBuilder\\.claude-cwd","session_id":"00000000-0000-4000-8000-000000000001","tools":[],"mcp_servers":[],"model":"claude-sonnet-5","permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.281"}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":4102444800,"rateLimitType":"five_hour","isUsingOverage":false},"session_id":"00000000-0000-4000-8000-000000000001"}
+{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"{\"scene\":\"solo, standing, school rooftop, sunset\"}"}],"usage":{"input_tokens":10,"output_tokens":20}},"session_id":"00000000-0000-4000-8000-000000000001"}
+{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"{\"scene\":\"solo, standing, school rooftop, sunset\"}","session_id":"00000000-0000-4000-8000-000000000001","total_cost_usd":0.01}

@@ -1,0 +1,13 @@
+{
+  "real": {
+    "simple-reply.ndjson": "Copied from C:/Users/roman/Dev/Exalink/cleopatra/tests/fixtures/stream-json/simple-reply.ndjson (claude 2.1.241, captured 2026-08-23).",
+    "long-stream.ndjson": "Copied from C:/Users/roman/Dev/Exalink/cleopatra/tests/fixtures/stream-json/long-stream.ndjson (claude 2.1.241, captured 2026-08-23)."
+  },
+  "synthetic": {
+    "json-reply.ndjson": "Hand-written in the real event shape: a JSON-only answer.",
+    "review-reply.ndjson": "Hand-written: one Read tool call, then a JSON review.",
+    "rate-limited.ndjson": "Hand-written: a rejected five_hour window (resets 2100-01-01) followed by an allowed seven_day window, then an error result.",
+    "not-logged-in.ndjson": "Hand-written: an error result asking to /login.",
+    "tools-leak.ndjson": "Hand-written: system/init reporting tools the run must not have."
+  }
+}
