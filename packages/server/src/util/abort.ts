@@ -10,6 +10,11 @@ export function abortError(signal: AbortSignal | undefined): Error {
 /** `work`, or a rejection with `abortError(signal)` as soon as the signal aborts (`work` itself keeps going). */
 export function raceAbort<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return work;
+  // R1: always attach a handler to `work`, even on the early-return path below. Otherwise, when the signal is
+  // already aborted, this function returns a fresh rejected promise and never subscribes to `work` — so if `work`
+  // is a shared promise nobody else is watching (e.g. ComfyClient.ensureServer's launch, cancelled during the
+  // isUp() check) and it later rejects, nothing ever handles that rejection and the process crashes.
+  work.catch(() => {});
   if (signal.aborted) return Promise.reject(abortError(signal));
   return new Promise<T>((resolve, reject) => {
     const onAbort = (): void => reject(abortError(signal));

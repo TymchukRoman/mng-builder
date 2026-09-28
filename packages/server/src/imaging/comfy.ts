@@ -125,6 +125,7 @@ export class ComfyClient {
   async ensureServer(onStatus?: (label: string) => void, signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) throw abortError(signal);
     if (await this.isUp()) return;
+    if (signal?.aborted) throw abortError(signal); // R1: isUp() takes up to 3 s; don't start a launch for a dead job
     const launcher = this.launcher;
     if (!launcher) throw new TransientError(`ComfyUI is not reachable at ${this.url}`);
     this.starting ??= (async (): Promise<void> => {
