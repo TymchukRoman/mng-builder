@@ -296,7 +296,13 @@ describe('ComfyClient.prepareFor', () => {
   it('never throws when ComfyUI becomes unreachable during the wait (G2)', async () => {
     await client.prepareFor('sdxl');
     await fake.close();
-    await expect(client.prepareFor('qwen')).resolves.toBeUndefined();
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {}); // free() logs the unreachable server (G2)
+    try {
+      await expect(client.prepareFor('qwen')).resolves.toBeUndefined();
+      expect(spy).toHaveBeenCalledWith(expect.stringContaining('comfy free: not reachable'), expect.anything());
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
