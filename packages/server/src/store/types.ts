@@ -1,5 +1,5 @@
 import type {
-  Chapter, Character, EpisodeRun, Image, Job, JobStatus, Lane, Manga, Page, Panel, Settings, SettingsPatch, TextFrame,
+  Chapter, Character, EpisodeRun, Image, Job, JobKind, JobStatus, Lane, Manga, Page, Panel, Settings, SettingsPatch, TextFrame,
 } from '@manga/shared';
 
 /** The entity minus id/timestamps. The repo assigns a fresh id unless one is supplied (panel ids come from layout leaves; image ids name their file). */
@@ -32,6 +32,8 @@ export interface JobRepo {
   insert(input: JobInsert): Job;
   update(id: string, patch: JobPatch): Job;
   list(filter: { status?: JobStatus; limit: number }): Job[];
+  /** Queued jobs of these kinds, oldest first (engine switch re-lane, I1). */
+  listQueued(kinds: readonly JobKind[]): Job[];
   /** Atomically marks the highest-priority, oldest due queued job in `lane` as running (attempts + 1); null if none. */
   claimNext(lane: Lane, nowIso: string): Job | null;
   /** On boot: running → queued. Returns count. */

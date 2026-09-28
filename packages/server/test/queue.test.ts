@@ -211,6 +211,55 @@ describe('JobQueue', () => {
     expect(q.pausedLanes()).toEqual([]);
   });
 
+  it('relane moves a queued job to another lane, publishes it, and it runs at once out of a paused lane (I1)', async () => {
+    const q = makeQueue();
+    const events: Job[] = [];
+    bus.on((e) => {
+      if (e.type === 'job') events.push(e.job);
+    });
+    const ranIn: string[] = [];
+    q.register('llm.step', async (ctx) => {
+      ranIn.push(ctx.job.lane);
+    });
+    q.pauseLane('claude', null, 'quota exhausted');
+    q.start();
+    const job = q.enqueue({ kind: 'llm.step', lane: 'claude', payload: null });
+    await sleep(30);
+    expect(ranIn).toEqual([]);
+    const moved = q.relane(job.id, 'gpu');
+    expect(moved).toMatchObject({ id: job.id, lane: 'gpu', status: 'queued' });
+    expect(events.map((j) => [j.status, j.lane])).toContainEqual(['queued', 'gpu']);
+    expect(await q.waitFor(job.id)).toMatchObject({ status: 'succeeded', lane: 'gpu' });
+    expect(ranIn).toEqual(['gpu']);
+    expect(q.relane(job.id, 'claude')).toBeNull(); // finished jobs stay where they ran
+  });
+
+  it('relane leaves a running job, and a job already in that lane, alone', async () => {
+    const q = makeQueue();
+    const gate = deferred();
+    q.register('llm.step', async () => {
+      await gate.promise;
+    });
+    q.start();
+    const running = q.enqueue({ kind: 'llm.step', lane: 'claude', payload: null });
+    try {
+      await vi.waitFor(() => expect(t.store.jobs.require(running.id).status).toBe('running'));
+      expect(q.relane(running.id, 'gpu')).toBeNull();
+      expect(t.store.jobs.require(running.id).lane).toBe('claude');
+      q.pauseLane('gpu', null, 'test');
+      const queued = q.enqueue({ kind: 'llm.step', lane: 'gpu', payload: null });
+      const events: Job[] = [];
+      bus.on((e) => {
+        if (e.type === 'job') events.push(e.job);
+      });
+      expect(q.relane(queued.id, 'gpu')).toBeNull();
+      expect(events).toEqual([]);
+    } finally {
+      gate.resolve();
+    }
+    await q.waitFor(running.id);
+  });
+
   it('re-queues jobs left running by a crash when it starts', async () => {
     const stale = t.store.jobs.insert({
       kind: 'image.generate', lane: 'gpu', priority: 0, payload: null, maxAttempts: 3, nextRunAt: new Date().toISOString(), episodeRunId: null,

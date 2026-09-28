@@ -89,6 +89,22 @@ export class JobQueue {
     return cancelled;
   }
 
+  /**
+   * Moves a queued job to another lane and publishes it (I1: an engine switch re-lanes queued text jobs). A job moved
+   * out of a paused lane can run right away: the lane it waited in no longer applies, and neither does a retry
+   * backoff earned there (e.g. a Claude quota error). Returns the moved job, or null when nothing changed: the job
+   * is running or finished (it stays where it ran), or already in `lane`.
+   */
+  relane(id: string, lane: Lane): Job | null {
+    const job = this.store.jobs.require(id);
+    if (job.status !== 'queued' || job.lane === lane) return null;
+    const nowIso = this.now().toISOString();
+    const moved = this.store.jobs.update(id, { lane, nextRunAt: job.nextRunAt > nowIso ? nowIso : job.nextRunAt });
+    this.publish(moved);
+    this.kick();
+    return moved;
+  }
+
   /** until null = until resumeLane. */
   pauseLane(lane: Lane, until: Date | null, reason: string): void {
     this.paused.set(lane, { until, reason });

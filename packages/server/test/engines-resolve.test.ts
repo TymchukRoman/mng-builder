@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { DEFAULT_SETTINGS, type Settings } from '@manga/shared';
-import { Engines, resolveEngine } from '../src/engines/resolve.js';
+import { DEFAULT_SETTINGS, type Job, type Settings } from '@manga/shared';
+import { Engines, resolveEngine, textTaskOf } from '../src/engines/resolve.js';
 import { ScriptedEngine } from '../src/engines/scripted.js';
 import { EngineUnavailableError, InvalidOutputError, QuotaExceededError } from '../src/engines/errors.js';
 import { PermanentError, TransientError } from '../src/jobs/index.js';
@@ -35,6 +35,28 @@ describe('Engines', () => {
     settings = withEngine({ mode: 'local', tasks: {} });
     expect(engines.for('prompts')).toBe(local);
     expect(engines.laneFor('prompts')).toBe('gpu');
+  });
+
+  it('forLane: the lane decides the engine, whatever the settings say (I1)', () => {
+    const claude = new ScriptedEngine('claude', {});
+    const local = new ScriptedEngine('local', {});
+    const engines = new Engines({ settings: () => withEngine({ mode: 'local', tasks: { prompts: 'local' } }), claude, local });
+    expect(engines.forLane('claude')).toBe(claude);
+    expect(engines.forLane('gpu')).toBe(local);
+    expect(() => engines.forLane('cpu')).toThrow(PermanentError);
+    expect(() => engines.forLane('cpu')).toThrow('No text engine runs in the "cpu" lane');
+  });
+});
+
+describe('textTaskOf', () => {
+  const job = (kind: Job['kind'], payload: unknown): Pick<Job, 'kind' | 'payload'> => ({ kind, payload });
+  it('derives the task of the text jobs M2 queues, and null for anything else', () => {
+    expect(textTaskOf(job('llm.step', { type: 'panel-prompt', panelId: 'pn_x' }))).toBe('prompts');
+    expect(textTaskOf(job('llm.step', { type: 'appearance', characterId: 'cr_x', description: 'd' }))).toBe('prompts');
+    expect(textTaskOf(job('image.review', { imageId: 'im_x', panelId: null }))).toBe('review');
+    expect(textTaskOf(job('llm.step', { type: 'episode', runId: 'er_x', step: 'render' }))).toBeNull();
+    expect(textTaskOf(job('llm.step', null))).toBeNull();
+    expect(textTaskOf(job('image.generate', { target: 'panel', panelId: 'pn_x' }))).toBeNull();
   });
 });
 

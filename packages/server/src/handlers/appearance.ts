@@ -18,7 +18,7 @@ export function appearanceStep(services: HandlerServices): LlmStepHandler {
   return async (ctx, payload) => {
     if (payload.type !== 'appearance') throw new PermanentError(`appearance step received a "${payload.type}" payload`);
     const character = ctx.store.characters.require(payload.characterId);
-    const engine = services.engines.for('prompts');
+    const engine = services.engines.forLane(ctx.job.lane); // I1: the job's lane decides the engine
     ctx.progress('Writing appearance tags');
     const out = await engine.completeJson({
       name: 'appearance', task: 'prompts', system: loadPrompt('appearance'),

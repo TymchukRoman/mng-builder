@@ -58,14 +58,24 @@ describe('image.review', () => {
     expect(events.filter((e) => e.type === 'entity' && e.entity === 'image' && e.op === 'updated')).toHaveLength(1);
   });
 
-  it('uses the local engine when the review task is switched to local', async () => {
+  it('uses the local engine for a review queued in the gpu lane (I1)', async () => {
     const services = handlerServices(lib.store, comfy);
     lib.store.settings.patch({ engine: { tasks: { review: 'local' } } });
     const { panel, image } = panelWithAiko();
-    const result = await reviewImage(jobContext(lib.store, 'image.review', {}).ctx, services, { imageId: image.id, panelId: panel.id });
+    const result = await reviewImage(jobContext(lib.store, 'image.review', {}, { lane: 'gpu' }).ctx, services, { imageId: image.id, panelId: panel.id });
     expect(result.engine).toBe('local');
     expect(services.local.calls).toHaveLength(1);
     expect(services.claude.calls).toHaveLength(0);
+  });
+
+  it('keeps a review that stays in the claude lane on Claude, even when the settings say local (I1)', async () => {
+    const services = handlerServices(lib.store, comfy);
+    lib.store.settings.patch({ engine: { mode: 'local', tasks: { review: 'local' } } });
+    const { panel, image } = panelWithAiko();
+    const result = await reviewImage(jobContext(lib.store, 'image.review', {}, { lane: 'claude' }).ctx, services, { imageId: image.id, panelId: panel.id });
+    expect(result.engine).toBe('claude');
+    expect(services.claude.calls).toHaveLength(1);
+    expect(services.local.calls).toHaveLength(0);
   });
 
   it('reviews a character image without a panel and never compares it with itself', async () => {

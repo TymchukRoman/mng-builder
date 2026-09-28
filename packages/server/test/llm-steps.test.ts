@@ -89,14 +89,24 @@ describe('llm.step panel-prompt', () => {
     expect(events.some((e) => e.type === 'entity' && e.entity === 'panel' && e.op === 'updated')).toBe(false);
   });
 
-  it('asks the local engine when the prompts task is local', async () => {
+  it('runs a gpu-lane job on the local engine (I1: the lane decides the engine)', async () => {
     const services = handlerServices(lib.store, comfy);
     lib.store.settings.patch({ engine: { tasks: { prompts: 'local' } } });
     const { panels } = seedManga(lib.store);
     const payload = { type: 'panel-prompt' as const, panelId: panels[0]!.id };
-    await panelPromptStep(services)(jobContext(lib.store, 'llm.step', payload).ctx, payload);
+    await panelPromptStep(services)(jobContext(lib.store, 'llm.step', payload, { lane: 'gpu' }).ctx, payload);
     expect(services.local.calls).toHaveLength(1);
     expect(services.claude.calls).toHaveLength(0);
+  });
+
+  it('runs a job that stays in the claude lane on Claude, even when the settings now say local (I1)', async () => {
+    const services = handlerServices(lib.store, comfy);
+    lib.store.settings.patch({ engine: { mode: 'local' } });
+    const { panels } = seedManga(lib.store);
+    const payload = { type: 'panel-prompt' as const, panelId: panels[0]!.id };
+    await panelPromptStep(services)(jobContext(lib.store, 'llm.step', payload, { lane: 'claude' }).ctx, payload);
+    expect(services.claude.calls).toHaveLength(1);
+    expect(services.local.calls).toHaveLength(0);
   });
 
   it('rejects a payload of another type', async () => {
@@ -120,6 +130,19 @@ describe('llm.step appearance', () => {
     expect(call.prompt).toContain('A girl with silver twin-tails.');
     expect(events).toContainEqual({ type: 'entity', entity: 'character', id: aiko.id, op: 'updated', mangaId: manga.id });
     expect(events.filter((e) => e.type === 'entity' && e.entity === 'character' && e.op === 'updated')).toHaveLength(1);
+  });
+
+  it('follows the job lane, not the live settings, for the engine (I1)', async () => {
+    const services = handlerServices(lib.store, comfy);
+    const { manga } = seedManga(lib.store);
+    const aiko = seedCharacter(lib.store, manga.id, 'Aiko');
+    const payload = { type: 'appearance' as const, characterId: aiko.id, description: 'A girl with silver hair.' };
+    lib.store.settings.patch({ engine: { mode: 'local' } });
+    await appearanceStep(services)(jobContext(lib.store, 'llm.step', payload, { lane: 'claude' }).ctx, payload);
+    expect([services.claude.calls.length, services.local.calls.length]).toEqual([1, 0]);
+    lib.store.settings.patch({ engine: { mode: 'claude' } });
+    await appearanceStep(services)(jobContext(lib.store, 'llm.step', payload, { lane: 'gpu' }).ctx, payload);
+    expect([services.claude.calls.length, services.local.calls.length]).toEqual([1, 1]);
   });
 
   it('fails without touching the existing tags when the answer is only forbidden words', async () => {

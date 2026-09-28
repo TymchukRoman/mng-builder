@@ -1,4 +1,4 @@
-import type { JobKind, ServerEvent } from '@manga/shared';
+import type { JobKind, Lane, ServerEvent } from '@manga/shared';
 import { EventBus } from '../../src/events/bus.js';
 import { GpuArbiter, JobQueue, type JobContext } from '../../src/jobs/index.js';
 import type { Store } from '../../src/store/index.js';
@@ -10,14 +10,18 @@ export interface TestJobContext {
   controller: AbortController;
 }
 
-/** A JobContext around a real Job row, without starting the queue. */
-export function jobContext(store: Store, kind: JobKind, payload: unknown, opts: { gpu?: GpuArbiter } = {}): TestJobContext {
+/** The lane a route enqueues `kind` into under DEFAULT_SETTINGS (engine mode 'claude'): text jobs run on Claude. */
+const defaultLane = (kind: JobKind): Lane => (kind === 'llm.step' || kind === 'image.review' ? 'claude' : 'gpu');
+
+/** A JobContext around a real Job row, without starting the queue. The job's lane decides the text engine (I1). */
+export function jobContext(store: Store, kind: JobKind, payload: unknown, opts: { gpu?: GpuArbiter; lane?: Lane } = {}): TestJobContext {
   const bus = new EventBus();
   const events: ServerEvent[] = [];
   bus.on((e) => { events.push(e); });
   const gpu = opts.gpu ?? new GpuArbiter();
   const queue = new JobQueue({ store, bus, gpu });
-  const job = store.jobs.insert({ kind, lane: 'gpu', payload, priority: 0, maxAttempts: 1, nextRunAt: new Date().toISOString(), episodeRunId: null });
+  const lane = opts.lane ?? defaultLane(kind);
+  const job = store.jobs.insert({ kind, lane, payload, priority: 0, maxAttempts: 1, nextRunAt: new Date().toISOString(), episodeRunId: null });
   const progress: TestJobContext['progress'] = [];
   const controller = new AbortController();
   const ctx: JobContext = {

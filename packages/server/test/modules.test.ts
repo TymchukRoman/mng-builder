@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { ServiceStatus } from '@manga/shared';
+import type { Job, JobRef, ServiceStatus } from '@manga/shared';
 import { startServer } from '../src/app.js';
 import { OllamaEngine } from '../src/engines/ollama.js';
 import { aiModule } from '../src/modules/ai.js';
@@ -11,7 +11,7 @@ import { imagingModule } from '../src/modules/imaging.js';
 import { servicesFor } from '../src/modules/services.js';
 import { startFakeOllama } from './fakes/fake-ollama.js';
 import { startM2TestServer, type M2TestServer } from './helpers/m2-server.js';
-import { seedManga } from './helpers/seed.js';
+import { seedImage, seedManga } from './helpers/seed.js';
 
 const FAKE_CLAUDE = fileURLToPath(new URL('./fakes/fake-claude.mjs', import.meta.url));
 const fixture = (name: string): string => fileURLToPath(new URL(`./fixtures/claude/${name}.ndjson`, import.meta.url));
@@ -72,6 +72,40 @@ describe('M2 modules', () => {
       paused = server.deps.queue.pausedLanes();
     }
     expect(paused).toEqual([{ lane: 'claude', until: '2100-01-01T00:00:00.000Z', reason: 'Claude quota exhausted (five_hour window)' }]);
+  });
+
+  it('an engine switch re-lanes queued text jobs, and a moved job runs on the local engine in the gpu lane (I1)', async () => {
+    const lanesAtLocalCall: string[][] = [];
+    server = await startM2TestServer({
+      local: {
+        'panel-prompt': () => {
+          lanesAtLocalCall.push(server!.deps.store.jobs.list({ status: 'running', limit: 10 }).map((j) => j.lane));
+          return { scene: 'solo, standing, rooftop' };
+        },
+      },
+    });
+    const { store, queue, bus } = server.deps;
+    const { manga, panels } = seedManga(store);
+    const image = seedImage(store, manga.id, { type: 'panel', id: panels[1]!.id }, null);
+    store.panels.update(panels[1]!.id, { activeImageId: image.id });
+    // The quota banner case: Claude is paused for hours, and the user flips the engine to Local.
+    queue.pauseLane('claude', new Date('2100-01-01T00:00:00.000Z'), 'Claude quota exhausted');
+    const prompt = (await server.api<JobRef>('POST', `/api/panels/${panels[0]!.id}/prompt`)).body.jobId;
+    const review = (await server.api<JobRef>('POST', `/api/panels/${panels[1]!.id}/review`)).body.jobId;
+    expect([store.jobs.require(prompt).lane, store.jobs.require(review).lane]).toEqual(['claude', 'claude']);
+
+    const events: Job[] = [];
+    bus.on((e) => { if (e.type === 'job') events.push(e.job); });
+    // Prompts go local; review stays on Claude by a per-task override.
+    expect((await server.api('PATCH', '/api/settings', { engine: { mode: 'local', tasks: { review: 'claude' } } })).status).toBe(200);
+    expect(events.filter((j) => j.id === prompt).map((j) => [j.lane, j.status])[0]).toEqual(['gpu', 'queued']);
+    expect(events.some((j) => j.id === review)).toBe(false);
+
+    expect(await queue.waitFor(prompt)).toMatchObject({ lane: 'gpu', status: 'succeeded' });
+    expect(server.local.calls.map((c) => c.name)).toEqual(['panel-prompt']);
+    expect(lanesAtLocalCall).toEqual([['gpu']]);
+    expect(server.claude.calls).toEqual([]);
+    expect(store.jobs.require(review)).toMatchObject({ lane: 'claude', status: 'queued' });
   });
 
   it('MANGA_FAKES=1 wires FakeComfy and scripted engines with no options at all', async () => {

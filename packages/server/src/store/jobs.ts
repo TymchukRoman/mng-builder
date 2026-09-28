@@ -1,4 +1,4 @@
-import { JobSchema, type Job, type JobStatus, type Lane } from '@manga/shared';
+import { JobSchema, type Job, type JobKind, type JobStatus, type Lane } from '@manga/shared';
 import type { Db } from './db.js';
 import { TableRepo } from './table.js';
 import type { JobInsert, JobPatch, JobRepo } from './types.js';
@@ -30,6 +30,15 @@ export class SqliteJobRepo extends TableRepo<Job, NewJobRow, JobPatch> implement
     const rows = this.db
       .prepare(`SELECT * FROM jobs WHERE ${where} ORDER BY created_at DESC, rowid DESC LIMIT ?`)
       .all(...params, filter.limit) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.decode(row));
+  }
+
+  listQueued(kinds: readonly JobKind[]): Job[] {
+    if (kinds.length === 0) return [];
+    const rows = this.db
+      .prepare(`SELECT * FROM jobs WHERE status = 'queued' AND kind IN (${kinds.map(() => '?').join(', ')})
+                ORDER BY created_at ASC, rowid ASC`)
+      .all(...kinds) as Array<Record<string, unknown>>;
     return rows.map((row) => this.decode(row));
   }
 

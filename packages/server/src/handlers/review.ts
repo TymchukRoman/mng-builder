@@ -43,7 +43,7 @@ export async function reviewImage(ctx: JobContext, services: HandlerServices, p:
     const ref = c.refs.portrait ? store.images.get(c.refs.portrait) : null;
     return ref && ref.id !== image.id ? [{ name: c.name, path: store.files.abs(ref.path) }] : [];
   });
-  const engine = services.engines.for('review');
+  const engine = services.engines.forLane(ctx.job.lane); // I1: the job's lane decides the engine
   ctx.progress(engine.name === 'claude' ? 'Reviewing with Claude' : 'Reviewing with the local model');
   const out = await engine.completeJson({
     name: 'review', task: 'review', system: loadPrompt('review'),

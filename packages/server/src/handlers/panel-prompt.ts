@@ -47,7 +47,7 @@ export function panelPromptStep(services: HandlerServices): LlmStepHandler {
     const settings = ctx.store.settings.get();
     const { recipe } = routeRecipe({ settings, manga: pc.manga, panel: pc.panel, refCount: pc.refCharacters.length, charCount: pc.characters.length });
     const style = promptStyleFor(recipe);
-    const engine = services.engines.for('prompts');
+    const engine = services.engines.forLane(ctx.job.lane); // I1: the job's lane decides the engine
     ctx.progress('Writing the image prompt');
     const out = await engine.completeJson({
       name: 'panel-prompt', task: 'prompts', system: loadPrompt(style === 'tags' ? 'panel-prompt-tags' : 'panel-prompt-natural'),
