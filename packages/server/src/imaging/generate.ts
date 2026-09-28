@@ -62,9 +62,10 @@ export async function generateImage(deps: GenerateDeps, req: GenerateRequest, ct
   const { store, comfy, gpu } = deps;
   const loras = recipe.supportsLoras ? req.loras : [];
 
-  await comfy.ensureServer((label) => ctx.progress(label));
-  await gpu.acquire('comfy');
-  await comfy.prepareFor(recipe.family);
+  // M5: the job's signal reaches every wait on the way to the GPU.
+  await comfy.ensureServer((label) => ctx.progress(label), ctx.signal);
+  await gpu.acquire('comfy', ctx.signal);
+  await comfy.prepareFor(recipe.family, ctx.signal);
 
   // I3: every input uploaded for this run is removed from ComfyUI's input folder afterwards (success, failure or
   // abort). The gpu lane serialises ComfyUI runs, so no other run of ours is using them.

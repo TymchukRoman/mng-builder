@@ -1,22 +1,27 @@
 export type GpuOwner = 'comfy' | 'ollama';
+/** Frees one side's VRAM. `signal` is the acquiring job's (M5): a releaser that waits should stop when it aborts. */
+export type GpuReleaser = (signal?: AbortSignal) => Promise<void>;
 
 /** Tracks who holds the GPU and frees the other side before a switch (ComfyUI /free, ollama keep_alive: 0). */
 export class GpuArbiter {
   private owner: GpuOwner | null = null;
-  private readonly releasers = new Map<GpuOwner, () => Promise<void>>();
+  private readonly releasers = new Map<GpuOwner, GpuReleaser>();
   private chain: Promise<void> = Promise.resolve();
 
-  setReleaser(owner: GpuOwner, fn: () => Promise<void>): void {
+  setReleaser(owner: GpuOwner, fn: GpuReleaser): void {
     this.releasers.set(owner, fn);
   }
 
-  /** If another owner holds the GPU, awaits its releaser first. Serialised. */
-  acquire(owner: GpuOwner): Promise<void> {
+  /**
+   * Unless `owner` already holds the GPU, awaits the other side's releaser first. Serialised. That includes the first
+   * acquire of this process (owner still null, M1): ComfyUI and ollama outlive a server restart, so the other side may
+   * still hold VRAM; both releasers are idempotent and treat a down service as released (G2).
+   */
+  acquire(owner: GpuOwner, signal?: AbortSignal): Promise<void> {
     const run = async (): Promise<void> => {
-      const previous = this.owner;
-      if (previous !== null && previous !== owner) {
-        const release = this.releasers.get(previous);
-        if (release) await release();
+      if (this.owner !== owner) {
+        const release = this.releasers.get(owner === 'comfy' ? 'ollama' : 'comfy');
+        if (release) await release(signal);
       }
       this.owner = owner;
     };

@@ -4,7 +4,7 @@ import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import WebSocket from 'ws';
 import type { ServiceState } from '@manga/shared';
 import { PermanentError, TransientError } from '../jobs/index.js';
-import { abortError, sleep } from '../util/abort.js';
+import { abortError, raceAbort, sleep } from '../util/abort.js';
 import type { ComfyGraph } from './comfy-graph.js';
 import type { ComfyLauncher } from './launcher.js';
 
@@ -64,6 +64,14 @@ export function executionError(entry: HistoryEntry): string {
   return `ComfyUI failed in ${String(error['node_type'] ?? '?')} (node ${String(error['node_id'] ?? '?')}): ${String(error['exception_message'] ?? '').trim()}`;
 }
 
+/** torch_vram_total below this counts as "nothing resident" (the VRAM waits). */
+const VRAM_EMPTY_BYTES = 512 * 1024 * 1024;
+/** Families whose model is small enough to sit beside any other: preparing for them frees nothing (M3a). */
+const NEUTRAL_FAMILIES: ReadonlySet<string> = new Set(['upscale']);
+/** `lastFamily` before this process prepared anything: ComfyUI is shared and outlives the server, so what it holds
+ *  is unknown (M1). */
+const UNKNOWN_FAMILY = Symbol('unknown family');
+
 /** `rel` ('/'-separated, as ComfyUI reports it) under `base`, or null when it would resolve outside it. */
 function inside(base: string, rel: string): string | null {
   const root = resolve(base);
@@ -78,15 +86,19 @@ export class ComfyClient {
   private readonly pollMs: number;
   /** The ComfyUI folder (<comfyRoot>/ComfyUI) when it is on this machine; null for fakes and tests (cleanup off). */
   private readonly dataDir: string | null;
+  /** Hard bound on the wait for ComfyUI to drop its VRAM after /free (M3b). */
+  private readonly vramWaitMs: number;
   private starting: Promise<void> | null = null;
-  /** Model family last prepared for (via prepareFor) or resident from a run; null once free() has cleared it. */
-  private lastFamily: string | null = null;
+  /** Model family last prepared for (via prepareFor) or resident from a run; null once free() has cleared it;
+   *  UNKNOWN_FAMILY until this process prepared anything. */
+  private lastFamily: string | null | typeof UNKNOWN_FAMILY = UNKNOWN_FAMILY;
 
-  constructor(opts: { url: string; launcher?: ComfyLauncher | null; pollMs?: number; dataDir?: string | null }) {
+  constructor(opts: { url: string; launcher?: ComfyLauncher | null; pollMs?: number; dataDir?: string | null; vramWaitMs?: number }) {
     this.url = opts.url.replace(/\/+$/, '');
     this.launcher = opts.launcher ?? null;
     this.pollMs = opts.pollMs ?? 400;
     this.dataDir = opts.dataDir ?? null;
+    this.vramWaitMs = opts.vramWaitMs ?? 15_000;
   }
 
   async health(): Promise<ServiceState> {
@@ -102,7 +114,12 @@ export class ComfyClient {
     return { ok: true, detail: device ? `${device.name ?? 'GPU'} · ${((device.vram_free ?? 0) / 1e9).toFixed(1)} GB free` : 'running' };
   }
 
-  async ensureServer(onStatus?: (label: string) => void): Promise<void> {
+  /**
+   * `signal` (M5): a cancelled job stops waiting at once with the abort error. The launch poll itself is shared and
+   * keeps going, so the next job joins it instead of spawning a second ComfyUI.
+   */
+  async ensureServer(onStatus?: (label: string) => void, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw abortError(signal);
     if (await this.isUp()) return;
     const launcher = this.launcher;
     if (!launcher) throw new TransientError(`ComfyUI is not reachable at ${this.url}`);
@@ -116,7 +133,7 @@ export class ComfyClient {
       }
       throw new PermanentError(`ComfyUI did not come up within ${Math.round(launcher.timeoutMs / 1000)} s. See ${launcher.logPath}`);
     })().finally(() => { this.starting = null; });
-    await this.starting;
+    await raceAbort(this.starting, signal);
   }
 
   async uploadImage(absPath: string): Promise<string> {
@@ -213,37 +230,65 @@ export class ComfyClient {
    * Called before running a graph of `family`. ComfyUI's IP-Adapter/CLIP-Vision loaders are cached node outputs,
    * outside ComfyUI's own model manager, so it does not evict them by itself when a different model family loads
    * next — live evidence: qwen-edit-ref loaded only partially with an SDXL+IP-Adapter graph left resident (100 s
-   * per sampling step; 13 s/step after `/free`). Same family as last time → no-op. On a switch, frees and then
-   * waits for the unload to actually take effect: ComfyUI applies `/free` asynchronously (its prompt worker
-   * processes the flag on its next wake-up), so VRAM is reported unchanged for a few seconds right after the
-   * POST. Never throws: an unreachable ComfyUI just stops waiting (G2) — the next call surfaces the real problem.
+   * per sampling step; 13 s/step after `/free`). Same family as last time → no-op. On a switch, `release()`s.
+   * - M1: the first call of this process doesn't know what the shared ComfyUI holds, so it releases when
+   *   `/system_stats` reports torch_vram_total ≥ 512 MiB, and not when VRAM is already empty.
+   * - M3a: `upscale` is family-neutral (a tiny model beside the checkpoint): no free, `lastFamily` unchanged.
+   * Never throws (G2: an unreachable ComfyUI just stops waiting), except the abort error when `signal` aborts (M5).
    */
-  async prepareFor(family: string): Promise<void> {
-    if (this.lastFamily !== null && this.lastFamily !== family) {
-      await this.free();
-      await this.waitForVramFreed();
-    }
+  async prepareFor(family: string, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw abortError(signal);
+    if (NEUTRAL_FAMILIES.has(family)) return;
+    const last = this.lastFamily;
+    const mustFree = last === UNKNOWN_FAMILY
+      ? ((await this.vramTotal(signal, 3_000)) ?? 0) >= VRAM_EMPTY_BYTES
+      : last !== null && last !== family;
+    if (mustFree) await this.release(signal);
     this.lastFamily = family;
   }
 
-  /** Polls GET /system_stats every `pollMs` until `devices[0].torch_vram_total` drops below 512 MiB, or 15 s
-   *  have passed. Never throws (G2): any fetch failure, non-OK status, or missing field just ends the wait. */
-  private async waitForVramFreed(): Promise<void> {
-    const deadline = Date.now() + 15_000;
-    const threshold = 512 * 1024 * 1024;
+  /**
+   * `free()`, then the bounded wait for the unload to actually take effect: ComfyUI applies `/free` asynchronously
+   * (its prompt worker processes the flag on its next wake-up), so VRAM is reported unchanged for a few seconds right
+   * after the POST. prepareFor's family switch and the GPU arbiter's releaser (handing the GPU to ollama, M2) use it.
+   * Never throws (G2), except the abort error when `signal` aborts (M5).
+   */
+  async release(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw abortError(signal);
+    await this.free();
+    await this.waitForVramFreed(signal);
+  }
+
+  /** Polls GET /system_stats every `pollMs` until `devices[0].torch_vram_total` drops below 512 MiB. `vramWaitMs`
+   *  (15 s) is a hard bound (M3b): the deadline is checked before each poll, and each poll only gets the time left.
+   *  Never throws (G2): any fetch failure, non-OK status, or missing field just ends the wait — except the abort
+   *  error when `signal` aborts (M5). */
+  private async waitForVramFreed(signal?: AbortSignal): Promise<void> {
+    const deadline = Date.now() + this.vramWaitMs;
     for (;;) {
-      let res: Response;
-      try {
-        res = await fetch(`${this.url}/system_stats`, { signal: AbortSignal.timeout(3_000) });
-      } catch {
-        return;
-      }
-      if (!res.ok) return;
-      const stats = (await res.json().catch(() => null)) as { devices?: Array<{ torch_vram_total?: number }> } | null;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return;
+      const total = await this.vramTotal(signal, Math.min(3_000, remaining));
+      if (total === null || total < VRAM_EMPTY_BYTES) return;
+      const left = deadline - Date.now();
+      if (left <= 0) return;
+      await sleep(Math.min(this.pollMs, left), signal);
+    }
+  }
+
+  /** `devices[0].torch_vram_total` from GET /system_stats, or null when it can't be read in `timeoutMs` (down,
+   *  non-OK, missing field). Rejects only with the abort error when `signal` aborts. */
+  private async vramTotal(signal: AbortSignal | undefined, timeoutMs: number): Promise<number | null> {
+    const timeout = AbortSignal.timeout(timeoutMs);
+    try {
+      const res = await fetch(`${this.url}/system_stats`, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+      if (!res.ok) return null;
+      const stats = (await res.json()) as { devices?: Array<{ torch_vram_total?: number }> } | null;
       const total = stats?.devices?.[0]?.torch_vram_total;
-      if (typeof total !== 'number' || total < threshold) return;
-      if (Date.now() >= deadline) return;
-      await sleep(this.pollMs);
+      return typeof total === 'number' ? total : null;
+    } catch {
+      if (signal?.aborted) throw abortError(signal);
+      return null;
     }
   }
 

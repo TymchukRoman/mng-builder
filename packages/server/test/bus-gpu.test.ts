@@ -59,9 +59,30 @@ describe('GpuArbiter', () => {
     });
     await gpu.acquire('comfy');
     await gpu.acquire('ollama');
-    expect([gpu.current, ...released]).toEqual(['ollama', 'comfy']);
+    expect([gpu.current, ...released]).toEqual(['ollama', 'ollama', 'comfy']);
     await gpu.acquire('comfy');
-    expect([gpu.current, ...released]).toEqual(['comfy', 'comfy', 'ollama']);
+    expect([gpu.current, ...released]).toEqual(['comfy', 'ollama', 'comfy', 'ollama']);
+  });
+
+  it('frees the other side on the first acquire, since ComfyUI and ollama outlive a server restart (M1)', async () => {
+    for (const first of ['comfy', 'ollama'] as const) {
+      const gpu = new GpuArbiter();
+      const released: string[] = [];
+      gpu.setReleaser('comfy', async () => { released.push('comfy'); });
+      gpu.setReleaser('ollama', async () => { released.push('ollama'); });
+      await gpu.acquire(first);
+      await gpu.acquire(first);
+      expect(released).toEqual([first === 'comfy' ? 'ollama' : 'comfy']);
+    }
+  });
+
+  it("passes the acquiring job's signal to the releaser (M5)", async () => {
+    const gpu = new GpuArbiter();
+    const seen: Array<AbortSignal | undefined> = [];
+    gpu.setReleaser('comfy', async (signal) => { seen.push(signal); });
+    const controller = new AbortController();
+    await gpu.acquire('ollama', controller.signal);
+    expect(seen).toEqual([controller.signal]);
   });
 
   it('serialises concurrent acquisitions', async () => {
@@ -77,7 +98,7 @@ describe('GpuArbiter', () => {
     });
     await gpu.acquire('comfy');
     await Promise.all([gpu.acquire('ollama'), gpu.acquire('comfy')]);
-    expect(log).toEqual(['release comfy start', 'release comfy end', 'release ollama (current=ollama)']);
+    expect(log).toEqual(['release ollama (current=null)', 'release comfy start', 'release comfy end', 'release ollama (current=ollama)']);
     expect(gpu.current).toBe('comfy');
   });
 

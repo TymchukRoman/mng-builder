@@ -25,7 +25,9 @@ export function imagingModule(deps: CoreDeps, services: M2Services = servicesFor
         }
       }
       const comfy = services.comfy;
-      deps.gpu.setReleaser('comfy', () => comfy.free());
+      // M2: handing the GPU to ollama waits until ComfyUI has actually dropped its VRAM (ollama places layers by the
+      // free VRAM it sees at load time).
+      deps.gpu.setReleaser('comfy', (signal) => comfy.release(signal));
       deps.statusProviders.comfy = () => comfy.health();
       registerImagingJobs(deps.queue, services);
       registerImagingRoutes(app, deps, services);

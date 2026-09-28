@@ -1,3 +1,4 @@
+import type { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,10 +7,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { Job, JobRef, ServiceStatus } from '@manga/shared';
 import { startServer } from '../src/app.js';
 import { OllamaEngine } from '../src/engines/ollama.js';
+import { ComfyClient } from '../src/imaging/comfy.js';
+import { ComfyLauncher } from '../src/imaging/launcher.js';
 import { aiModule } from '../src/modules/ai.js';
 import { imagingModule } from '../src/modules/imaging.js';
 import { servicesFor } from '../src/modules/services.js';
 import { startFakeOllama } from './fakes/fake-ollama.js';
+import { fakeComfyRoot } from './helpers/comfy-root.js';
 import { startM2TestServer, type M2TestServer } from './helpers/m2-server.js';
 import { seedImage, seedManga } from './helpers/seed.js';
 
@@ -55,6 +59,42 @@ describe('M2 modules', () => {
     } finally {
       await ollama.close();
     }
+  });
+
+  it('hand the GPU to ollama only after ComfyUI has actually dropped its VRAM (M2)', async () => {
+    server = await startM2TestServer();
+    await server.deps.gpu.acquire('comfy');
+    server.fake.torchVramTotal = 14e9;
+    server.fake.freeDelayMs = 100;
+    await server.deps.gpu.acquire('ollama');
+    expect(server.fake.calls.filter((c) => c.path === '/free')).toHaveLength(1);
+    expect(server.fake.torchVramTotal).toBe(0);
+  });
+
+  it('a job cancelled while ComfyUI is starting frees the gpu lane at once (M5)', async () => {
+    const dead = 'http://127.0.0.1:9';
+    const spawnImpl = ((): unknown => ({ unref() {}, on() { return this; } })) as unknown as typeof spawn;
+    server = await startM2TestServer({
+      services: () => ({
+        comfy: new ComfyClient({
+          url: dead, pollMs: 20, launcher: new ComfyLauncher({ comfyRoot: fakeComfyRoot(), comfyUrl: dead, pollMs: 20, timeoutMs: 3_000, spawnImpl }),
+        }),
+      }),
+    });
+    const { store, queue } = server.deps;
+    store.settings.patch({ engine: { mode: 'local' } }); // the review below then queues in the gpu lane, behind the generate
+    const { manga, panels } = seedManga(store);
+    const image = seedImage(store, manga.id, { type: 'panel', id: panels[1]!.id }, null);
+    const generate = (await server.api<JobRef>('POST', `/api/panels/${panels[0]!.id}/generate`, {})).body.jobId;
+    for (let i = 0; i < 200 && store.jobs.require(generate).progress?.label !== 'Starting image server'; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(store.jobs.require(generate).progress?.label).toBe('Starting image server');
+    const review = queue.enqueue({ kind: 'image.review', lane: 'gpu', payload: { imageId: image.id, panelId: panels[1]!.id } });
+    const started = Date.now();
+    expect((await server.api<Job>('POST', `/api/jobs/${generate}/cancel`)).body.status).toBe('cancelled');
+    expect((await queue.waitFor(review.id)).status).toBe('succeeded');
+    expect(Date.now() - started).toBeLessThan(1_000);
   });
 
   it('pause the claude lane until the reported reset when Claude is out of quota', async () => {

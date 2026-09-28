@@ -88,7 +88,7 @@ export class OllamaEngine implements TextEngine {
   }
 
   private async chat(system: string, prompt: string, input: ChatInput): Promise<string> {
-    await this.opts.gpu?.acquire('ollama');
+    await this.opts.gpu?.acquire('ollama', input.signal);
     const { textModel, visionModel } = this.opts.models();
     const paths = input.images ?? [];
     const model = paths.length > 0 ? visionModel : textModel;

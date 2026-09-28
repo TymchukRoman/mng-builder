@@ -178,9 +178,9 @@ describe('ComfyClient.prepareFor', () => {
   });
 
   it('frees once and waits for the reported VRAM to drop when the family changes', async () => {
+    await client.prepareFor('sdxl');
     fake.torchVramTotal = 14e9;
     fake.freeDelayMs = 60;
-    await client.prepareFor('sdxl');
     const before = Date.now();
     await client.prepareFor('qwen');
     const elapsed = Date.now() - before;
@@ -200,10 +200,83 @@ describe('ComfyClient.prepareFor', () => {
     expect(fake.calls.filter((c) => c.path === '/free')).toHaveLength(1);
   });
 
+  it('after a restart, the first call frees (and waits) when ComfyUI still holds VRAM (M1)', async () => {
+    fake.torchVramTotal = 14e9;
+    fake.freeDelayMs = 40;
+    await client.prepareFor('qwen');
+    expect(fake.calls.filter((c) => c.path === '/free')).toHaveLength(1);
+    expect(fake.torchVramTotal).toBe(0);
+    await client.prepareFor('qwen');
+    expect(fake.calls.filter((c) => c.path === '/free')).toHaveLength(1);
+  });
+
+  it('treats upscale as family-neutral: no free, and the last family stays (M3a)', async () => {
+    fake.torchVramTotal = 14e9;
+    await client.prepareFor('upscale'); // unknown family, VRAM full: still nothing to free for a tiny upscale model
+    expect(fake.calls.filter((c) => c.path === '/free')).toHaveLength(0);
+    fake.torchVramTotal = 0;
+    await client.prepareFor('sdxl');
+    await client.prepareFor('upscale');
+    await client.prepareFor('sdxl');
+    expect(fake.calls.filter((c) => c.path === '/free')).toHaveLength(0);
+    await client.prepareFor('upscale');
+    await client.prepareFor('qwen');
+    expect(fake.calls.filter((c) => c.path === '/free')).toHaveLength(1);
+  });
+
+  it('release() frees and waits for the drop; an aborted signal ends the wait at once (M2, M5)', async () => {
+    fake.torchVramTotal = 14e9;
+    fake.freeDelayMs = 60;
+    await client.release();
+    expect(fake.torchVramTotal).toBe(0);
+
+    fake.torchVramTotal = 14e9;
+    fake.freeDelayMs = 10_000;
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 100);
+    const started = Date.now();
+    const err = await client.release(controller.signal).catch((e: unknown) => e);
+    expect((err as Error).name).toBe('AbortError');
+    expect(Date.now() - started).toBeLessThan(1_000);
+    const prepare = new AbortController();
+    prepare.abort();
+    await expect(client.prepareFor('anima', prepare.signal)).rejects.toThrow();
+  });
+
   it('never throws when ComfyUI becomes unreachable during the wait (G2)', async () => {
     await client.prepareFor('sdxl');
     await fake.close();
     await expect(client.prepareFor('qwen')).resolves.toBeUndefined();
+  });
+});
+
+describe('ComfyClient VRAM wait bound (M3b)', () => {
+  it('is a hard bound even when every /system_stats answer is slow', async () => {
+    const slow = createServer((req, res) => {
+      if (req.url === '/free') {
+        res.writeHead(200);
+        res.end();
+        return;
+      }
+      setTimeout(() => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ devices: [{ torch_vram_total: 14e9 }] }));
+      }, 400);
+    });
+    await new Promise<void>((resolve) => slow.listen(0, '127.0.0.1', resolve));
+    try {
+      const { port } = slow.address() as AddressInfo;
+      const slowClient = new ComfyClient({ url: `http://127.0.0.1:${port}`, launcher: null, pollMs: 20, vramWaitMs: 500 });
+      const started = Date.now();
+      await slowClient.release();
+      const elapsed = Date.now() - started;
+      // Without the bound the second poll starts at ~420 ms and answers at ~820 ms.
+      expect(elapsed).toBeGreaterThanOrEqual(450);
+      expect(elapsed).toBeLessThan(700);
+    } finally {
+      slow.closeAllConnections();
+      await new Promise<void>((resolve) => slow.close(() => resolve()));
+    }
   });
 });
 
@@ -252,6 +325,20 @@ describe('ComfyClient.ensureServer', () => {
     const launcher = new ComfyLauncher({ comfyRoot: fakeComfyRoot(), comfyUrl: fake.url, pollMs: 20, spawnImpl: stubSpawn(() => setTimeout(() => { fake.up = true; }, 100)) });
     const labels: string[] = [];
     await new ComfyClient({ url: fake.url, launcher, pollMs: 20 }).ensureServer((l) => labels.push(l));
+    expect(labels).toEqual(['Starting image server']);
+  });
+
+  it('an aborted signal ends the wait for a starting ComfyUI at once (M5)', async () => {
+    fake.up = false;
+    const launcher = new ComfyLauncher({ comfyRoot: fakeComfyRoot(), comfyUrl: fake.url, pollMs: 20, timeoutMs: 3_000, spawnImpl: stubSpawn(() => {}) });
+    const starting = new ComfyClient({ url: fake.url, launcher, pollMs: 20 });
+    const controller = new AbortController();
+    const labels: string[] = [];
+    const started = Date.now();
+    const run = starting.ensureServer((l) => { labels.push(l); setTimeout(() => controller.abort(), 50); }, controller.signal);
+    const err = await run.catch((e: unknown) => e);
+    expect((err as Error).name).toBe('AbortError');
+    expect(Date.now() - started).toBeLessThan(1_000);
     expect(labels).toEqual(['Starting image server']);
   });
 
