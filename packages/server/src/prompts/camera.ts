@@ -70,15 +70,44 @@ export function stripCameraTags(tags: string): string {
   return tags.split(',').map((t) => t.trim()).filter((t) => t && !CAMERA_TAGS.has(normalizeTag(t))).join(', ');
 }
 
-/** Explicit framing wording in plain sentences. Bare "from above/below" is not matched: in a sentence it is usually
- *  about light or position ("light falls from above"), not the camera. */
-const FRAMING = new RegExp([
-  String.raw`\b(?:extreme\s+)?close[- ]?ups?\b`, String.raw`\b(?:medium|cowboy|full[- ]body|wide|long|establishing)\s+shots?\b`,
-  String.raw`\b(?:low|high|dutch|tilted|camera)[- ]angle\b`, String.raw`\beye[- ]level\b`, String.raw`\boverhead\s+(?:view|shot|angle)\b`,
-  String.raw`\b(?:bird|worm)'?s[- ]eye\b`, String.raw`\b(?:seen|viewed|shot)\s+from\s+(?:below|above|overhead)\b`,
-].join('|'), 'i');
+/** Framing terms (shot size, camera angle) that get stripped out of a natural-style sentence — the script decides
+ *  these (I2), so whatever the model wrote about them must go, but the scene content around them must not. Bare
+ *  "from above/below" is not matched: in a sentence it is usually about light or position ("light falls from
+ *  above"), not the camera. */
+const FRAMING_TERM = [
+  String.raw`(?:extreme\s+)?close[- ]?ups?`, String.raw`(?:medium|cowboy|full[- ]body|wide|long|establishing)\s+shots?`,
+  String.raw`(?:low|high|dutch|tilted|camera)[- ]angle`, String.raw`eye[- ]level`, String.raw`overhead\s+(?:view|shot|angle)`,
+  String.raw`(?:bird|worm)'?s[- ]eye(?:\s+view)?`, String.raw`(?:seen|viewed|shot)\s+from\s+(?:below|above|overhead)`,
+].join('|');
 
-/** Drops every sentence that states the framing (shot size or camera angle); the rest stays as written. */
+/** A framing term plus the connector/article that leads into it ("Close-up of", "at eye level", "from a low
+ *  angle") or the "of" that follows a shot-size term ("wide shot of"): the whole phrase is removed as one unit,
+ *  R2, so the noun phrase it was attached to (the actual scene) stays in place. */
+const FRAMING_PHRASE = new RegExp(
+  String.raw`\b(?:(?:from|at|in|with)\s+)?(?:(?:an?|the)\s+)?(?:${FRAMING_TERM})\b(?:\s+of\b)?`, 'gi',
+);
+
+/** A sentence keeps at least this many words once its framing phrases are stripped, else it was framing only
+ *  (e.g. "A medium shot at eye level!") and is dropped outright instead of left as a punctuation fragment. */
+const MIN_CONTENT_WORDS = 3;
+
+const countWords = (s: string): number => (s.match(/[\p{L}\p{N}]+/gu) ?? []).length;
+
+/** Removes `sentence`'s framing phrases and tidies the leftover spacing/punctuation. */
+function stripFraming(sentence: string): string {
+  return sentence.replace(FRAMING_PHRASE, '').replace(/\s+/g, ' ').replace(/\s+([,.!?])/g, '$1').trim();
+}
+
+/** Strips framing phrases (shot size, camera angle) out of natural-style prose; the rest of each sentence — the
+ *  scene it describes — stays as written (R2: the old whole-sentence drop lost the scene along with the framing,
+ *  e.g. "Close-up of the character crying." used to lose "the character crying" too). */
 export function stripCameraSentences(text: string): string {
-  return text.split(/(?<=[.!?])\s+/).filter((s) => s.trim() && !FRAMING.test(s)).join(' ').trim();
+  const kept: string[] = [];
+  for (const raw of text.split(/(?<=[.!?])\s+/)) {
+    const sentence = raw.trim();
+    if (!sentence) continue;
+    const stripped = stripFraming(sentence);
+    if (countWords(stripped) >= MIN_CONTENT_WORDS) kept.push(stripped);
+  }
+  return kept.join(' ').trim();
 }

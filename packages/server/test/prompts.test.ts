@@ -127,4 +127,14 @@ describe('camera (I2: the script decides shot and angle, never the LLM)', () => 
       .toBe('The character from picture 1 shouts on a rooftop. Light falls from above.');
     expect(stripCameraSentences('A medium shot at eye level!')).toBe('');
   });
+
+  it('strips only the framing phrase, keeping the scene content around it (R2)', () => {
+    expect(stripCameraSentences('Close-up of the character from picture 1 crying, tears on her cheeks.'))
+      .toContain('the character from picture 1 crying, tears on her cheeks.');
+    expect(stripCameraSentences('She holds the letter at eye level.')).toBe('She holds the letter.');
+  });
+
+  it('still drops a sentence that is framing only, once nothing usable is left after stripping (R2)', () => {
+    expect(stripCameraSentences('Extreme close-up from a low angle.')).toBe('');
+  });
 });
