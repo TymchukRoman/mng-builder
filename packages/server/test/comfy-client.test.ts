@@ -108,11 +108,15 @@ describe('ComfyClient.run', () => {
   });
 
   it('keeps waiting while the prompt is still in the queue (M4)', async () => {
-    fake.completionDelayMs = 300;
+    // Deterministic: the fake only completes once 3 liveness GET /queue calls have happened, instead of racing a
+    // fixed real-time delay against the poll loop (pollMs 5, a liveness check every 10 polls) — that raced two
+    // independent real timers and flaked under full-suite CPU load, where a single poll's real HTTP round trip can
+    // take far longer than pollMs, so too few polls (and liveness checks) fit before a wall-clock delay elapsed.
+    fake.completeAfterQueuePolls = 3;
     const patient = new ComfyClient({ url: fake.url, launcher: null, pollMs: 5 });
     const result = await patient.run(miniGraph());
     expect(result.images).toHaveLength(1);
-    expect(fake.calls.filter((c) => c.method === 'GET' && c.path === '/queue').length).toBeGreaterThan(1);
+    expect(fake.calls.filter((c) => c.method === 'GET' && c.path === '/queue').length).toBeGreaterThanOrEqual(3);
   });
 
   it('turns a vanished server mid-run into a TransientError', async () => {

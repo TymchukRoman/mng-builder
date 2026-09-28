@@ -38,6 +38,11 @@ export interface FakeComfy {
   dropNext: boolean;
   /** Extra delay before a run completes (to test cancel and crashes). */
   completionDelayMs: number;
+  /** Deterministic alternative to `completionDelayMs` for liveness-polling tests: when > 0, a run only completes
+   *  once at least this many `GET /queue` calls have happened, instead of racing a fixed real-time delay against
+   *  the poll loop's `pollMs` (flaky under CPU load, where each poll's real HTTP round trip can take much longer
+   *  than `pollMs`). Default 0 (no hold). */
+  completeAfterQueuePolls: number;
   /** Like a real ComfyUI folder: when set, uploads are also written to <dataDir>/input/<subfolder>/<name> and each
    *  SaveImage output to <dataDir>/output/<subfolder>/<filename>, so tests can check ComfyClient cleans them up.
    *  Default null (nothing on disk). */
@@ -125,6 +130,7 @@ class FakeComfyServer implements FakeComfy {
   interruptNext = false;
   dropNext = false;
   completionDelayMs = 0;
+  completeAfterQueuePolls = 0;
   dataDir: string | null = null;
   private readonly history = new Map<string, HistoryEntry>();
   /** Accepted prompts that have no history entry yet (GET /queue lists them as running). */
@@ -139,6 +145,15 @@ class FakeComfyServer implements FakeComfy {
   private closed = false;
   private counter = 0;
   private readonly pendingTimeouts: NodeJS.Timeout[] = [];
+  /** Total GET /queue calls observed, and resolvers waiting for `completeAfterQueuePolls` to be reached. */
+  private queueCallCount = 0;
+  private readonly queueWaiters: Array<{ count: number; resolve: () => void }> = [];
+
+  /** Resolves once at least `count` GET /queue calls have happened (see `completeAfterQueuePolls`). */
+  private waitForQueuePolls(count: number): Promise<void> {
+    if (this.queueCallCount >= count) return Promise.resolve();
+    return new Promise((resolve) => { this.queueWaiters.push({ count, resolve }); });
+  }
 
   private async delayMs(ms: number): Promise<void> {
     if (this.closed) return;
@@ -175,6 +190,8 @@ class FakeComfyServer implements FakeComfy {
     this.closed = true;
     for (const handle of this.pendingTimeouts) clearTimeout(handle);
     this.pendingTimeouts.length = 0;
+    for (const waiter of this.queueWaiters) waiter.resolve();
+    this.queueWaiters.length = 0;
     for (const set of this.clients.values()) for (const ws of set) ws.terminate();
     this.wss.close();
     this.server.closeAllConnections();
@@ -227,6 +244,13 @@ class FakeComfyServer implements FakeComfy {
       return;
     }
     if (route === 'GET /queue') {
+      this.queueCallCount += 1;
+      for (const waiter of [...this.queueWaiters]) {
+        if (this.queueCallCount < waiter.count) continue;
+        const idx = this.queueWaiters.indexOf(waiter);
+        if (idx >= 0) this.queueWaiters.splice(idx, 1);
+        waiter.resolve();
+      }
       return send(res, 200, { queue_running: [...this.active].map((id, i) => [i, id, {}, {}, []]), queue_pending: [] });
     }
     if (route === 'POST /interrupt' || route === 'POST /queue') return send(res, 200);
@@ -311,6 +335,10 @@ class FakeComfyServer implements FakeComfy {
         }
       }
       await this.delayMs(2);
+      if (this.closed) return;
+    }
+    if (this.completeAfterQueuePolls > 0) {
+      await this.waitForQueuePolls(this.completeAfterQueuePolls);
       if (this.closed) return;
     }
     if (this.completionDelayMs > 0) {
