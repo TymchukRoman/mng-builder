@@ -1,5 +1,6 @@
 import type { FrameKind } from '@manga/shared';
 
+/** Box in page pixels. BoxSchema guarantees w, h > 0. */
 export interface BoxPx { x: number; y: number; w: number; h: number }
 export interface PointPx { x: number; y: number }
 export interface Circle { cx: number; cy: number; r: number }
@@ -48,10 +49,12 @@ export function cloudPath(b: BoxPx, bumps = cloudBumps(b)): string {
   });
   const first = pts[0] ?? { x: cx, y: cy };
   let d = `M ${f(first.x)} ${f(first.y)}`;
+  // Cap arc radius to box's short side: keeps overshoot ~10% of short side.
+  const maxRadius = Math.min(b.w, b.h) * 0.25;
   for (let i = 0; i < bumps; i++) {
     const a = pts[i] ?? first;
     const c = pts[(i + 1) % bumps] ?? first;
-    const r = Math.hypot(c.x - a.x, c.y - a.y) * 0.6;
+    const r = Math.min(Math.hypot(c.x - a.x, c.y - a.y) * 0.6, maxRadius);
     d += ` A ${f(r)} ${f(r)} 0 0 1 ${f(c.x)} ${f(c.y)}`;
   }
   return `${d} Z`;
@@ -95,8 +98,16 @@ function scaled(b: BoxPx, k: number): BoxPx {
 export function textBox(kind: FrameKind, b: BoxPx): BoxPx {
   switch (kind) {
     case 'speech': return scaled(b, 0.7);
-    case 'thought': return scaled(b, 0.62);
-    case 'shout': return scaled(b, 0.58);
+    case 'thought': {
+      // Cloud's minimum normalized radius is ~0.77 (valley between bumps).
+      // k ≤ 0.77/√2 ≈ 0.545 keeps corners inside cloud.
+      return scaled(b, 0.54);
+    }
+    case 'shout': {
+      // Burst's inner ring at 0.74.
+      // k ≤ 0.74/√2 ≈ 0.523 keeps corners inside burst.
+      return scaled(b, 0.52);
+    }
     case 'narration': {
       const pad = 0.08 * Math.min(b.w, b.h);
       return { x: b.x + pad, y: b.y + pad, w: b.w - 2 * pad, h: b.h - 2 * pad };
@@ -108,11 +119,17 @@ export function textBox(kind: FrameKind, b: BoxPx): BoxPx {
 }
 
 export function shapeFor(kind: FrameKind, b: BoxPx, tip: PointPx | null): { paths: string[]; circles: Circle[] } {
-  const withTail = (body: string): string[] => [body, ...(tip ? [tailPath(b, tip)] : [])].filter((d) => d !== '');
   switch (kind) {
-    case 'speech': return { paths: withTail(ellipsePath(b)), circles: [] };
+    case 'speech': {
+      const withTail = (body: string): string[] => [body, ...(tip ? [tailPath(b, tip, 0.22, 0.85)] : [])].filter((d) => d !== '');
+      return { paths: withTail(ellipsePath(b)), circles: [] };
+    }
     case 'thought': return { paths: [cloudPath(b)], circles: thoughtTrail(b, tip) };
-    case 'shout': return { paths: withTail(burstPath(b)), circles: [] };
+    case 'shout': {
+      // Burst's inner ring is at 0.74; use 0.6 to keep tail base safely inside.
+      const withTail = (body: string): string[] => [body, ...(tip ? [tailPath(b, tip, 0.22, 0.6)] : [])].filter((d) => d !== '');
+      return { paths: withTail(burstPath(b)), circles: [] };
+    }
     case 'narration': return { paths: [rectPath(b)], circles: [] };
     case 'sfx':
     case 'title':
