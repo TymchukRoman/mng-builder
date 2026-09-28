@@ -76,10 +76,43 @@ describe('ComfyClient.run', () => {
   });
 
   it('fails permanently when execution fails', async () => {
-    fake.failNext = 'CUDA out of memory';
+    fake.failNext = 'mat1 and mat2 shapes cannot be multiplied';
     const err = await client.run(miniGraph()).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(PermanentError);
-    expect((err as Error).message).toBe('ComfyUI failed in KSampler (node 4): CUDA out of memory');
+    expect((err as Error).message).toBe('ComfyUI failed in KSampler (node 4): mat1 and mat2 shapes cannot be multiplied');
+  });
+
+  it('frees VRAM and retries (transient) when a run runs out of GPU memory (M4)', async () => {
+    fake.failNext = 'Allocation on device 0 would exceed allowed memory. (out of memory)';
+    const err = await client.run(miniGraph()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TransientError);
+    expect((err as Error).message).toContain('out of memory');
+    const promptAt = fake.calls.findIndex((c) => c.path === '/prompt');
+    expect(fake.calls.findIndex((c, i) => i > promptAt && c.path === '/free')).toBeGreaterThan(promptAt);
+  });
+
+  it('treats a run interrupted by another client as transient (M4)', async () => {
+    fake.interruptNext = true;
+    const err = await client.run(miniGraph()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TransientError);
+    expect((err as Error).message).toBe('ComfyUI run was interrupted');
+  });
+
+  it('gives up on a prompt ComfyUI lost (in neither the queue nor the history) as transient (M4)', async () => {
+    fake.dropNext = true;
+    const lossy = new ComfyClient({ url: fake.url, launcher: null, pollMs: 5 });
+    const err = await lossy.run(miniGraph()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TransientError);
+    expect((err as Error).message).toBe('ComfyUI lost the prompt');
+    expect(fake.calls.filter((c) => c.method === 'GET' && c.path === '/queue')).toHaveLength(1); // every 10 polls
+  });
+
+  it('keeps waiting while the prompt is still in the queue (M4)', async () => {
+    fake.completionDelayMs = 300;
+    const patient = new ComfyClient({ url: fake.url, launcher: null, pollMs: 5 });
+    const result = await patient.run(miniGraph());
+    expect(result.images).toHaveLength(1);
+    expect(fake.calls.filter((c) => c.method === 'GET' && c.path === '/queue').length).toBeGreaterThan(1);
   });
 
   it('turns a vanished server mid-run into a TransientError', async () => {

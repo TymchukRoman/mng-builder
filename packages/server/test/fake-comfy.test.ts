@@ -130,6 +130,34 @@ describe('FakeComfy', () => {
     expect(error?.node_id).toBe('1');
   });
 
+  it('reports an interrupted run, lists running prompts on GET /queue, and forgets a dropped one', async () => {
+    fake = await startFakeComfy();
+    const graph: ComfyGraph = { '1': { class_type: 'SaveImage', inputs: { images: ['2', 0], filename_prefix: 't' } } };
+    const post = async (id: string): Promise<void> => {
+      await fetch(`${fake!.url}/prompt`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: graph, prompt_id: id }) });
+    };
+    fake.interruptNext = true;
+    await post('interrupted-1');
+    type Entry = { status: { status_str: string; messages: Array<[string, unknown]> } };
+    let history: Record<string, Entry> = {};
+    for (let i = 0; i < 100 && !history['interrupted-1']; i++) {
+      history = (await (await fetch(`${fake.url}/history/interrupted-1`)).json()) as typeof history;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(history['interrupted-1']!.status.status_str).toBe('error');
+    expect(history['interrupted-1']!.status.messages.map(([type]) => type)).toContain('execution_interrupted');
+
+    fake.completionDelayMs = 1_000;
+    await post('running-1');
+    fake.dropNext = true;
+    await post('dropped-1');
+    const queue = (await (await fetch(`${fake.url}/queue`)).json()) as { queue_running: unknown[][]; queue_pending: unknown[][] };
+    expect(queue.queue_running.map((item) => item[1])).toEqual(['running-1']);
+    expect(queue.queue_pending).toEqual([]);
+    expect(fake.promptIds).toEqual(['interrupted-1', 'running-1', 'dropped-1']);
+    expect(await (await fetch(`${fake.url}/history/dropped-1`)).json()).toEqual({});
+  });
+
   it('rejectNext is one-shot and next prompt succeeds', async () => {
     fake = await startFakeComfy();
     fake.rejectNext = { error: { type: 'test_error', message: 'nope' }, node_errors: { '1': 'failed' } };

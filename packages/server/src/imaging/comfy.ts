@@ -58,6 +58,10 @@ interface HistoryEntry {
   status?: { status_str?: string; completed?: boolean; messages?: Array<[string, Record<string, unknown>]> };
 }
 
+/** Every this-many history polls, run() checks GET /queue that ComfyUI still knows the prompt (M4). */
+const LIVENESS_EVERY_POLLS = 10;
+const OUT_OF_MEMORY = /out of memory|OutOfMemoryError/i;
+
 export function executionError(entry: HistoryEntry): string {
   const error = entry.status?.messages?.find(([type]) => type === 'execution_error')?.[1];
   if (!error) return 'ComfyUI reported an error without details';
@@ -364,22 +368,57 @@ export class ComfyClient {
     return res;
   }
 
+  /**
+   * Polls /history until the run finished. Liveness (M4): every LIVENESS_EVERY_POLLS polls, a prompt that is in
+   * neither GET /queue nor the history (the queue was cleared from the web UI, or by another client of the shared
+   * server) fails as a TransientError instead of holding the gpu lane forever.
+   */
   private async waitForHistory(promptId: string, signal: AbortSignal | undefined): Promise<HistoryEntry> {
-    const path = `/history/${encodeURIComponent(promptId)}`;
-    for (;;) {
+    for (let poll = 1; ; poll += 1) {
       if (signal?.aborted) throw abortError(signal);
-      const res = await this.request(path, { method: 'GET' }, 60_000, signal);
-      // Not 5xx (already thrown by request()) but still not OK: an unexpected status (e.g. 404) must not be
-      // parsed as a history body — it isn't retryable by polling again, so it's permanent, not transient.
-      if (!res.ok) throw new PermanentError(`ComfyUI ${path} answered ${res.status}`);
-      const body = (await res.json()) as Record<string, HistoryEntry>;
-      const entry = body[promptId];
+      const entry = await this.historyEntry(promptId, signal);
       if (entry) {
-        if (entry.status?.status_str === 'error') throw new PermanentError(executionError(entry));
+        if (entry.status?.status_str === 'error') throw await this.runFailure(entry);
         if (entry.status?.completed || entry.status?.status_str === 'success') return entry;
+      } else if (poll % LIVENESS_EVERY_POLLS === 0 && !(await this.isQueued(promptId, signal))) {
+        // It may have finished between the two reads: look at the history once more before calling it lost.
+        if (!(await this.historyEntry(promptId, signal))) throw new TransientError('ComfyUI lost the prompt');
+        continue;
       }
       await sleep(this.pollMs, signal);
     }
+  }
+
+  private async historyEntry(promptId: string, signal: AbortSignal | undefined): Promise<HistoryEntry | undefined> {
+    const path = `/history/${encodeURIComponent(promptId)}`;
+    const res = await this.request(path, { method: 'GET' }, 60_000, signal);
+    // Not 5xx (already thrown by request()) but still not OK: an unexpected status (e.g. 404) must not be
+    // parsed as a history body — it isn't retryable by polling again, so it's permanent, not transient.
+    if (!res.ok) throw new PermanentError(`ComfyUI ${path} answered ${res.status}`);
+    return ((await res.json()) as Record<string, HistoryEntry>)[promptId];
+  }
+
+  /** True while GET /queue lists the prompt as running or pending. An answer it can't read counts as queued. */
+  private async isQueued(promptId: string, signal: AbortSignal | undefined): Promise<boolean> {
+    const res = await this.request('/queue', { method: 'GET' }, 60_000, signal);
+    if (!res.ok) return true;
+    const body = (await res.json().catch(() => null)) as { queue_running?: unknown[]; queue_pending?: unknown[] } | null;
+    if (!body) return true;
+    return [...(body.queue_running ?? []), ...(body.queue_pending ?? [])].some((item) => Array.isArray(item) && item[1] === promptId);
+  }
+
+  /** The error for a run whose history says 'error' (M4): interrupted by someone else → transient; CUDA out of
+   *  memory → free VRAM, then transient (a retry after /free usually fits); anything else → permanent. */
+  private async runFailure(entry: HistoryEntry): Promise<Error> {
+    const messages = entry.status?.messages ?? [];
+    if (messages.some(([type]) => type === 'execution_interrupted')) return new TransientError('ComfyUI run was interrupted');
+    const message = executionError(entry);
+    const error = messages.find(([type]) => type === 'execution_error')?.[1];
+    if (OUT_OF_MEMORY.test(`${message} ${String(error?.['exception_type'] ?? '')}`)) {
+      await this.free();
+      return new TransientError(`${message} (VRAM freed for the retry)`);
+    }
+    return new PermanentError(message);
   }
 
   private async fetchOutputs(entry: HistoryEntry, signal?: AbortSignal): Promise<Uint8Array[]> {

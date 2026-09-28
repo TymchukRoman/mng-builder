@@ -31,6 +31,11 @@ export interface FakeComfy {
   rejectNext: FakeComfyRejection | null;
   /** The next run ends with an execution_error carrying this exception message. */
   failNext: string | null;
+  /** The next run ends as `execution_interrupted`, like an /interrupt from another client. */
+  interruptNext: boolean;
+  /** The next accepted prompt vanishes: never run, never listed by GET /queue, no history entry (like a queue
+   *  cleared from the ComfyUI web UI). */
+  dropNext: boolean;
   /** Extra delay before a run completes (to test cancel and crashes). */
   completionDelayMs: number;
   /** Like a real ComfyUI folder: when set, uploads are also written to <dataDir>/input/<subfolder>/<name> and each
@@ -113,9 +118,13 @@ class FakeComfyServer implements FakeComfy {
   freeDelayMs = 0;
   rejectNext: FakeComfyRejection | null = null;
   failNext: string | null = null;
+  interruptNext = false;
+  dropNext = false;
   completionDelayMs = 0;
   dataDir: string | null = null;
   private readonly history = new Map<string, HistoryEntry>();
+  /** Accepted prompts that have no history entry yet (GET /queue lists them as running). */
+  private readonly active = new Set<string>();
   private readonly outputs = new Map<string, Uint8Array>();
   private readonly clients = new Map<string, Set<WebSocket>>();
   private readonly server = createServer((req, res) => { void this.handle(req, res).catch((err) => {
@@ -213,6 +222,9 @@ class FakeComfyServer implements FakeComfy {
       void this.delayMs(this.freeDelayMs).then(() => { this.torchVramTotal = 0; });
       return;
     }
+    if (route === 'GET /queue') {
+      return send(res, 200, { queue_running: [...this.active].map((id, i) => [i, id, {}, {}, []]), queue_pending: [] });
+    }
     if (route === 'POST /interrupt' || route === 'POST /queue') return send(res, 200);
     return send(res, 404, { error: `fake comfy has no route ${route}` });
   }
@@ -245,7 +257,12 @@ class FakeComfyServer implements FakeComfy {
     this.graphs.push(b.prompt);
     this.promptIds.push(id);
     send(res, 200, { prompt_id: id, number: this.counter++, node_errors: {} });
-    void this.execute(id, b.prompt, b.client_id ?? '');
+    if (this.dropNext) {
+      this.dropNext = false;
+      return;
+    }
+    this.active.add(id);
+    void this.execute(id, b.prompt, b.client_id ?? '').finally(() => this.active.delete(id));
   }
 
   private writeToDataDir(kind: 'input' | 'output', key: string, bytes: Uint8Array): void {
@@ -283,6 +300,17 @@ class FakeComfyServer implements FakeComfy {
     }
     await this.delayMs(25);
     if (this.closed) return;
+    if (this.interruptNext) {
+      this.interruptNext = false;
+      const node = nodes.find(([, n]) => WORKERS.has(n.class_type)) ?? nodes[0];
+      const interrupted = { prompt_id: id, node_id: node?.[0] ?? '?', node_type: node?.[1].class_type ?? '?', executed: [] };
+      this.history.set(id, {
+        prompt: [], outputs: {},
+        status: { status_str: 'error', completed: false, messages: [['execution_start', { prompt_id: id }], ['execution_interrupted', interrupted]] },
+      });
+      this.emit(clientId, 'execution_interrupted', interrupted);
+      return;
+    }
     if (this.failNext) {
       const message = this.failNext;
       this.failNext = null;
