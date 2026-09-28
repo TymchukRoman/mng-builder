@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ComfyClient } from '../src/imaging/comfy.js';
 import { nodesOf } from '../src/imaging/comfy-graph.js';
+import { deleteManga } from '../src/domain/delete.js';
 import { DEFAULT_REF_WEIGHT, generateImage, type GenerateRequest } from '../src/imaging/generate.js';
 import { pngSize } from '../src/imaging/png-size.js';
 import { GpuArbiter, PermanentError } from '../src/jobs/index.js';
@@ -185,5 +186,40 @@ describe('generateImage', () => {
     expect(lib.store.images.listByOwner('panel', panelId)).toEqual([]);
     const dir = lib.store.files.abs(`mangas/${manga.id}/images`);
     expect(existsSync(dir) ? readdirSync(dir) : []).toEqual([]);
+  });
+
+  it('fails an upscale whose source was deleted mid-run with NotFoundError, not a FOREIGN KEY error (M7)', async () => {
+    const { manga, panels } = seedManga(lib.store);
+    const owner = { type: 'panel' as const, id: panels[0]!.id };
+    const source = seedImage(lib.store, manga.id, owner, null, [100, 80]);
+    let deleted = false;
+    const progress = (label: string): void => {
+      if (label === 'Upscaling' && !deleted) {
+        deleted = true;
+        lib.store.images.delete(source.id);
+      }
+    };
+    const err = await generateImage({ store: lib.store, comfy, gpu }, request(manga.id, {
+      owner, recipe: 'upscale', prompt: '', negative: '', width: 200, height: 160, seed: 0, loras: [], initImageId: source.id, upscale: 2,
+    }), { signal: new AbortController().signal, progress }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NotFoundError);
+    expect((err as Error).message).not.toMatch(/FOREIGN KEY/i);
+    expect(lib.store.images.listByOwner('panel', owner.id)).toEqual([]);
+    expect(readdirSync(lib.store.files.abs(`mangas/${manga.id}/images`))).toEqual([`${source.id}.png`]); // the source file stays; it is not ours
+  });
+
+  it('removes the image folder it recreated for a manga deleted mid-run (M7)', async () => {
+    const { manga, panels } = seedManga(lib.store);
+    let deleted = false;
+    const progress = (label: string): void => {
+      if (label === 'Sampling' && !deleted) {
+        deleted = true;
+        deleteManga(lib.store, manga.id);
+      }
+    };
+    await expect(generateImage({ store: lib.store, comfy, gpu }, request(manga.id, { owner: { type: 'panel', id: panels[0]!.id } }), {
+      signal: new AbortController().signal, progress,
+    })).rejects.toThrow(NotFoundError);
+    expect(existsSync(lib.store.files.abs(`mangas/${manga.id}`))).toBe(false);
   });
 });

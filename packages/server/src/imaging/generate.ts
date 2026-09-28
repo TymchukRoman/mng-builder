@@ -1,3 +1,5 @@
+import { existsSync, rmdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { newId, type GenParams, type Image, type LoraRef, type RefSlot } from '@manga/shared';
 import { removeFiles } from '../domain/delete.js';
 import { PermanentError, type GpuArbiter, type JobContext } from '../jobs/index.js';
@@ -54,6 +56,17 @@ function requireOwner(store: Store, owner: GenerateRequest['owner']): void {
   else store.characters.require(owner.id);
 }
 
+/** Best-effort: removes these directories, innermost first, when (and only when) they are empty. */
+function removeEmptyDirs(dirs: readonly string[]): void {
+  for (const dir of dirs) {
+    try {
+      rmdirSync(dir);
+    } catch {
+      // not empty, already gone, or busy: leave it
+    }
+  }
+}
+
 /** The one entry point for creating Image rows from ComfyUI output (Contract C.7). */
 export async function generateImage(deps: GenerateDeps, req: GenerateRequest, ctx: GenerateContext): Promise<Image> {
   const recipe = RECIPES[req.recipe];
@@ -104,6 +117,9 @@ export async function generateImage(deps: GenerateDeps, req: GenerateRequest, ct
   if (!bytes) throw new PermanentError('ComfyUI returned no image');
   const size = pngSize(bytes);
   const id = newId('im');
+  // M7: the folders this write creates (a manga deleted mid-run lost its folder) are removed again on failure.
+  const imagesDir = dirname(store.files.abs(store.files.imageRel(req.mangaId, id)));
+  const createdDirs = [imagesDir, dirname(imagesDir)].filter((dir) => !existsSync(dir));
   const path = store.files.writeImage(req.mangaId, id, bytes);
   const gen: GenParams = {
     recipe: recipe.id, prompt: req.prompt, negative: req.negative, seed: req.seed, steps: params.steps, cfg: params.cfg,
@@ -112,10 +128,13 @@ export async function generateImage(deps: GenerateDeps, req: GenerateRequest, ct
   };
 
   // One transaction re-checks the owner still exists (it may have been deleted during the long generation), then
-  // inserts the row. On any failure the file just written is removed and the error rethrown (M1 uploads pattern).
+  // inserts the row. On any failure the file just written (and any folder it created) is removed and the error
+  // rethrown (M1 uploads pattern).
   try {
     return store.tx(() => {
       requireOwner(store, req.owner);
+      // M7: an upscale's source may have been deleted mid-run too; say so instead of failing on the parent FK.
+      if (req.upscale && req.initImageId !== null) store.images.require(req.initImageId);
       return createImageWithId(store, id, {
         mangaId: req.mangaId, ownerType: req.owner.type, ownerId: req.owner.id, role: req.role, path, width: size.width, height: size.height,
         source: req.upscale ? 'upscaled' : 'generated', parentImageId: req.upscale ? req.initImageId : null, gen, review: null,
@@ -123,6 +142,7 @@ export async function generateImage(deps: GenerateDeps, req: GenerateRequest, ct
     });
   } catch (err) {
     removeFiles(store, [path]);
+    removeEmptyDirs(createdDirs);
     throw err;
   }
 }
