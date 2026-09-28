@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { Character, PanelScript } from '@manga/shared';
+import { CAMERA_TAGS, cameraSentence, cameraTags, cameraWording, stripCameraSentences, stripCameraTags } from '../src/prompts/camera.js';
 import { loadPrompt } from '../src/prompts/load.js';
 import { normalizeAppearanceTags, sanitizeSentences, sanitizeTags } from '../src/prompts/sanitize.js';
 import { scriptBlock } from '../src/prompts/script-block.js';
@@ -20,12 +21,13 @@ describe('loadPrompt', () => {
     expect(onDisk.length).toBeGreaterThan(200);
   });
 
-  it('forbids appearance, names and lettering in both scene prompts', () => {
+  it('forbids appearance, names, lettering and camera framing in both scene prompts', () => {
     for (const name of ['panel-prompt-tags', 'panel-prompt-natural'] as const) {
       const text = loadPrompt(name);
       expect(text).toContain('hair colour');
       expect(text).toContain('character names');
       expect(text).toContain('manga, comic, text, speech bubble');
+      expect(text).toContain('the app adds the camera');
     }
   });
 });
@@ -62,7 +64,7 @@ describe('scriptBlock', () => {
     };
     expect(scriptBlock(script, [aiko, ren])).toBe([
       'Panel script:',
-      '- Shot: medium; angle: low',
+      '- Camera: medium shot, low angle (from below)',
       '- Action: Aiko confronts Ren',
       '- Background: school rooftop',
       '- Characters (2):',
@@ -78,10 +80,51 @@ describe('scriptBlock', () => {
     const script: PanelScript = { action: '', shot: 'wide', angle: 'overhead', background: 'city at night', characters: [], dialogue: [] };
     expect(scriptBlock(script, [])).toBe([
       'Panel script:',
-      '- Shot: wide; angle: overhead',
+      '- Camera: wide shot (full body), overhead (from directly above)',
       '- Action: (not given)',
       '- Background: city at night',
       '- Characters (0): nobody; draw no people.',
     ].join('\n'));
+  });
+});
+
+describe('camera (I2: the script decides shot and angle, never the LLM)', () => {
+  it.each<[PanelScript['shot'], PanelScript['angle'], string[]]>([
+    ['extreme-close', 'eye', ['extreme close-up']],
+    ['close', 'low', ['close-up', 'from below']],
+    ['medium', 'eye', ['upper body']],
+    ['medium', 'high', ['upper body', 'from above']],
+    ['wide', 'dutch', ['full body', 'wide shot', 'dutch angle']],
+    ['extreme-wide', 'overhead', ['very wide shot', 'from above', 'overhead view']],
+  ])('cameraTags(%s, %s) = %j', (shot, angle, tags) => {
+    expect(cameraTags(shot, angle)).toEqual(tags);
+    for (const tag of tags) expect(CAMERA_TAGS.has(tag)).toBe(true);
+  });
+
+  it('writes one framing sentence for the natural style', () => {
+    expect(cameraSentence('medium', 'eye')).toBe('Medium shot at eye level.');
+    expect(cameraSentence('close', 'low')).toBe('Close-up from a low angle.');
+    expect(cameraSentence('extreme-close', 'high')).toBe('Extreme close-up from a high angle.');
+    expect(cameraSentence('wide', 'dutch')).toBe('Wide full-body shot at a tilted dutch angle.');
+    expect(cameraSentence('extreme-wide', 'overhead')).toBe('Very wide shot from directly overhead.');
+  });
+
+  it('words the camera for people and LLMs reading the script', () => {
+    expect(cameraWording('medium', 'eye')).toBe('medium shot, eye level');
+    expect(cameraWording('close', 'low')).toBe('close-up, low angle (from below)');
+    expect(cameraWording('extreme-close', 'high')).toBe('extreme close-up, high angle (from above)');
+    expect(cameraWording('extreme-wide', 'dutch')).toBe('extreme wide shot, dutch angle (tilted)');
+  });
+
+  it('strips camera tags in any spelling, and keeps facing and everything else', () => {
+    expect(stripCameraTags('solo, From Below, cowboy_shot, (close-up:1.2), standing, from side, from behind, portrait, rooftop'))
+      .toBe('solo, standing, from side, from behind, rooftop');
+    expect(stripCameraTags('upper body, from above')).toBe('');
+  });
+
+  it('drops framing sentences and keeps the rest', () => {
+    expect(stripCameraSentences('Low-angle close-up. The character from picture 1 shouts on a rooftop. Light falls from above.'))
+      .toBe('The character from picture 1 shouts on a rooftop. Light falls from above.');
+    expect(stripCameraSentences('A medium shot at eye level!')).toBe('');
   });
 });

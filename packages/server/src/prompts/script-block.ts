@@ -1,4 +1,5 @@
 import type { Character, PanelScript } from '@manga/shared';
+import { cameraWording } from './camera.js';
 
 /** The panel script as prompt text. Names only; appearance never appears here (the app injects tags itself). */
 export function scriptBlock(script: PanelScript, characters: Character[]): string {
@@ -6,7 +7,7 @@ export function scriptBlock(script: PanelScript, characters: Character[]): strin
     id === null ? 'narrator' : characters.find((c) => c.id === id)?.name ?? 'someone';
   const lines = [
     'Panel script:',
-    `- Shot: ${script.shot}; angle: ${script.angle}`,
+    `- Camera: ${cameraWording(script.shot, script.angle)}`, // readable wording, not the raw enums (I2)
     `- Action: ${script.action.trim() || '(not given)'}`,
     `- Background: ${script.background.trim() || '(not given)'}`,
   ];

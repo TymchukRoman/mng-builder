@@ -85,7 +85,7 @@ describe('M2 routes', () => {
     const prompt = await s.api<JobRef>('POST', `/api/panels/${panels[0]!.id}/prompt`);
     const promptJob = await s.deps.queue.waitFor(prompt.body.jobId);
     expect(promptJob).toMatchObject({ kind: 'llm.step', lane: 'claude', status: 'succeeded', payload: { type: 'panel-prompt', panelId: panels[0]!.id } });
-    expect(s.deps.store.panels.require(panels[0]!.id).prompt.scene).toBe('solo, standing, school rooftop, chain-link fence, sunset, wind');
+    expect(s.deps.store.panels.require(panels[0]!.id).prompt.scene).toBe('upper body, solo, standing, school rooftop, chain-link fence, sunset, wind'); // I2: camera tags from the script
 
     expect((await s.api('PATCH', '/api/settings', { engine: { mode: 'local' } })).status).toBe(200);
     const suggest = await s.api<JobRef>('POST', `/api/characters/${aiko.id}/suggest-appearance`, { description: 'silver twin-tails' });

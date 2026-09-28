@@ -4,6 +4,7 @@ import { RECIPES } from '../imaging/recipes/index.js';
 import { promptStyleFor, routeRecipe, type PromptStyle } from '../imaging/route.js';
 import { PermanentError } from '../jobs/index.js';
 import type { LlmStepHandler } from '../jobs/llm-step.js';
+import { cameraSentence, cameraTags, stripCameraSentences, stripCameraTags } from '../prompts/camera.js';
 import { loadPrompt } from '../prompts/load.js';
 import { sanitizeSentences, sanitizeTags } from '../prompts/sanitize.js';
 import { scriptBlock } from '../prompts/script-block.js';
@@ -54,8 +55,12 @@ export function panelPromptStep(services: HandlerServices): LlmStepHandler {
       prompt: panelPromptRequest(ctx.store, pc, recipe, style), schema: PanelPromptOutputSchema,
       signal: ctx.signal, onProgress: (label) => ctx.progress(label),
     });
-    const scene = style === 'tags' ? sanitizeTags(out.scene) : sanitizeSentences(out.scene);
-    if (!hasUsableScene(scene)) throw new InvalidOutputError('panel-prompt: the AI wrote no usable scene', out.scene);
+    // I2: the script decides shot and angle. Whatever camera framing the model wrote is dropped, and the mapped
+    // camera tags (or framing sentence) go first, so the scene can never contradict the script.
+    const { shot, angle } = pc.panel.script;
+    const written = style === 'tags' ? stripCameraTags(sanitizeTags(out.scene)) : stripCameraSentences(sanitizeSentences(out.scene));
+    if (!hasUsableScene(written)) throw new InvalidOutputError('panel-prompt: the AI wrote no usable scene', out.scene);
+    const scene = style === 'tags' ? [...cameraTags(shot, angle), written].join(', ') : `${cameraSentence(shot, angle)} ${written}`;
 
     // One transaction re-checks the panel still exists (it may have been deleted during the LLM call) before
     // writing the scene back. The negative is re-read fresh inside the transaction so a concurrent edit to it

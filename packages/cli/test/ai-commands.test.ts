@@ -82,7 +82,7 @@ describe('manga panel …', () => {
     await program(ctx).parseAsync(['--json', 'panel', 'prompt', id, '--scene', 'rain, night'], { from: 'user' });
     expect(s.deps.store.panels.require(id).prompt.scene).toBe('rain, night');
     await program(ctx).parseAsync(['--json', '--wait', 'panel', 'prompt', id, '--ai'], { from: 'user' });
-    expect(s.deps.store.panels.require(id).prompt.scene).toBe('solo, standing, school rooftop, chain-link fence, sunset, wind');
+    expect(s.deps.store.panels.require(id).prompt.scene).toBe('upper body, solo, standing, school rooftop, chain-link fence, sunset, wind'); // I2: camera tags from the script
   });
 
   it('panel review --wait returns the verdict', async () => {

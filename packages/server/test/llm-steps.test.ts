@@ -26,8 +26,8 @@ describe('llm.step panel-prompt', () => {
     const panel = updatePanel(lib.store, panels[0]!.id, { characters: [stage(aiko.id)] }, { prompt: { scene: '', negative: 'keep me' } });
     const payload = { type: 'panel-prompt' as const, panelId: panel.id };
     const { ctx, events } = jobContext(lib.store, 'llm.step', payload);
-    await expect(panelPromptStep(services)(ctx, payload)).resolves.toEqual({ scene: 'solo, standing, rooftop' });
-    expect(lib.store.panels.require(panel.id).prompt).toEqual({ scene: 'solo, standing, rooftop', negative: 'keep me' });
+    await expect(panelPromptStep(services)(ctx, payload)).resolves.toEqual({ scene: 'upper body, solo, standing, rooftop' });
+    expect(lib.store.panels.require(panel.id).prompt).toEqual({ scene: 'upper body, solo, standing, rooftop', negative: 'keep me' });
     const call = services.claude.calls[0]!;
     expect(call).toMatchObject({ name: 'panel-prompt', task: 'prompts', system: loadPrompt('panel-prompt-tags') });
     expect(call.prompt).toContain('1. Aiko: position center; pose: standing; expression: calm');
@@ -51,7 +51,46 @@ describe('llm.step panel-prompt', () => {
     expect(call.system).toBe(loadPrompt('panel-prompt-natural'));
     expect(call.prompt).toContain('- picture 1 shows Aiko');
     expect(call.prompt).toContain('- picture 2 shows Ren');
-    expect(lib.store.panels.require(panel.id).prompt.scene).toBe('The character from picture 1 shouts at the character from picture 2.');
+    expect(lib.store.panels.require(panel.id).prompt.scene).toBe('Medium shot at eye level. The character from picture 1 shouts at the character from picture 2.');
+  });
+
+  it("replaces the LLM's camera tags with the script's: angle eye never becomes 'from below' (I2)", async () => {
+    const services = handlerServices(lib.store, comfy, { claude: { 'panel-prompt': () => ({ scene: 'solo, from below, cowboy shot, standing, rooftop' }) } });
+    const { panels } = seedManga(lib.store);
+    const panel = updatePanel(lib.store, panels[0]!.id, { shot: 'medium', angle: 'eye' });
+    const payload = { type: 'panel-prompt' as const, panelId: panel.id };
+    await panelPromptStep(services)(jobContext(lib.store, 'llm.step', payload).ctx, payload);
+    const scene = lib.store.panels.require(panel.id).prompt.scene;
+    expect(scene).not.toContain('from below');
+    expect(scene).not.toContain('cowboy shot');
+    expect(scene.startsWith('upper body, ')).toBe(true);
+    expect(scene).toBe('upper body, solo, standing, rooftop');
+    expect(services.claude.calls[0]!.prompt).toContain('- Camera: medium shot, eye level');
+  });
+
+  it("natural style: drops the LLM's framing sentence and starts with the script's (I2)", async () => {
+    const services = handlerServices(lib.store, comfy, {
+      claude: { 'panel-prompt': () => ({ scene: 'Wide shot from above. The character from picture 1 shouts at the character from picture 2.' }) },
+    });
+    const { manga, panels } = seedManga(lib.store);
+    const aiko = giveRefs(lib.store, seedCharacter(lib.store, manga.id, 'Aiko', '1girl'), ['portrait']);
+    const ren = giveRefs(lib.store, seedCharacter(lib.store, manga.id, 'Ren', '1boy'), ['portrait']);
+    const panel = updatePanel(lib.store, panels[0]!.id, {
+      shot: 'close', angle: 'low', characters: [stage(aiko.id, 'left'), stage(ren.id, 'right')],
+    }, { refCharacterIds: [aiko.id, ren.id] });
+    const payload = { type: 'panel-prompt' as const, panelId: panel.id };
+    await panelPromptStep(services)(jobContext(lib.store, 'llm.step', payload).ctx, payload);
+    expect(lib.store.panels.require(panel.id).prompt.scene)
+      .toBe('Close-up from a low angle. The character from picture 1 shouts at the character from picture 2.');
+  });
+
+  it('refuses an answer that was only camera tags (I2)', async () => {
+    const services = handlerServices(lib.store, comfy, { claude: { 'panel-prompt': () => ({ scene: 'from below, close-up' }) } });
+    const { panels } = seedManga(lib.store);
+    const payload = { type: 'panel-prompt' as const, panelId: panels[0]!.id };
+    const err = await panelPromptStep(services)(jobContext(lib.store, 'llm.step', payload).ctx, payload).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(InvalidOutputError);
+    expect(lib.store.panels.require(panels[0]!.id).prompt.scene).toBe('');
   });
 
   it('refuses an answer made only of forbidden words', async () => {
