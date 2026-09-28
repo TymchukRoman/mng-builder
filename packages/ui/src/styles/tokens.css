@@ -24,6 +24,7 @@
   --focus-ring: rgba(63, 93, 120, 0.5);
   --scrim: rgba(20, 21, 23, 0.36);
   --shadow-pop: 0 6px 24px rgba(20, 21, 23, 0.16), 0 1px 3px rgba(20, 21, 23, 0.12);
+  /* Dots of empty panels, drawn on the page paper, so like --paper/--ink it is the same in every theme. */
   --tone-dot: rgba(17, 17, 17, 0.16);
   /* The page itself is paper and ink in every theme: print is never themed. */
   --paper: #FFFFFF;
