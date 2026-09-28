@@ -112,10 +112,14 @@ The exit code is `0` on success, `1` for API or validation errors (the message g
 
 ```bash
 npm test                # vitest over all packages, against the TypeScript sources
-npm run typecheck       # tsc --build --force
-npm run dev             # tsc --build --watch
+npm run typecheck       # tsc --build --force, then the UI's own tsc -p
+npm run dev             # tsc --build, then tsc --build --watch + the server (node --watch) + Vite, together
 ```
 
-The packages are `@manga/shared` (schemas, layout engine and prompt helpers, safe for browsers), `@manga/server` (Fastify, SQLite, jobs) and `@manga/cli` (`manga`). `docs/superpowers/` holds the design spec and the milestone plans.
+Before `npm run dev`, run `manga stop`: the dev server runs its own copy of `@manga/server` on the default library and port 4317, replacing any background server already serving that library. The Vite dev proxy (`packages/ui/vite.config.ts`) assumes the server is on `127.0.0.1:4317`.
+
+After the *first* `npm run build` that produces `packages/ui/dist`, run `manga stop` once. A server auto-started by the CLI before that build only knows to restart itself when the server or shared build changes, not when the UI is built, so it would otherwise keep answering `/` with a JSON 404. The next `manga` command auto-starts a server that serves the built UI from `/`.
+
+The packages are `@manga/shared` (schemas, layout engine and prompt helpers, safe for browsers), `@manga/server` (Fastify, SQLite, jobs), `@manga/cli` (`manga`) and `@manga/ui` (the web UI, Vite + React). `docs/superpowers/` holds the design spec and the milestone plans.
 
 The environment variable `MANGA_CONFIG` names another config file to read instead of `%USERPROFILE%\.manga-builder\config.json`. The root `vitest.config.ts` points it at a file that cannot exist, so the tests never read your personal config; they pin `libraryPath` and `port` through explicit overrides or `MANGA_LIBRARY`/`MANGA_PORT`.

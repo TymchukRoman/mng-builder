@@ -10,18 +10,21 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc --build",
-    "typecheck": "tsc --build --force",
+    "build": "tsc --build && npm run build --workspace @manga/ui",
+    "typecheck": "tsc --build --force && npm run typecheck --workspace @manga/ui",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev": "tsc --build --watch --preserveWatchOutput",
+    "dev": "tsc --build && concurrently -k -n tsc,server,ui -c gray,blue,magenta \"tsc --build --watch --preserveWatchOutput\" \"node --watch packages/server/dist/main.js\" \"npm run dev --workspace @manga/ui\"",
     "start": "node packages/server/dist/main.js",
+    "e2e": "npm run build && playwright test",
     "link-cli": "npm link --workspace @manga/cli"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "24.10.1",
     "@types/ws": "^8.18.1",
+    "concurrently": "9.2.1",
     "typescript": "5.9.3",
     "vitest": "3.2.4"
   }
