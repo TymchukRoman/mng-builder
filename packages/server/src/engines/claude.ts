@@ -30,6 +30,20 @@ export interface ClaudeEngineOptions {
 export interface ClaudeArgsInput { model: string; system: string; vision: boolean; mcpConfigPath: string; mangasDir: string }
 
 /**
+ * M9: the Claude Code permission rule that approves Read only under the absolute folder `dir`. Read rules are
+ * gitignore patterns; `//path` anchors at the filesystem root, and on Windows Claude Code normalizes paths to POSIX
+ * form before matching ("C:\Users\alice becomes /c/Users/alice", code.claude.com/docs/en/permissions, section "Read
+ * and Edit"). Pattern characters in the folder name are escaped so the rule matches only that literal folder.
+ */
+export function readRuleFor(dir: string): string {
+  const posix = dir
+    .replace(/\\/g, '/')
+    .replace(/^([A-Za-z]):/, (_match, drive: string) => `/${drive.toLowerCase()}`)
+    .replace(/\/+$/, '');
+  return `Read(/${posix.replace(/[*?[\]]/g, (c) => `\\${c}`)}/**)`;
+}
+
+/**
  * The prompt itself goes to stdin. Never --bare: it forces API-key auth and bypasses the subscription
  * login. `--safe-mode` disables user-level CLAUDE.md, skills, plugins, hooks and any MCP servers other
  * than --mcp-config's; it does not affect auth, model selection or built-in tools (verified against
@@ -49,7 +63,9 @@ export function buildClaudeArgs(i: ClaudeArgsInput): string[] {
     '--no-session-persistence',
     '--disable-slash-commands',
   ];
-  if (i.vision) args.push('--allowedTools', 'Read', '--add-dir', i.mangasDir);
+  // M9: `--tools Read` makes Read the only tool that exists; the allow rule approves it only under the mangas folder,
+  // and `--permission-mode dontAsk` denies every Read outside it. A bare `--allowedTools Read` approved any path.
+  if (i.vision) args.push('--allowedTools', readRuleFor(i.mangasDir), '--add-dir', i.mangasDir);
   return args;
 }
 

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { DEFAULT_SETTINGS } from '@manga/shared';
-import { ClaudeEngine, LOGIN_HINT, buildClaudeArgs, claudeEnv, type ClaudeEngineOptions } from '../src/engines/claude.js';
+import { ClaudeEngine, LOGIN_HINT, buildClaudeArgs, claudeEnv, readRuleFor, type ClaudeEngineOptions } from '../src/engines/claude.js';
 import { EngineUnavailableError, QuotaExceededError } from '../src/engines/errors.js';
 import { PermanentError, TransientError } from '../src/jobs/index.js';
 
@@ -62,13 +62,26 @@ describe('buildClaudeArgs', () => {
     ]);
   });
 
-  it('allows only Read, and only inside the mangas folder, for image requests', () => {
-    const args = buildClaudeArgs({ model: 'opus', system: 'S', vision: true, mcpConfigPath: 'M', mangasDir: 'D' });
+  it('offers only Read for image requests and approves it only by a rule scoped to the mangas folder (M9)', () => {
+    const args = buildClaudeArgs({ model: 'opus', system: 'S', vision: true, mcpConfigPath: 'M', mangasDir: 'C:\\lib\\mangas' });
     const i = args.indexOf('--tools');
     expect(args.slice(i, i + 2)).toEqual(['--tools', 'Read']);
-    expect(args.slice(-4)).toEqual(['--allowedTools', 'Read', '--add-dir', 'D']);
+    expect(args.slice(-4)).toEqual(['--allowedTools', 'Read(//c/lib/mangas/**)', '--add-dir', 'C:\\lib\\mangas']);
+    expect(args[args.indexOf('--permission-mode') + 1]).toBe('dontAsk'); // anything not approved is denied
     expect(args).toContain('--safe-mode');
     expect(args).not.toContain('--bare');
+  });
+});
+
+describe('readRuleFor (M9)', () => {
+  it('writes the absolute-path Read rule in the POSIX form Claude Code matches against', () => {
+    expect(readRuleFor('C:\\Users\\roman\\MangaBuilder\\mangas')).toBe('Read(//c/Users/roman/MangaBuilder/mangas/**)');
+    expect(readRuleFor('D:/Library/mangas/')).toBe('Read(//d/Library/mangas/**)');
+    expect(readRuleFor('/home/roman/MangaBuilder/mangas')).toBe('Read(//home/roman/MangaBuilder/mangas/**)');
+  });
+
+  it('escapes gitignore pattern characters so the rule matches only the literal folder', () => {
+    expect(readRuleFor('C:\\Books [2026]\\*\\mangas')).toBe('Read(//c/Books \\[2026\\]/\\*/mangas/**)');
   });
 });
 
@@ -136,7 +149,7 @@ describe('ClaudeEngine', () => {
     expect(out.pass).toBe(false);
     const r = recorded(record);
     expect(r.stdin).toBe('Check.\n\nImage files (open every one with the Read tool before answering):\n1. C:\\lib\\mangas\\a.png\n2. C:\\lib\\mangas\\b.png');
-    expect(r.args.slice(-2)).toEqual(['--add-dir', join(dir, 'lib', 'mangas')]);
+    expect(r.args.slice(-4)).toEqual(['--allowedTools', readRuleFor(join(dir, 'lib', 'mangas')), '--add-dir', join(dir, 'lib', 'mangas')]);
     expect(progress).toEqual(['Asking Claude (sonnet)', 'Looking at the images']);
   });
 
