@@ -1,4 +1,6 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ComfyClient } from '../src/imaging/comfy.js';
 import { nodesOf } from '../src/imaging/comfy-graph.js';
@@ -139,6 +141,31 @@ describe('generateImage', () => {
     const err = await generateImage({ store: lib.store, comfy, gpu }, request(manga.id, { recipe: 'anime-pose' }), context().ctx).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(PermanentError);
     expect((err as Error).message).toBe('anime-pose: anime-pose needs a pose image');
+  });
+
+  it('removes the inputs it uploaded from the ComfyUI folder after a run, whether it succeeds or fails (I3)', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'comfy-data-'));
+    try {
+      fake.dataDir = dataDir;
+      const cleaning = new ComfyClient({ url: fake.url, launcher: null, pollMs: 10, dataDir });
+      const { manga, panels } = seedManga(lib.store);
+      const owner = { type: 'panel' as const, id: panels[0]!.id };
+      const ref = seedImage(lib.store, manga.id, owner, null);
+      const inputs = join(dataDir, 'input', 'manga-builder');
+
+      await generateImage({ store: lib.store, comfy: cleaning, gpu }, request(manga.id, { owner, recipe: 'anime-ref', refImageIds: [ref.id] }), context().ctx);
+      expect(fake.uploads.has(`manga-builder/${ref.id}.png`)).toBe(true); // it was uploaded (and written there)...
+      expect(readdirSync(inputs)).toEqual([]); // ...and removed after the run
+      expect(readdirSync(join(dataDir, 'output', 'manga-builder', manga.id))).toEqual([]);
+
+      fake.failNext = 'boom';
+      await expect(generateImage({ store: lib.store, comfy: cleaning, gpu }, request(manga.id, { owner, recipe: 'anime-ref', refImageIds: [ref.id] }), context().ctx))
+        .rejects.toThrow('boom');
+      expect(fake.graphs).toHaveLength(2);
+      expect(readdirSync(inputs)).toEqual([]);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 
   it('removes the file and inserts no row when the owner is deleted mid-generation', async () => {

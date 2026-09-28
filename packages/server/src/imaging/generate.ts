@@ -2,7 +2,7 @@ import { newId, type GenParams, type Image, type LoraRef, type RefSlot } from '@
 import { removeFiles } from '../domain/delete.js';
 import { PermanentError, type GpuArbiter, type JobContext } from '../jobs/index.js';
 import type { Store } from '../store/index.js';
-import type { ComfyClient } from './comfy.js';
+import type { ComfyClient, ComfyRunResult } from './comfy.js';
 import type { ComfyGraph } from './comfy-graph.js';
 import { createImageWithId } from './image-row.js';
 import { pngSize } from './png-size.js';
@@ -66,27 +66,39 @@ export async function generateImage(deps: GenerateDeps, req: GenerateRequest, ct
   await gpu.acquire('comfy');
   await comfy.prepareFor(recipe.family);
 
-  const upload = (imageId: string): Promise<string> => comfy.uploadImage(store.files.abs(store.images.require(imageId).path));
-  if (req.refImageIds.length > 0 || req.control !== null || req.initImageId !== null) ctx.progress('Uploading images');
-  const refs: string[] = [];
-  for (const id of req.refImageIds) refs.push(await upload(id));
-  const control = req.control ? { kind: req.control.kind, image: await upload(req.control.imageId), strength: req.control.strength } : null;
-  const init = req.initImageId ? { image: await upload(req.initImageId), denoise: req.denoise ?? 1 } : null;
-  const refWeight = req.refWeight ?? DEFAULT_REF_WEIGHT;
-
-  const params: RecipeParams = {
-    prompt: req.prompt, negative: req.negative, width: req.width, height: req.height, seed: req.seed,
-    steps: recipe.defaults.steps, cfg: recipe.defaults.cfg, loras, refs, refWeight,
-    control, init, upscale: req.upscale, filenamePrefix: `manga-builder/${req.mangaId}/${req.owner.id}`,
+  // I3: every input uploaded for this run is removed from ComfyUI's input folder afterwards (success, failure or
+  // abort). The gpu lane serialises ComfyUI runs, so no other run of ours is using them.
+  const uploaded: string[] = [];
+  const upload = async (imageId: string): Promise<string> => {
+    const name = await comfy.uploadImage(store.files.abs(store.images.require(imageId).path));
+    uploaded.push(name);
+    return name;
   };
-  let graph: ComfyGraph;
+  let result: ComfyRunResult;
+  let params: RecipeParams;
   try {
-    graph = recipe.build(params);
-  } catch (err) {
-    throw new PermanentError(`${recipe.id}: ${(err as Error).message}`);
-  }
+    if (req.refImageIds.length > 0 || req.control !== null || req.initImageId !== null) ctx.progress('Uploading images');
+    const refs: string[] = [];
+    for (const id of req.refImageIds) refs.push(await upload(id));
+    const control = req.control ? { kind: req.control.kind, image: await upload(req.control.imageId), strength: req.control.strength } : null;
+    const init = req.initImageId ? { image: await upload(req.initImageId), denoise: req.denoise ?? 1 } : null;
+    const refWeight = req.refWeight ?? DEFAULT_REF_WEIGHT;
 
-  const result = await comfy.run(graph, { signal: ctx.signal, onProgress: ctx.progress });
+    params = {
+      prompt: req.prompt, negative: req.negative, width: req.width, height: req.height, seed: req.seed,
+      steps: recipe.defaults.steps, cfg: recipe.defaults.cfg, loras, refs, refWeight,
+      control, init, upscale: req.upscale, filenamePrefix: `manga-builder/${req.mangaId}/${req.owner.id}`,
+    };
+    let graph: ComfyGraph;
+    try {
+      graph = recipe.build(params);
+    } catch (err) {
+      throw new PermanentError(`${recipe.id}: ${(err as Error).message}`);
+    }
+    result = await comfy.run(graph, { signal: ctx.signal, onProgress: ctx.progress });
+  } finally {
+    await comfy.removeInputs(uploaded);
+  }
   const bytes = result.images[0];
   if (!bytes) throw new PermanentError('ComfyUI returned no image');
   const size = pngSize(bytes);
@@ -95,7 +107,7 @@ export async function generateImage(deps: GenerateDeps, req: GenerateRequest, ct
   const gen: GenParams = {
     recipe: recipe.id, prompt: req.prompt, negative: req.negative, seed: req.seed, steps: params.steps, cfg: params.cfg,
     width: req.width, height: req.height, loras, refs: [...req.refImageIds], control: req.control, initImageId: req.initImageId,
-    denoise: init && recipe.family !== 'upscale' ? init.denoise : null, comfyPromptId: result.promptId, durationMs: result.durationMs,
+    denoise: params.init && recipe.family !== 'upscale' ? params.init.denoise : null, comfyPromptId: result.promptId, durationMs: result.durationMs,
   };
 
   // One transaction re-checks the owner still exists (it may have been deleted during the long generation), then

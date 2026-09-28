@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { join } from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { ComfyGraph } from '../imaging/comfy-graph.js';
 import { pngSize } from '../imaging/png-size.js';
@@ -31,6 +33,10 @@ export interface FakeComfy {
   failNext: string | null;
   /** Extra delay before a run completes (to test cancel and crashes). */
   completionDelayMs: number;
+  /** Like a real ComfyUI folder: when set, uploads are also written to <dataDir>/input/<subfolder>/<name> and each
+   *  SaveImage output to <dataDir>/output/<subfolder>/<filename>, so tests can check ComfyClient cleans them up.
+   *  Default null (nothing on disk). */
+  dataDir: string | null;
   close(): Promise<void>;
 }
 
@@ -75,6 +81,8 @@ export function fakeOutputSize(graph: ComfyGraph, uploads: ReadonlyMap<string, U
   return { width, height };
 }
 
+const outputKey = (subfolder: string, filename: string): string => (subfolder ? `${subfolder}/${filename}` : filename);
+
 function readBody(req: IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -106,6 +114,7 @@ class FakeComfyServer implements FakeComfy {
   rejectNext: FakeComfyRejection | null = null;
   failNext: string | null = null;
   completionDelayMs = 0;
+  dataDir: string | null = null;
   private readonly history = new Map<string, HistoryEntry>();
   private readonly outputs = new Map<string, Uint8Array>();
   private readonly clients = new Map<string, Set<WebSocket>>();
@@ -191,7 +200,7 @@ class FakeComfyServer implements FakeComfy {
       return send(res, 200, entry ? { [id]: entry } : {});
     }
     if (route === 'GET /view') {
-      const bytes = this.outputs.get(url.searchParams.get('filename') ?? '');
+      const bytes = this.outputs.get(outputKey(url.searchParams.get('subfolder') ?? '', url.searchParams.get('filename') ?? ''));
       if (!bytes) return send(res, 404, { error: 'not found' });
       res.writeHead(200, { 'content-type': 'image/png' });
       res.end(bytes);
@@ -216,7 +225,9 @@ class FakeComfyServer implements FakeComfy {
     if (file === null || typeof file === 'string') return send(res, 400, { error: 'no image' });
     const subfolder = String(form.get('subfolder') ?? '');
     const key = subfolder ? `${subfolder}/${file.name}` : file.name;
-    this.uploads.set(key, new Uint8Array(await file.arrayBuffer()));
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    this.uploads.set(key, bytes);
+    this.writeToDataDir('input', key, bytes);
     return send(res, 200, { name: file.name, subfolder, type: 'input' });
   }
 
@@ -235,6 +246,13 @@ class FakeComfyServer implements FakeComfy {
     this.promptIds.push(id);
     send(res, 200, { prompt_id: id, number: this.counter++, node_errors: {} });
     void this.execute(id, b.prompt, b.client_id ?? '');
+  }
+
+  private writeToDataDir(kind: 'input' | 'output', key: string, bytes: Uint8Array): void {
+    if (this.dataDir === null) return;
+    const dir = join(this.dataDir, kind, ...key.split('/').slice(0, -1));
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, key.split('/').at(-1)!), bytes);
   }
 
   private emit(clientId: string, type: string, data: Record<string, unknown>): void {
@@ -279,11 +297,16 @@ class FakeComfyServer implements FakeComfy {
     }
     const save = nodes.find(([, n]) => n.class_type === 'SaveImage');
     const { width, height } = fakeOutputSize(graph, this.uploads);
-    const filename = `fake_${String(this.outputs.size + 1).padStart(5, '0')}_.png`;
-    this.outputs.set(filename, encodeSolidPng(width, height, FAKE_COLOR));
+    // ComfyUI's SaveImage: filename_prefix "a/b/c" → subfolder "a/b", file "c_00001_.png".
+    const prefix = String(save?.[1].inputs['filename_prefix'] ?? 'fake').split('/');
+    const subfolder = prefix.slice(0, -1).join('/');
+    const filename = `${prefix.at(-1) || 'fake'}_${String(this.outputs.size + 1).padStart(5, '0')}_.png`;
+    const png = encodeSolidPng(width, height, FAKE_COLOR);
+    this.outputs.set(outputKey(subfolder, filename), png);
+    if (save) this.writeToDataDir('output', outputKey(subfolder, filename), png);
     this.history.set(id, {
       prompt: [],
-      outputs: save ? { [save[0]]: { images: [{ filename, subfolder: '', type: 'output' }] } } : {},
+      outputs: save ? { [save[0]]: { images: [{ filename, subfolder, type: 'output' }] } } : {},
       status: { status_str: 'success', completed: true, messages: [['execution_success', { prompt_id: id }]] },
     });
     this.emit(clientId, 'executing', { node: null, prompt_id: id });

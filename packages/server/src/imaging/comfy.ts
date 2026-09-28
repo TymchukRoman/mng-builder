@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { basename } from 'node:path';
+import { readFile, rm } from 'node:fs/promises';
+import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import WebSocket from 'ws';
 import type { ServiceState } from '@manga/shared';
 import { PermanentError, TransientError } from '../jobs/index.js';
@@ -64,18 +64,29 @@ export function executionError(entry: HistoryEntry): string {
   return `ComfyUI failed in ${String(error['node_type'] ?? '?')} (node ${String(error['node_id'] ?? '?')}): ${String(error['exception_message'] ?? '').trim()}`;
 }
 
+/** `rel` ('/'-separated, as ComfyUI reports it) under `base`, or null when it would resolve outside it. */
+function inside(base: string, rel: string): string | null {
+  const root = resolve(base);
+  const full = resolve(root, ...rel.split(/[\\/]/));
+  const back = relative(root, full);
+  return back === '' || back.startsWith('..') || isAbsolute(back) ? null : full;
+}
+
 export class ComfyClient {
   readonly url: string;
   private readonly launcher: ComfyLauncher | null;
   private readonly pollMs: number;
+  /** The ComfyUI folder (<comfyRoot>/ComfyUI) when it is on this machine; null for fakes and tests (cleanup off). */
+  private readonly dataDir: string | null;
   private starting: Promise<void> | null = null;
   /** Model family last prepared for (via prepareFor) or resident from a run; null once free() has cleared it. */
   private lastFamily: string | null = null;
 
-  constructor(opts: { url: string; launcher?: ComfyLauncher | null; pollMs?: number }) {
+  constructor(opts: { url: string; launcher?: ComfyLauncher | null; pollMs?: number; dataDir?: string | null }) {
     this.url = opts.url.replace(/\/+$/, '');
     this.launcher = opts.launcher ?? null;
     this.pollMs = opts.pollMs ?? 400;
+    this.dataDir = opts.dataDir ?? null;
   }
 
   async health(): Promise<ServiceState> {
@@ -164,7 +175,8 @@ export class ComfyClient {
       }
       if (!res.ok) throw new PermanentError(`ComfyUI answered ${res.status} on /prompt`);
       const entry = await this.waitForHistory(promptId, signal);
-      const images = await this.fetchOutputs(entry, signal);
+      // I3: the PNG lives in the library now; ComfyUI's own copy is removed once downloaded (or given up on).
+      const images = await this.fetchOutputs(entry, signal).finally(() => this.removeOutputs(entry));
       if (images.length === 0) throw new PermanentError('ComfyUI finished without producing an image');
       return { promptId, images, durationMs: Date.now() - started };
     } catch (err) {
@@ -233,6 +245,42 @@ export class ComfyClient {
       if (Date.now() >= deadline) return;
       await sleep(this.pollMs);
     }
+  }
+
+  /**
+   * I3, best-effort: removes inputs this client uploaded (names as `uploadImage` returned them) from
+   * <dataDir>/input. Never throws; a name that would resolve outside input/ is refused. No-op without a dataDir.
+   */
+  async removeInputs(names: readonly string[]): Promise<void> {
+    await this.removeUnder('input', names);
+  }
+
+  /** I3, best-effort: removes a finished run's SaveImage files from <dataDir>/output. Never throws. */
+  private async removeOutputs(entry: HistoryEntry): Promise<void> {
+    const rels = Object.values(entry.outputs ?? {}).flatMap((node) => (node.images ?? [])
+      .filter((image) => (image.type ?? 'output') === 'output')
+      .map((image) => (image.subfolder ? `${image.subfolder}/${image.filename}` : image.filename)));
+    await this.removeUnder('output', rels);
+  }
+
+  /** Removes each file under <dataDir>/<kind>; a missing file is fine. Logs failures once per call, never throws. */
+  private async removeUnder(kind: 'input' | 'output', rels: readonly string[]): Promise<void> {
+    if (this.dataDir === null || rels.length === 0) return;
+    const base = join(this.dataDir, kind);
+    const failed: string[] = [];
+    for (const rel of rels) {
+      const file = inside(base, rel);
+      if (file === null) {
+        failed.push(`${rel} (outside ${kind}/)`);
+        continue;
+      }
+      try {
+        await rm(file, { force: true });
+      } catch (err) {
+        failed.push(`${rel} (${(err as Error).message})`);
+      }
+    }
+    if (failed.length > 0) console.error(`[manga] comfy cleanup: could not remove from ${base}: ${failed.join('; ')}`);
   }
 
   /** With a prompt id ComfyUI interrupts only that prompt, and only if it is the one running. */

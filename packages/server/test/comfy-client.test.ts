@@ -1,5 +1,5 @@
 import type { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -262,5 +262,67 @@ describe('ComfyClient.ensureServer', () => {
     const err = await new ComfyClient({ url: fake.url, launcher }).ensureServer().catch((e: unknown) => e);
     expect(err).toBeInstanceOf(PermanentError);
     expect((err as Error).message).toBe(`ComfyUI did not come up within 1 s. See ${join(root, 'ComfyUI', 'server.log')}`);
+  });
+});
+
+describe('ComfyClient cleans its copies out of the ComfyUI folder (I3)', () => {
+  let dataDir: string;
+  beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), 'comfy-data-'));
+    fake.dataDir = dataDir;
+  });
+  afterEach(() => { rmSync(dataDir, { recursive: true, force: true }); });
+
+  const prefixed = (): ComfyGraph => ({ ...miniGraph(), '6': { class_type: 'SaveImage', inputs: { images: ['5', 0], filename_prefix: 'manga-builder/mg_a/pn_b' } } });
+  const cleaning = (): ComfyClient => new ComfyClient({ url: fake.url, launcher: null, pollMs: 20, dataDir });
+
+  it('removes the output file once the run has downloaded it', async () => {
+    const result = await cleaning().run(prefixed());
+    expect(pngSize(result.images[0]!)).toEqual({ width: 64, height: 48 });
+    const outDir = join(dataDir, 'output', 'manga-builder', 'mg_a');
+    expect(existsSync(outDir)).toBe(true); // ComfyUI (the fake) did save it there
+    expect(readdirSync(outDir)).toEqual([]);
+  });
+
+  it('leaves the ComfyUI folder alone without a dataDir (fakes, tests)', async () => {
+    await client.run(prefixed());
+    expect(readdirSync(join(dataDir, 'output', 'manga-builder', 'mg_a'))).toEqual(['pn_b_00001_.png']);
+    await expect(client.removeInputs(['manga-builder/pn_b_00001_.png'])).resolves.toBeUndefined();
+  });
+
+  it('removeInputs removes uploads inside input/, refuses traversal, and ignores missing files', async () => {
+    const source = join(dataDir, 'im_upload0002.png');
+    writeFileSync(source, encodeSolidPng(4, 4));
+    const comfy = cleaning();
+    const name = await comfy.uploadImage(source);
+    const uploaded = join(dataDir, 'input', 'manga-builder', 'im_upload0002.png');
+    expect(existsSync(uploaded)).toBe(true);
+    const outside = join(dataDir, 'x.png');
+    writeFileSync(outside, 'not ours');
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(comfy.removeInputs([name, '../x.png', 'manga-builder/missing.png'])).resolves.toBeUndefined();
+      expect(existsSync(uploaded)).toBe(false);
+      expect(existsSync(outside)).toBe(true);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(String(spy.mock.calls[0]![0])).toContain('../x.png');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('never deletes outside output/ whatever the history entry says, and never fails the run over it', async () => {
+    const outside = join(dataDir, 'x.png');
+    writeFileSync(outside, 'not ours');
+    mkdirSync(join(dataDir, 'output'), { recursive: true });
+    const internals = cleaning() as unknown as { removeOutputs(entry: unknown): Promise<void> };
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(internals.removeOutputs({ outputs: { '9': { images: [{ filename: 'x.png', subfolder: '..', type: 'output' }] } } })).resolves.toBeUndefined();
+      expect(existsSync(outside)).toBe(true);
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import type { AppModule, CoreDeps } from '../app.js';
 import { registerImagingRoutes } from '../api/imaging-routes.js';
 import { startFakeComfy } from '../dev/fake-comfy.js';
@@ -13,11 +14,13 @@ export function imagingModule(deps: CoreDeps, services: M2Services = servicesFor
       if (!services.comfy) {
         if (services.fakes) {
           services.fakeComfy = await startFakeComfy();
-          services.comfy = new ComfyClient({ url: services.fakeComfy.url, launcher: null, pollMs: 50 });
+          services.comfy = new ComfyClient({ url: services.fakeComfy.url, launcher: null, pollMs: 50, dataDir: null });
         } else {
           services.comfy = new ComfyClient({
             url: deps.config.comfyUrl,
             launcher: new ComfyLauncher({ comfyRoot: deps.config.comfyRoot, comfyUrl: deps.config.comfyUrl }),
+            // I3: ComfyClient removes its input/output copies from the shared ComfyUI folder.
+            dataDir: join(deps.config.comfyRoot, 'ComfyUI'),
           });
         }
       }
