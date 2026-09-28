@@ -1,7 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState, type JSX, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { cx } from '../lib/cx';
+import { openFocusTarget, shouldRestoreFocus } from './focusReturn';
 import { placePopover } from './tipPlacement';
+import { FOCUSABLE } from './useOverlay';
 
 export interface PopoverProps {
   anchor: RefObject<HTMLElement | null>;
@@ -31,6 +33,20 @@ export function Popover({ anchor, open, onClose, align = 'start', label, classNa
     return () => ro.disconnect();
   }, [open, align, anchor]);
 
+  // Move focus into the popover on open (its first focusable control, else the popover itself), and
+  // restore it to whatever held focus before, as long as that element is still in the document.
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const container = ref.current;
+    const first = container?.querySelector<HTMLElement>(FOCUSABLE) ?? null;
+    if (openFocusTarget(first !== null) === 'first') first?.focus();
+    else container?.focus();
+    return () => {
+      if (previous && shouldRestoreFocus(previous.isConnected)) previous.focus();
+    };
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     const onDown = (e: PointerEvent): void => {
@@ -52,7 +68,7 @@ export function Popover({ anchor, open, onClose, align = 'start', label, classNa
 
   if (!open) return null;
   return createPortal(
-    <div ref={ref} role="dialog" aria-label={label} className={cx('popover', className)} style={pos ? { left: pos.x, top: pos.y } : { left: -9999, top: -9999 }}>
+    <div ref={ref} role="dialog" aria-label={label} tabIndex={-1} className={cx('popover', className)} style={pos ? { left: pos.x, top: pos.y } : { left: -9999, top: -9999 }}>
       {children}
     </div>,
     document.body,

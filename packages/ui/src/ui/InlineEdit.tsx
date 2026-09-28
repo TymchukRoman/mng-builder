@@ -23,8 +23,9 @@ export function InlineEdit({ value, onCommit, label, multiline = false, required
         type="button"
         className={cx('inline-edit', multiline && 'inline-edit--multi', className)}
         // F17 ruling: the accessible name includes the current value, so it is not hidden from assistive tech
-        // (the tooltip stays short since sighted users already see the value in the button).
-        aria-label={`${label}: ${value}`}
+        // (the tooltip stays short since sighted users already see the value in the button). An empty value
+        // falls back to the plain label, so the name never reads "Title: ".
+        aria-label={value ? `${label}: ${value}` : label}
         data-tip={`Edit ${label}`}
         onClick={() => setEditing(true)}
       >

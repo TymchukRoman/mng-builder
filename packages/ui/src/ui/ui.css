@@ -15,7 +15,7 @@
 .icon-btn__badge {
   position: absolute; top: -3px; right: -3px; min-width: 15px; height: 15px; padding: 0 3px;
   border-radius: var(--r-full); background: var(--accent); color: var(--on-accent);
-  font-size: 10px; line-height: 15px; text-align: center;
+  font-size: var(--fs-2xs); line-height: 15px; text-align: center;
 }
 
 .tooltip {
@@ -50,12 +50,12 @@
 .tabs__tab:hover { color: var(--text-1); }
 .tabs__tab.is-active { color: var(--text-1); border-bottom-color: var(--accent); }
 
-.inline-edit { display: block; width: 100%; text-align: left; padding: 2px var(--sp-1); margin: -2px calc(-1 * var(--sp-1)); background: none; border: 1px solid transparent; border-radius: var(--r-sm); cursor: text; font: inherit; color: inherit; }
+.inline-edit { display: block; width: 100%; text-align: left; padding: var(--sp-half) var(--sp-1); margin: calc(-1 * var(--sp-half)) calc(-1 * var(--sp-1)); background: none; border: 1px solid transparent; border-radius: var(--r-sm); cursor: text; font: inherit; color: inherit; }
 .inline-edit:hover { border-color: var(--border-2); }
 .inline-edit--multi { white-space: pre-wrap; color: var(--text-2); }
 .inline-edit__placeholder { color: var(--text-3); }
 
-.segmented { display: inline-flex; padding: 2px; gap: 2px; background: var(--surface-2); border-radius: var(--r-sm); }
+.segmented { display: inline-flex; padding: var(--sp-half); gap: var(--sp-half); background: var(--surface-2); border-radius: var(--r-sm); }
 .segmented__opt { min-width: 26px; height: 24px; padding: 0 var(--sp-2); display: inline-flex; align-items: center; justify-content: center; background: none; border: 0; border-radius: 3px; color: var(--text-2); cursor: pointer; font-size: var(--fs-sm); }
 .segmented__opt:hover { color: var(--text-1); }
 .segmented__opt.is-on { background: var(--surface); color: var(--text-1); box-shadow: 0 0 0 1px var(--border-2); }
@@ -68,6 +68,6 @@
 .toasts { position: fixed; right: var(--sp-4); bottom: calc(var(--jobbar-h) + var(--sp-3)); z-index: 1100; display: flex; flex-direction: column; gap: var(--sp-2); }
 .toast { display: flex; align-items: flex-start; gap: var(--sp-2); width: 340px; padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-3); background: var(--surface); border: 1px solid var(--border-2); border-left: 3px solid var(--accent); border-radius: var(--r-md); box-shadow: var(--shadow-pop); animation: mb-fade var(--dur-1) var(--ease); }
 .toast--error { border-left-color: var(--danger); }
-.toast--error > svg { color: var(--danger); margin-top: 2px; }
-.toast--info > svg { color: var(--ok); margin-top: 2px; }
+.toast--error > svg { color: var(--danger); margin-top: var(--sp-half); }
+.toast--info > svg { color: var(--ok); margin-top: var(--sp-half); }
 .toast__text { flex: 1; font-size: var(--fs-sm); line-height: 1.4; overflow-wrap: anywhere; }

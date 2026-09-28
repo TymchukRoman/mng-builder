@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
 
-const FOCUSABLE = '[autofocus], input:not([type="hidden"]), textarea, select, button:not([aria-disabled="true"])';
+// Exported so Popover (which manages its own focus lifecycle instead of calling this hook, since it
+// already owns outside-click and Escape handling) can reuse the same definition of "focusable".
+export const FOCUSABLE = '[autofocus], input:not([type="hidden"]), textarea, select, button:not([aria-disabled="true"])';
 
 /** Focus the first control on open, close on Escape (unless a popover consumed it), restore focus on close. */
 export function useOverlay(open: boolean, onClose: () => void, ref: RefObject<HTMLElement | null>): void {
