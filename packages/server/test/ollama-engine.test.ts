@@ -46,6 +46,16 @@ describe('OllamaEngine', () => {
     }
   });
 
+  it('falls back to message.thinking when content is empty (live: qwen3-vl:8b with think:false + format answers there)', async () => {
+    fo.replies.push({ content: '', thinking: '{"scene":"from-thinking"}' });
+    await expect(engine().completeJson(req)).resolves.toEqual({ scene: 'from-thinking' });
+  });
+
+  it('prefers content over thinking when content is present', async () => {
+    fo.replies.push({ content: '{"scene":"from-content"}', thinking: '{"scene":"from-thinking"}' });
+    await expect(engine().completeJson(req)).resolves.toEqual({ scene: 'from-content' });
+  });
+
   it('runs one correction round through the same endpoint', async () => {
     fo.replies.push('nothing useful', '{"scene":"ok"}');
     await expect(engine().completeJson(req)).resolves.toEqual({ scene: 'ok' });

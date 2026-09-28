@@ -115,13 +115,17 @@ export class OllamaEngine implements TextEngine {
     if (res.status === 404 && /not found/i.test(text)) throw new EngineUnavailableError(`model ${model} not pulled (run: ollama pull ${model})`);
     if (res.status >= 500) throw new TransientError(`ollama answered ${res.status}: ${text.slice(0, 300)}`);
     if (!res.ok) throw new PermanentError(`ollama answered ${res.status}: ${text.slice(0, 300)}`);
-    let content: unknown;
+    let message: { content?: unknown; thinking?: unknown } | undefined;
     try {
-      content = (JSON.parse(text) as { message?: { content?: unknown } }).message?.content;
+      message = (JSON.parse(text) as { message?: { content?: unknown; thinking?: unknown } }).message;
     } catch {
-      content = undefined;
+      message = undefined;
     }
-    if (typeof content !== 'string') throw new TransientError('ollama returned no message content');
-    return content;
+    // Live evidence (qwen3-vl:8b, think: false + format: <JSON schema>): the answer sometimes lands in
+    // message.thinking with message.content left empty, instead of the other way round. Content still wins
+    // whenever it is non-blank; thinking is only a fallback for when content has nothing usable.
+    if (typeof message?.content === 'string' && message.content.trim().length > 0) return message.content;
+    if (typeof message?.thinking === 'string' && message.thinking.trim().length > 0) return message.thinking;
+    throw new TransientError('ollama returned no message content');
   }
 }

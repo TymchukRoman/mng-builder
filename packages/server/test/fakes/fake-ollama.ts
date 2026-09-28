@@ -2,11 +2,14 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 export interface FakeOllamaRequest { method: string; path: string; body: Record<string, unknown> | null }
+/** A plain string sets message.content. An object also lets a test set message.thinking, to exercise
+ *  OllamaEngine's fallback for replies that land there with content left empty (live: qwen3-vl:8b + think:false). */
+export type FakeOllamaReply = string | { content: string; thinking?: string };
 export interface FakeOllama {
   url: string;
   requests: FakeOllamaRequest[];
   /** Answers for /api/chat, consumed in order; '{}' when empty. */
-  replies: string[];
+  replies: FakeOllamaReply[];
   /** Pulled models (/api/tags). */
   models: string[];
   /** Models currently loaded (/api/ps): added by /api/chat, removed by keep_alive 0. */
@@ -14,9 +17,9 @@ export interface FakeOllama {
   close(): Promise<void>;
 }
 
-export async function startFakeOllama(opts: { models?: string[]; replies?: string[] } = {}): Promise<FakeOllama> {
+export async function startFakeOllama(opts: { models?: string[]; replies?: FakeOllamaReply[] } = {}): Promise<FakeOllama> {
   const requests: FakeOllamaRequest[] = [];
-  const replies = [...(opts.replies ?? [])];
+  const replies: FakeOllamaReply[] = [...(opts.replies ?? [])];
   const models = opts.models ?? ['qwen3:14b', 'qwen3-vl:8b'];
   const loaded = new Set<string>();
   const server = createServer((req, res) => {
@@ -37,7 +40,11 @@ export async function startFakeOllama(opts: { models?: string[]; replies?: strin
       if (path === '/api/chat') {
         if (!models.includes(model)) return json(404, { error: `model "${model}" not found, try pulling it first` });
         loaded.add(model);
-        return json(200, { model, message: { role: 'assistant', content: replies.shift() ?? '{}' }, done: true });
+        const reply = replies.shift() ?? '{}';
+        const message = typeof reply === 'string'
+          ? { role: 'assistant', content: reply }
+          : { role: 'assistant', content: reply.content, ...(reply.thinking !== undefined ? { thinking: reply.thinking } : {}) };
+        return json(200, { model, message, done: true });
       }
       if (path === '/api/generate') {
         if (body?.['keep_alive'] === 0) loaded.delete(model);
