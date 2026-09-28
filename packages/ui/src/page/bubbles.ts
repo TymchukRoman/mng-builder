@@ -49,12 +49,16 @@ export function cloudPath(b: BoxPx, bumps = cloudBumps(b)): string {
   });
   const first = pts[0] ?? { x: cx, y: cy };
   let d = `M ${f(first.x)} ${f(first.y)}`;
-  // Cap arc radius to box's short side: keeps overshoot ~10% of short side.
-  const maxRadius = Math.min(b.w, b.h) * 0.25;
+  // Sagitta-based radius: r = (c²/4 + s²) / (2s) where c = chord, s = bulge.
+  // This ensures r ≥ c/2 so SVG never rescales the arc.
+  // Let s = min(0.35 * chord, 0.08 * min(w, h)): round bumps on normal, flat on thin boxes.
+  const minSide = Math.min(b.w, b.h);
   for (let i = 0; i < bumps; i++) {
     const a = pts[i] ?? first;
     const c = pts[(i + 1) % bumps] ?? first;
-    const r = Math.min(Math.hypot(c.x - a.x, c.y - a.y) * 0.6, maxRadius);
+    const chord = Math.hypot(c.x - a.x, c.y - a.y);
+    const sagitta = Math.min(0.35 * chord, 0.08 * minSide);
+    const r = (chord * chord / 4 + sagitta * sagitta) / (2 * sagitta);
     d += ` A ${f(r)} ${f(r)} 0 0 1 ${f(c.x)} ${f(c.y)}`;
   }
   return `${d} Z`;

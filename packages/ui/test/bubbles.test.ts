@@ -5,52 +5,69 @@ import type { BoxPx, PointPx } from '../src/page/bubbles';
 const b = { x: 0, y: 0, w: 100, h: 50 };
 const nums = (d: string): number[] => (d.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number);
 
-// Helper: ray-casting point-in-polygon test
-function pointInPolygon(p: PointPx, polygon: PointPx[]): boolean {
+// SVG arc endpoint->center parameterization, with radii auto-scaled per spec
+function arcPts(x1: number, y1: number, rx: number, ry: number, large: number, sweep: number, x2: number, y2: number, n = 40): PointPx[] {
+  const dx = (x1 - x2) / 2, dy = (y1 - y2) / 2;
+  const x1p = dx, y1p = dy;
+  rx = Math.abs(rx);
+  ry = Math.abs(ry);
+  const lam = (x1p / rx) ** 2 + (y1p / ry) ** 2;
+  if (lam > 1) {
+    rx *= Math.sqrt(lam);
+    ry *= Math.sqrt(lam);
+  }
+  const num = rx * rx * ry * ry - rx * rx * y1p * y1p - ry * ry * x1p * x1p;
+  const den = rx * rx * y1p * y1p + ry * ry * x1p * x1p;
+  let co = Math.sqrt(Math.max(0, num / den));
+  if (large === sweep) co = -co;
+  const cxp = (co * rx * y1p) / ry, cyp = -(co * ry * x1p) / rx;
+  const cx = cxp + (x1 + x2) / 2, cy = cyp + (y1 + y2) / 2;
+  const ang = (ux: number, uy: number, vx: number, vy: number): number => Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy);
+  const th1 = Math.atan2((y1p - cyp) / ry, (x1p - cxp) / rx);
+  let dth = ang((x1p - cxp) / rx, (y1p - cyp) / ry, (-x1p - cxp) / rx, (-y1p - cyp) / ry);
+  if (!sweep && dth > 0) dth -= 2 * Math.PI;
+  if (sweep && dth < 0) dth += 2 * Math.PI;
+  const out: PointPx[] = [];
+  for (let i = 0; i <= n; i++) {
+    const t = th1 + (dth * i) / n;
+    out.push({ x: cx + rx * Math.cos(t), y: cy + ry * Math.sin(t) });
+  }
+  return out;
+}
+
+// Parse cloud path to polygon (expands arcs using SVG spec)
+function cloudPoly(d: string): PointPx[] {
+  const m = d.match(/^M ([-\d.]+) ([-\d.]+)/);
+  if (!m) return [];
+  let cur = { x: parseFloat(m[1]!), y: parseFloat(m[2]!) };
+  const poly = [cur];
+  for (const a of d.matchAll(/A ([-\d.]+) ([-\d.]+) 0 (\d) (\d) ([-\d.]+) ([-\d.]+)/g)) {
+    const seg = arcPts(cur.x, cur.y, +a[1]!, +a[2]!, +a[3]!, +a[4]!, +a[5]!, +a[6]!);
+    poly.push(...seg.slice(1));
+    cur = { x: +a[5]!, y: +a[6]! };
+  }
+  return poly;
+}
+
+// Parse burst path to polygon (simple line segments)
+function burstPoly(d: string): PointPx[] {
+  const coords = nums(d);
+  const v: PointPx[] = [];
+  for (let i = 0; i < coords.length; i += 2) {
+    v.push({ x: coords[i]!, y: coords[i + 1]! });
+  }
+  return v;
+}
+
+// Ray-casting point-in-polygon test
+function pointInPolygon(p: PointPx, poly: PointPx[]): boolean {
   let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const xi = polygon[i]!.x, yi = polygon[i]!.y;
-    const xj = polygon[j]!.x, yj = polygon[j]!.y;
-    const intersect = ((yi > p.y) !== (yj > p.y)) && (p.x < ((xj - xi) * (p.y - yi)) / (yj - yi) + xi);
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i]!, b = poly[j]!;
+    const intersect = (a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x;
     if (intersect) inside = !inside;
   }
   return inside;
-}
-
-// Helper: extract polygon vertices from burst path
-function burstVertices(d: string, spikes: number): PointPx[] {
-  const coords = nums(d);
-  const vertices: PointPx[] = [];
-  for (let i = 0; i < coords.length; i += 2) {
-    vertices.push({ x: coords[i]!, y: coords[i + 1]! });
-  }
-  return vertices;
-}
-
-// Helper: sample ellipse parametrically
-function ellipsePoints(b: BoxPx, samples: number): PointPx[] {
-  const { cx, cy, rx, ry } = ellipseOf(b);
-  const pts: PointPx[] = [];
-  for (let i = 0; i < samples; i++) {
-    const a = (2 * Math.PI * i) / samples;
-    pts.push({ x: cx + rx * Math.cos(a), y: cy + ry * Math.sin(a) });
-  }
-  return pts;
-}
-
-// Helper: extract actual endpoint coordinates from cloud path (M and A endpoints only)
-function cloudVertices(d: string): PointPx[] {
-  const vertices: PointPx[] = [];
-  // Parse SVG path: M x y followed by A rx ry ... x y (7 params) repeated, then Z
-  const match = d.match(/M\s*([-\d.]+)\s*([-\d.]+)/);
-  if (match) {
-    vertices.push({ x: parseFloat(match[1]!), y: parseFloat(match[2]!) });
-  }
-  const arcMatches = d.matchAll(/A\s+[\d.-]+\s+[\d.-]+\s+[\d.-]+\s+[\d.-]+\s+[\d.-]+\s+([-\d.]+)\s+([-\d.]+)/g);
-  for (const match of arcMatches) {
-    vertices.push({ x: parseFloat(match[1]!), y: parseFloat(match[2]!) });
-  }
-  return vertices;
 }
 
 describe('ellipse', () => {
@@ -136,118 +153,104 @@ describe('per-kind helpers', () => {
   });
 });
 
-describe('geometry coverage', () => {
-  it('tail base corners lie inside ellipse (speech) in 36 directions', () => {
-    for (let dir = 0; dir < 36; dir++) {
-      const angle = (dir / 36) * Math.PI * 2;
-      const dist = 150;
-      const tip = { x: 50 + dist * Math.cos(angle), y: 25 + dist * Math.sin(angle) };
-      const path = tailPath(b, tip);
-      if (path !== '') {
-        const [x1, y1, , , x2, y2] = nums(path);
-        expect(insideEllipse(b, { x: x1 ?? 0, y: y1 ?? 0 })).toBe(true);
-        expect(insideEllipse(b, { x: x2 ?? 0, y: y2 ?? 0 })).toBe(true);
+describe('strict geometry (through shapeFor)', () => {
+  it('tail base corners inside speech ellipse in 36 directions across 3 aspect ratios', () => {
+    const aspects: [number, number][] = [[100, 100], [300, 60], [60, 300]];
+    for (const [w, h] of aspects) {
+      const box = { x: 10, y: 20, w, h };
+      const { cx, cy, rx, ry } = ellipseOf(box);
+      let outside = 0;
+      for (let k = 0; k < 360; k++) {
+        const angle = (k * Math.PI) / 180;
+        const tip = { x: cx + rx * 3 * Math.cos(angle), y: cy + ry * 3 * Math.sin(angle) };
+        const shape = shapeFor('speech', box, tip);
+        if (shape.paths.length > 1) {
+          const tailD = shape.paths[1]!;
+          const coords = nums(tailD);
+          const pts = [{ x: coords[0]!, y: coords[1]! }, { x: coords[4]!, y: coords[5]! }];
+          for (const pt of pts) {
+            if (!insideEllipse(box, pt)) outside++;
+          }
+        }
       }
+      expect(outside).toBe(0);
     }
   });
 
-  it('tail base corners lie inside burst (shout) in 36 directions', () => {
-    const burstD = burstPath(b, 14);
-    const vertices = burstVertices(burstD, 14);
-    for (let dir = 0; dir < 36; dir++) {
-      const angle = (dir / 36) * Math.PI * 2;
-      const dist = 150;
-      const tip = { x: 50 + dist * Math.cos(angle), y: 25 + dist * Math.sin(angle) };
-      const path = tailPath(b, tip, 0.22, 0.6);
-      if (path !== '') {
-        const [x1, y1, , , x2, y2] = nums(path);
-        expect(pointInPolygon({ x: x1 ?? 0, y: y1 ?? 0 }, vertices)).toBe(true);
-        expect(pointInPolygon({ x: x2 ?? 0, y: y2 ?? 0 }, vertices)).toBe(true);
+  it('tail base corners inside shout burst in 36 directions across 3 aspect ratios', () => {
+    const aspects: [number, number][] = [[100, 100], [300, 60], [60, 300]];
+    for (const [w, h] of aspects) {
+      const box = { x: 10, y: 20, w, h };
+      const { cx, cy, rx, ry } = ellipseOf(box);
+      const burstD = burstPath(box);
+      const burst = burstPoly(burstD);
+      let outside = 0;
+      for (let k = 0; k < 360; k++) {
+        const angle = (k * Math.PI) / 180;
+        const tip = { x: cx + rx * 3 * Math.cos(angle), y: cy + ry * 3 * Math.sin(angle) };
+        const shape = shapeFor('shout', box, tip);
+        if (shape.paths.length > 1) {
+          const tailD = shape.paths[1]!;
+          const coords = nums(tailD);
+          const pts = [{ x: coords[0]!, y: coords[1]! }, { x: coords[4]!, y: coords[5]! }];
+          for (const pt of pts) {
+            if (!pointInPolygon(pt, burst)) outside++;
+          }
+        }
       }
+      expect(outside).toBe(0);
     }
   });
 
-  it('textBox corners lie inside shape for various aspect ratios', () => {
-    const aspects: [number, 'speech' | 'thought' | 'shout'][] = [
-      [1, 'speech'],
-      [1, 'thought'],
-      [1, 'shout'],
-      [5, 'speech'],
-      [5, 'thought'],
-      [5, 'shout'],
-      [0.2, 'speech'],
-      [0.2, 'thought'],
-      [0.2, 'shout'],
-    ];
+  it('textBox corners inside expanded paths across 4 aspect ratios', () => {
+    const aspects: [number, number][] = [[100, 100], [300, 60], [60, 300], [1000, 50]];
+    for (const [w, h] of aspects) {
+      const box = { x: 10, y: 20, w, h };
+      for (const kind of ['speech', 'thought', 'shout'] as const) {
+        const tb = textBox(kind, box);
+        const corners = [
+          { x: tb.x, y: tb.y },
+          { x: tb.x + tb.w, y: tb.y },
+          { x: tb.x, y: tb.y + tb.h },
+          { x: tb.x + tb.w, y: tb.y + tb.h },
+        ];
 
-    for (const [ratio, kind] of aspects) {
-      const w = ratio > 1 ? 300 : 60;
-      const h = ratio > 1 ? Math.round(300 / ratio) : Math.round(60 * ratio);
-      const box = { x: 0, y: 0, w, h };
-      const tb = textBox(kind, box);
-      const corners = [
-        { x: tb.x, y: tb.y },
-        { x: tb.x + tb.w, y: tb.y },
-        { x: tb.x, y: tb.y + tb.h },
-        { x: tb.x + tb.w, y: tb.y + tb.h },
-      ];
-
-      for (const corner of corners) {
-        if (kind === 'speech') {
-          expect(insideEllipse(box, corner)).toBe(true);
-        } else if (kind === 'thought') {
-          // Cloud is at 0.82 radius; valley at 0.82*cos(π/n) ≈ 0.77.
-          // Scale 0.54 means k*√2 ≈ 0.764, which is < 0.77.
-          const { cx, cy, rx, ry } = ellipseOf(box);
-          const minCloudRadius = 0.77;
-          const dx = corner.x - cx;
-          const dy = corner.y - cy;
-          const norm = Math.sqrt((dx / rx) ** 2 + (dy / ry) ** 2);
-          expect(norm).toBeLessThanOrEqual(minCloudRadius);
-        } else {
-          // Burst inner at 0.74, scale 0.52 means k*√2 ≈ 0.735 < 0.74.
-          const burst = burstVertices(burstPath(box, 14), 14);
-          expect(pointInPolygon(corner, burst)).toBe(true);
+        for (const corner of corners) {
+          if (kind === 'speech') {
+            expect(insideEllipse(box, corner)).toBe(true);
+          } else if (kind === 'thought') {
+            const poly = cloudPoly(cloudPath(box));
+            expect(pointInPolygon(corner, poly)).toBe(true);
+          } else {
+            const poly = burstPoly(burstPath(box));
+            expect(pointInPolygon(corner, poly)).toBe(true);
+          }
         }
       }
     }
   });
 
-  it('paths are closed and deterministic', () => {
-    const ellipse = ellipsePath(b);
-    const cloud = cloudPath(b);
-    const burst = burstPath(b);
-    const rect = rectPath(b);
-
-    expect(ellipse).toMatch(/Z$/);
-    expect(cloud).toMatch(/Z$/);
-    expect(burst).toMatch(/Z$/);
-    expect(rect).toMatch(/Z$/);
-
-    expect(cloudPath(b)).toBe(cloud);
-    expect(burstPath(b)).toBe(burst);
+  it('cloud expanded bbox exceeds frame by at most 10% of short side', () => {
+    const aspects: [number, number][] = [[100, 100], [300, 60], [60, 300], [1000, 50], [50, 300]];
+    for (const [w, h] of aspects) {
+      const box = { x: 0, y: 0, w, h };
+      const poly = cloudPoly(cloudPath(box));
+      const xs = poly.map((p) => p.x);
+      const ys = poly.map((p) => p.y);
+      const overshootX = Math.max(-Math.min(...xs), Math.max(...xs) - w, 0);
+      const overshootY = Math.max(-Math.min(...ys), Math.max(...ys) - h, 0);
+      const maxOvershoot = Math.max(overshootX, overshootY);
+      const allowedOvershoot = Math.min(w, h) * 0.1;
+      expect(maxOvershoot).toBeLessThanOrEqual(allowedOvershoot);
+    }
   });
 
-  it('cloud overshoot stays bounded on elongated boxes', () => {
-    const thinHorizontal = { x: 0, y: 0, w: 1000, h: 50 };
-    const thinVertical = { x: 0, y: 0, w: 50, h: 300 };
-
-    const checkBounds = (box: BoxPx) => {
-      const { cx, cy, rx, ry } = ellipseOf(box);
-      // Arc radius is capped at 0.25 * short side to limit overshoot to ~10% of short side.
-      const maxRadius = Math.min(box.w, box.h) * 0.25;
-      const cloud = cloudVertices(cloudPath(box));
-      // Verify cloud is generated and has multiple points.
-      expect(cloud.length).toBeGreaterThan(3);
-      // Verify no point is extremely far from center (sanity check).
-      for (const pt of cloud) {
-        const dist = Math.hypot(pt.x - cx, pt.y - cy);
-        const maxDist = Math.hypot(rx, ry) * 1.2;
-        expect(dist).toBeLessThanOrEqual(maxDist);
-      }
-    };
-
-    checkBounds(thinHorizontal);
-    checkBounds(thinVertical);
+  it('paths are closed and deterministic', () => {
+    expect(ellipsePath(b)).toMatch(/Z$/);
+    expect(cloudPath(b)).toMatch(/Z$/);
+    expect(burstPath(b)).toMatch(/Z$/);
+    expect(rectPath(b)).toMatch(/Z$/);
+    expect(cloudPath(b)).toBe(cloudPath(b));
+    expect(burstPath(b)).toBe(burstPath(b));
   });
 });
