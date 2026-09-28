@@ -69,6 +69,8 @@ export class ComfyClient {
   private readonly launcher: ComfyLauncher | null;
   private readonly pollMs: number;
   private starting: Promise<void> | null = null;
+  /** Model family last prepared for (via prepareFor) or resident from a run; null once free() has cleared it. */
+  private lastFamily: string | null = null;
 
   constructor(opts: { url: string; launcher?: ComfyLauncher | null; pollMs?: number }) {
     this.url = opts.url.replace(/\/+$/, '');
@@ -178,8 +180,11 @@ export class ComfyClient {
 
   /** POST /free {unload_models, free_memory}. Never throws: a down ComfyUI holds no VRAM (G2), so a stopped or
    *  unreachable server must not block the GpuArbiter from handing the GPU to ollama. Logs either way, so a
-   *  persistent failure (wrong URL, API mismatch) is still visible instead of silently swallowed. */
+   *  persistent failure (wrong URL, API mismatch) is still visible instead of silently swallowed.
+   *  Also clears `lastFamily`: whoever calls free() (prepareFor on a family switch, or the GPU arbiter's
+   *  releaser handing the GPU to ollama) means nothing stays resident in ComfyUI afterwards. */
   async free(): Promise<void> {
+    this.lastFamily = null;
     let res: Response;
     try {
       res = await fetch(`${this.url}/free`, {
@@ -190,6 +195,44 @@ export class ComfyClient {
       return;
     }
     if (!res.ok) console.error(`[manga] comfy free: ${this.url} answered ${res.status}, treating as already released`);
+  }
+
+  /**
+   * Called before running a graph of `family`. ComfyUI's IP-Adapter/CLIP-Vision loaders are cached node outputs,
+   * outside ComfyUI's own model manager, so it does not evict them by itself when a different model family loads
+   * next — live evidence: qwen-edit-ref loaded only partially with an SDXL+IP-Adapter graph left resident (100 s
+   * per sampling step; 13 s/step after `/free`). Same family as last time → no-op. On a switch, frees and then
+   * waits for the unload to actually take effect: ComfyUI applies `/free` asynchronously (its prompt worker
+   * processes the flag on its next wake-up), so VRAM is reported unchanged for a few seconds right after the
+   * POST. Never throws: an unreachable ComfyUI just stops waiting (G2) — the next call surfaces the real problem.
+   */
+  async prepareFor(family: string): Promise<void> {
+    if (this.lastFamily !== null && this.lastFamily !== family) {
+      await this.free();
+      await this.waitForVramFreed();
+    }
+    this.lastFamily = family;
+  }
+
+  /** Polls GET /system_stats every `pollMs` until `devices[0].torch_vram_total` drops below 512 MiB, or 15 s
+   *  have passed. Never throws (G2): any fetch failure, non-OK status, or missing field just ends the wait. */
+  private async waitForVramFreed(): Promise<void> {
+    const deadline = Date.now() + 15_000;
+    const threshold = 512 * 1024 * 1024;
+    for (;;) {
+      let res: Response;
+      try {
+        res = await fetch(`${this.url}/system_stats`, { signal: AbortSignal.timeout(3_000) });
+      } catch {
+        return;
+      }
+      if (!res.ok) return;
+      const stats = (await res.json().catch(() => null)) as { devices?: Array<{ torch_vram_total?: number }> } | null;
+      const total = stats?.devices?.[0]?.torch_vram_total;
+      if (typeof total !== 'number' || total < threshold) return;
+      if (Date.now() >= deadline) return;
+      await sleep(this.pollMs);
+    }
   }
 
   /** With a prompt id ComfyUI interrupts only that prompt, and only if it is the one running. */

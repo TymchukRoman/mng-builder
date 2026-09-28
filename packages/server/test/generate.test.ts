@@ -86,6 +86,29 @@ describe('generateImage', () => {
     expect(image.gen).toMatchObject({ recipe: 'upscale', initImageId: source.id, denoise: null });
   });
 
+  it('frees ComfyUI VRAM only when the recipe family changes, and waits for the drop before the next graph runs', async () => {
+    const { manga, panels } = seedManga(lib.store);
+    const owner = { type: 'panel' as const, id: panels[0]!.id };
+    const ref = seedImage(lib.store, manga.id, owner, null);
+
+    await generateImage({ store: lib.store, comfy, gpu }, request(manga.id, { owner, recipe: 'anime' }), context().ctx);
+    await generateImage({ store: lib.store, comfy, gpu }, request(manga.id, { owner, recipe: 'anime' }), context().ctx);
+    expect(fake.calls.filter((c) => c.path === '/free')).toHaveLength(0);
+
+    fake.torchVramTotal = 14e9;
+    fake.freeDelayMs = 20;
+    await generateImage({ store: lib.store, comfy, gpu }, request(manga.id, { owner, recipe: 'qwen-edit-ref', refImageIds: [ref.id] }), context().ctx);
+
+    expect(fake.calls.filter((c) => c.path === '/free')).toHaveLength(1);
+    expect(fake.torchVramTotal).toBe(0);
+    const freeIndex = fake.calls.findIndex((c) => c.path === '/free');
+    const promptIndices = fake.calls.map((c, i) => i).filter((i) => fake.calls[i]!.path === '/prompt');
+    const thirdPromptIndex = promptIndices[2]!;
+    expect(thirdPromptIndex).toBeGreaterThan(freeIndex);
+    const statsBetween = fake.calls.filter((c, i) => i > freeIndex && i < thirdPromptIndex && c.path === '/system_stats');
+    expect(statsBetween.length).toBeGreaterThan(0);
+  });
+
   it('drops style LoRAs for recipes that cannot take them', async () => {
     const { manga } = seedManga(lib.store);
     const aiko = seedCharacter(lib.store, manga.id, 'Aiko');

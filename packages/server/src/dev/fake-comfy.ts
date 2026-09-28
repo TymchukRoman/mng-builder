@@ -19,6 +19,12 @@ export interface FakeComfy {
   readonly calls: FakeComfyCall[];
   /** false → every HTTP route answers 503 and /ws is refused. */
   up: boolean;
+  /** GET /system_stats → devices[0].torch_vram_total, mutable so tests can exercise ComfyClient.prepareFor's
+   *  wait loop. Default 0 (nothing resident). */
+  torchVramTotal: number;
+  /** Delay before POST /free drops torchVramTotal to 0, mimicking ComfyUI's async unload (its prompt worker
+   *  applies the flag on its next wake-up, not immediately on the POST). Default 0 (drops right away). */
+  freeDelayMs: number;
   /** The next POST /prompt answers 400 with this body. */
   rejectNext: FakeComfyRejection | null;
   /** The next run ends with an execution_error carrying this exception message. */
@@ -95,6 +101,8 @@ class FakeComfyServer implements FakeComfy {
   readonly uploads = new Map<string, Uint8Array>();
   readonly calls: FakeComfyCall[] = [];
   up = true;
+  torchVramTotal = 0;
+  freeDelayMs = 0;
   rejectNext: FakeComfyRejection | null = null;
   failNext: string | null = null;
   completionDelayMs = 0;
@@ -169,7 +177,7 @@ class FakeComfyServer implements FakeComfy {
     if (route === 'GET /system_stats') {
       return send(res, 200, {
         system: { os: 'fake', comfyui_version: 'fake' },
-        devices: [{ name: 'FakeGPU', type: 'cuda', index: 0, vram_total: 16e9, vram_free: 15e9 }],
+        devices: [{ name: 'FakeGPU', type: 'cuda', index: 0, vram_total: 16e9, vram_free: 15e9, torch_vram_total: this.torchVramTotal }],
       });
     }
     if (route === 'GET /object_info') {
@@ -189,7 +197,14 @@ class FakeComfyServer implements FakeComfy {
       res.end(bytes);
       return;
     }
-    if (route === 'POST /free' || route === 'POST /interrupt' || route === 'POST /queue') return send(res, 200);
+    if (route === 'POST /free') {
+      send(res, 200);
+      // Real ComfyUI applies /free asynchronously (its prompt worker picks it up on its next wake-up); mimic
+      // that with a delay so tests can exercise ComfyClient.prepareFor's poll-until-dropped wait.
+      void this.delayMs(this.freeDelayMs).then(() => { this.torchVramTotal = 0; });
+      return;
+    }
+    if (route === 'POST /interrupt' || route === 'POST /queue') return send(res, 200);
     return send(res, 404, { error: `fake comfy has no route ${route}` });
   }
 

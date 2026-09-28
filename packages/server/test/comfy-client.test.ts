@@ -170,6 +170,43 @@ describe('ComfyClient helpers', () => {
   });
 });
 
+describe('ComfyClient.prepareFor', () => {
+  it('does not free on the first call, nor on repeat calls with the same family', async () => {
+    await client.prepareFor('sdxl');
+    await client.prepareFor('sdxl');
+    expect(fake.calls.filter((c) => c.path === '/free')).toHaveLength(0);
+  });
+
+  it('frees once and waits for the reported VRAM to drop when the family changes', async () => {
+    fake.torchVramTotal = 14e9;
+    fake.freeDelayMs = 60;
+    await client.prepareFor('sdxl');
+    const before = Date.now();
+    await client.prepareFor('qwen');
+    const elapsed = Date.now() - before;
+    expect(fake.calls.filter((c) => c.path === '/free')).toHaveLength(1);
+    // pollMs is 20 here; the fake only drops torchVramTotal after 60ms, so prepareFor must have polled at
+    // least a couple of times before returning.
+    expect(elapsed).toBeGreaterThanOrEqual(40);
+    expect(fake.torchVramTotal).toBe(0);
+    const statsCalls = fake.calls.filter((c) => c.path === '/system_stats');
+    expect(statsCalls.length).toBeGreaterThan(0);
+  });
+
+  it('does not free again on a third call with the same (new) family', async () => {
+    await client.prepareFor('sdxl');
+    await client.prepareFor('qwen');
+    await client.prepareFor('qwen');
+    expect(fake.calls.filter((c) => c.path === '/free')).toHaveLength(1);
+  });
+
+  it('never throws when ComfyUI becomes unreachable during the wait (G2)', async () => {
+    await client.prepareFor('sdxl');
+    await fake.close();
+    await expect(client.prepareFor('qwen')).resolves.toBeUndefined();
+  });
+});
+
 describe('ComfyClient history polling', () => {
   // FakeComfy's /history/<id> route always answers 200 (with {} for an unknown id), so an unexpected
   // status can't be produced through it. This uses a bare HTTP stand-in to exercise the guard directly.

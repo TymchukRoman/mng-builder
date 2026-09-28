@@ -64,6 +64,7 @@ export async function generateImage(deps: GenerateDeps, req: GenerateRequest, ct
 
   await comfy.ensureServer((label) => ctx.progress(label));
   await gpu.acquire('comfy');
+  await comfy.prepareFor(recipe.family);
 
   const upload = (imageId: string): Promise<string> => comfy.uploadImage(store.files.abs(store.images.require(imageId).path));
   if (req.refImageIds.length > 0 || req.control !== null || req.initImageId !== null) ctx.progress('Uploading images');
