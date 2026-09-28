@@ -1,0 +1,35 @@
+.app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+.app-main { flex: 1; min-height: 0; overflow: auto; }
+.app-main:has(> .editor) { overflow: hidden; }
+
+.topbar {
+  flex: none; display: flex; align-items: center; gap: var(--sp-2);
+  height: var(--topbar-h); padding: 0 var(--sp-3) 0 var(--sp-4);
+  background: var(--surface); border-bottom: 1px solid var(--border-1);
+}
+.topbar__brand { display: inline-flex; align-items: center; gap: var(--sp-2); color: var(--text-1); padding: 4px; border-radius: var(--r-sm); }
+.topbar__brand:hover { background: var(--hover-wash); }
+.topbar__conn { margin-right: var(--sp-2); }
+.logo { color: var(--accent); }
+
+.engine-switch { display: inline-flex; align-items: center; gap: var(--sp-2); margin-right: var(--sp-2); }
+.status-dot { width: 8px; height: 8px; border-radius: var(--r-full); background: var(--text-disabled); flex: none; }
+.status-dot--ok { background: var(--ok); }
+.status-dot--down { background: var(--danger); }
+.status-dot--paused { background: var(--warn); }
+
+.jobs-indicator--busy svg { animation: mb-spin 0.9s linear infinite; }
+.jobs-popover { width: 360px; }
+.job-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-half); }
+.job-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); min-height: var(--control-h); padding: var(--sp-half) var(--sp-1); border-radius: var(--r-sm); font-size: var(--fs-sm); color: var(--text-2); }
+.job-row:hover { background: var(--hover-wash); }
+.job-row .status-loader { flex: 1; }
+.job-row__icon { flex: none; }
+.job-row__label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.job-row--succeeded .job-row__icon { color: var(--ok); }
+.job-row--failed .job-row__icon { color: var(--danger); }
+.job-row--failed .job-row__label { color: var(--text-1); }
+
+.banner { flex: none; display: flex; align-items: center; gap: var(--sp-2); padding: 6px var(--sp-4); font-size: var(--fs-sm); border-bottom: 1px solid var(--border-1); }
+.banner--warn { background: color-mix(in oklab, var(--warn) 14%, var(--surface)); color: var(--text-1); }
+.banner--warn svg { color: var(--warn); }
