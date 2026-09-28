@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { ApiErrorBody, Image, JobRef, JobRefs, Panel, RecipeInfo } from '@manga/shared';
+import type { ApiErrorBody, Image, Job, JobRef, JobRefs, Panel, RecipeInfo } from '@manga/shared';
 import { pngSize } from '../src/imaging/png-size.js';
 import { startM2TestServer, type M2TestServer } from './helpers/m2-server.js';
 import { giveRefs, seedCharacter, seedManga } from './helpers/seed.js';
@@ -103,6 +103,27 @@ describe('M2 routes', () => {
     expect(long.status).toBe(400);
     expect(long.body.error.code).toBe('validation');
     expect((await s.api('POST', `/api/characters/${aiko.id}/suggest-appearance`, { description: 'x'.repeat(4000) })).status).toBe(200);
+  });
+
+  it('cancelling a running panel generate takes its prompt out of ComfyUI: /queue delete and /interrupt (M11)', async () => {
+    const { panels } = seedManga(s.deps.store);
+    const panelId = panels[0]!.id;
+    s.fake.completionDelayMs = 5_000;
+    const jobId = (await s.api<JobRef>('POST', `/api/panels/${panelId}/generate`, {})).body.jobId;
+    for (let i = 0; i < 300 && s.fake.promptIds.length === 0; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+    const promptId = s.fake.promptIds[0]!;
+    expect(s.deps.store.jobs.require(jobId).status).toBe('running');
+
+    const cancelled = await s.api<Job>('POST', `/api/jobs/${jobId}/cancel`);
+    expect(cancelled.body.status).toBe('cancelled');
+    const cancelCalls = (): number => s.fake.calls.filter((c) =>
+      (c.path === '/queue' && c.method === 'POST' && JSON.stringify(c.body) === JSON.stringify({ delete: [promptId] }))
+      || (c.path === '/interrupt' && JSON.stringify(c.body) === JSON.stringify({ prompt_id: promptId }))).length;
+    for (let i = 0; i < 200 && cancelCalls() < 2; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(s.fake.calls).toContainEqual({ method: 'POST', path: '/queue', body: { delete: [promptId] } });
+    expect(s.fake.calls).toContainEqual({ method: 'POST', path: '/interrupt', body: { prompt_id: promptId } });
+    expect(s.deps.store.jobs.require(jobId).status).toBe('cancelled');
+    expect(s.deps.store.images.listByOwner('panel', panelId)).toEqual([]);
   });
 
   it('answers 404 for unknown ids', async () => {

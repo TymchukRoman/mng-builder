@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Job } from '@manga/shared';
+import { QuotaExceededError } from '../src/engines/errors.js';
 import { EventBus } from '../src/events/bus.js';
 import { PermanentError, TransientError } from '../src/jobs/errors.js';
 import { GpuArbiter } from '../src/jobs/gpu.js';
@@ -258,6 +259,30 @@ describe('JobQueue', () => {
       gate.resolve();
     }
     await q.waitFor(running.id);
+  });
+
+  it('re-queues a job that ran out of Claude quota and runs it once the lane resumes (M11)', async () => {
+    const q = makeQueue();
+    let calls = 0;
+    q.register('llm.step', async (ctx) => {
+      calls += 1;
+      if (calls === 1) {
+        // What ClaudeEngine's onRateLimit does (modules/services.ts), then the error it throws.
+        ctx.queue.pauseLane('claude', null, 'Claude quota exhausted');
+        throw new QuotaExceededError(null);
+      }
+      return 'after reset';
+    });
+    q.start();
+    const job = q.enqueue({ kind: 'llm.step', lane: 'claude', payload: null });
+    await vi.waitFor(() => expect(t.store.jobs.require(job.id)).toMatchObject({ status: 'queued', attempts: 1 }));
+    expect(t.store.jobs.require(job.id).error).toBe('Claude quota exhausted');
+    await sleep(60); // well past the 10 ms test backoff: only the pause holds it now
+    expect(calls).toBe(1);
+    expect(t.store.jobs.require(job.id).status).toBe('queued');
+    q.resumeLane('claude');
+    expect(await q.waitFor(job.id)).toMatchObject({ status: 'succeeded', attempts: 2, result: 'after reset' });
+    expect(calls).toBe(2);
   });
 
   it('re-queues jobs left running by a crash when it starts', async () => {

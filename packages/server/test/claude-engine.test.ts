@@ -162,6 +162,17 @@ describe('ClaudeEngine', () => {
     expect(seen).toEqual([['2100-01-01T00:00:00.000Z', 'Claude quota exhausted (five_hour window)']]);
   });
 
+  it('turns a generic child failure (non-zero exit, no quota or login marker) into a TransientError (M11)', async () => {
+    const seen: unknown[] = [];
+    const { engine } = makeEngine('crash', { onRateLimit: (at) => { seen.push(at); } });
+    const err = await engine.completeJson(req).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TransientError);
+    expect(err).not.toBeInstanceOf(QuotaExceededError);
+    expect((err as Error).message).toMatch(/^claude failed \(exit 1\): /);
+    expect((err as Error).message).toContain('API Error: 500');
+    expect(seen).toEqual([]); // no lane pause for an ordinary failure
+  });
+
   it('explains how to log in when the CLI is signed out', async () => {
     const { engine } = makeEngine(fixture('not-logged-in'));
     const err = await engine.completeJson(req).catch((e: unknown) => e);

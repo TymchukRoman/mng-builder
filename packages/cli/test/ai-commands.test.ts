@@ -69,6 +69,18 @@ describe('manga panel …', () => {
     expect(panel.seed).toBe(11);
   });
 
+  it('panel generate --wait exits 1 and prints the failure when the job fails (F14, M11)', async () => {
+    const { panels } = seedManga(s.deps.store);
+    s.fake.failNext = 'mat1 and mat2 shapes cannot be multiplied';
+    const err = await program(ctx).parseAsync(['--json', '--wait', 'panel', 'generate', panels[0]!.id], { from: 'user' }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ name: 'CliError', exitCode: 1, message: '1 job(s) did not succeed' });
+    const jobs = outputs[0] as Job[];
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({ kind: 'image.generate', status: 'failed' });
+    expect(jobs[0]!.error).toContain('mat1 and mat2 shapes cannot be multiplied');
+    expect(describeJob(jobs[0]!)).toBe(`${jobs[0]!.id}  failed  ${jobs[0]!.error}`);
+  });
+
   it('without --wait prints the job ids', async () => {
     const { panels } = seedManga(s.deps.store);
     await program(ctx).parseAsync(['--json', 'panel', 'generate', panels[0]!.id], { from: 'user' });

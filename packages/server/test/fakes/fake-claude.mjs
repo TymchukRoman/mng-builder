@@ -1,4 +1,5 @@
-// Stands in for the `claude` binary in tests: node fake-claude.mjs <fixture|hang|logged-in|logged-out> <record.json> ...claudeArgs
+// Stands in for the `claude` binary in tests: node fake-claude.mjs <fixture|hang|crash|logged-in|logged-out> <record.json> ...claudeArgs
+// crash: reports an empty toolset, then fails with a generic error on stderr and exit code 1 (no result event).
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 
 const [, , fixture = '', record = '', ...args] = process.argv;
@@ -42,6 +43,13 @@ process.stdin.on('end', () => {
   writeRecordAtomically({ ...baseRecord(), stdin });
   if (fixture === 'hang') {
     setInterval(() => {}, 1_000);
+    return;
+  }
+  if (fixture === 'crash') {
+    const init = { type: 'system', subtype: 'init', cwd: process.cwd(), session_id: '00000000-0000-4000-8000-000000000009', tools: [], mcp_servers: [] };
+    process.stdout.write(`${JSON.stringify(init)}\n`, () => {
+      process.stderr.write('API Error: 500 {"type":"error","error":{"type":"api_error","message":"Internal server error"}}\n', () => process.exit(1));
+    });
     return;
   }
   process.stdout.write(readFileSync(fixture, 'utf8'));
