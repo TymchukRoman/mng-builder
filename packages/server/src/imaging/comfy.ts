@@ -442,6 +442,11 @@ export class ComfyClient {
   }
 
   private async cancelPrompt(promptId: string): Promise<void> {
+    // R3: a prompt whose history already reached a terminal state (it finished or errored on its own, e.g. while
+    // this call raced a different failure) must not be cancelled or interrupted again — on an older ComfyUI that
+    // ignores prompt_id, /interrupt with no argument stops whatever is running, which could be another client's
+    // run on the shared server.
+    if (await this.isFinished(promptId)) return;
     try {
       await fetch(`${this.url}/queue`, {
         method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ delete: [promptId] }), signal: AbortSignal.timeout(5_000),
@@ -450,6 +455,18 @@ export class ComfyClient {
       // best effort
     }
     await this.interrupt(promptId);
+  }
+
+  /** Best-effort: true when ComfyUI's history already holds a terminal entry (completed or errored) for
+   *  `promptId`. Any failure to read it counts as "not known to be finished", so cancelPrompt still runs as
+   *  before — this only ever makes cancellation *more* conservative, never less. */
+  private async isFinished(promptId: string): Promise<boolean> {
+    try {
+      const entry = await this.historyEntry(promptId, undefined);
+      return entry !== undefined && (entry.status?.completed === true || entry.status?.status_str === 'success' || entry.status?.status_str === 'error');
+    } catch {
+      return false;
+    }
   }
 
   /** Progress only; completion is decided by /history, so a missing socket costs labels, not results. */

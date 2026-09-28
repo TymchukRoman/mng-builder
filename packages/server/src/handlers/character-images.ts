@@ -107,9 +107,12 @@ export async function generateSlot(
 }
 
 /**
- * The `character.refs` job: fullbody → side → back in one job. A retry (M6) keeps the views an earlier attempt of
- * this same job already made — a slot whose ref points at an image created since the job was queued — so it redoes
- * only the failed view and after, instead of regenerating the full body and leaving duplicate variants.
+ * The `character.refs` job: fullbody → side → back in one job. A retry (M6/R3) keeps the views an earlier attempt
+ * of this same job already made — a slot whose ref points at an image created since the job was queued — so it
+ * redoes only the failed view and after, instead of regenerating the full body and leaving duplicate variants.
+ * The skip only applies on a retry (`ctx.job.attempts > 1`): otherwise a second `character.refs` job queued before
+ * the first one runs (e.g. a double-click on "sheet") would see the first job's freshly-made images and wrongly
+ * treat them as its own earlier attempt, silently doing nothing.
  */
 export async function generateCharacterRefs(
   ctx: JobContext, services: HandlerServices, p: CharacterRefsPayload,
@@ -119,7 +122,7 @@ export async function generateCharacterRefs(
   for (const [index, slot] of slots.entries()) {
     const refId = ctx.store.characters.require(p.characterId).refs[slot];
     const made = refId ? ctx.store.images.get(refId) : null;
-    if (made && made.createdAt >= ctx.job.createdAt) {
+    if (ctx.job.attempts > 1 && made && made.createdAt >= ctx.job.createdAt) {
       imageIds.push(made.id);
       continue;
     }

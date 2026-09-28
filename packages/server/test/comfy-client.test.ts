@@ -140,6 +140,14 @@ describe('ComfyClient.run', () => {
     expect(fake.calls.filter((c) => c.method === 'POST' && c.path === '/queue')).toHaveLength(before); // never queued
   });
 
+  it('does not cancel or interrupt a prompt whose history already reached a terminal state (R3)', async () => {
+    fake.failNext = 'boom'; // the run errors on its own, before anything asks to cancel it
+    await expect(client.run(miniGraph())).rejects.toThrow('boom');
+    const id = fake.promptIds[0]!;
+    expect(fake.calls).not.toContainEqual({ method: 'POST', path: '/queue', body: { delete: [id] } });
+    expect(fake.calls).not.toContainEqual({ method: 'POST', path: '/interrupt', body: { prompt_id: id } });
+  });
+
   it('cancels only its own prompt', async () => {
     fake.completionDelayMs = 5_000;
     const controller = new AbortController();

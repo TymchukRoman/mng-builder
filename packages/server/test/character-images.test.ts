@@ -161,6 +161,7 @@ describe('character images', () => {
     const oldBody = giveRefs(lib.store, lib.store.characters.require(aiko.id), ['fullbody']).refs.fullbody!; // before this job
     await new Promise((resolve) => setTimeout(resolve, 5));
     const { ctx: jobCtx } = jobContext(lib.store, 'character.refs', { characterId: aiko.id });
+    jobCtx.job.attempts = 1; // real queue: attempts becomes 1 when a job is first claimed and run
     const originalProgress = jobCtx.progress;
     let failed = false;
     jobCtx.progress = (label, value, max) => {
@@ -175,11 +176,32 @@ describe('character images', () => {
     expect(fullbody).not.toBe(oldBody); // an older full body from before the job is regenerated...
     expect(fake.graphs).toHaveLength(2);
 
+    jobCtx.job.attempts = 2; // R3: the skip only applies on a retry — real queue increments attempts on reclaim
     const retry = await generateCharacterRefs(jobCtx, services, { characterId: aiko.id }); // attempt 2, same job
     expect(retry.imageIds[0]).toBe(fullbody); // ...but this job's own full body is kept
     expect(fake.graphs).toHaveLength(4); // side + back only
     expect(lib.store.images.listByOwner('character', aiko.id).filter((i) => i.role === 'fullbody')).toHaveLength(2);
     expect(lib.store.characters.require(aiko.id).refs).toEqual({ portrait: aiko.refs.portrait, fullbody, side: retry.imageIds[1], back: retry.imageIds[2] });
+  });
+
+  it('a second character.refs job queued before the first one runs regenerates the views instead of skipping them (R3)', async () => {
+    const { manga } = seedManga(lib.store);
+    const aiko = giveRefs(lib.store, seedCharacter(lib.store, manga.id, 'Aiko', '1girl'), ['portrait']);
+    const jobA = jobContext(lib.store, 'character.refs', { characterId: aiko.id });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const jobB = jobContext(lib.store, 'character.refs', { characterId: aiko.id }); // queued right after A, before A runs
+    jobA.ctx.job.attempts = 1;
+    jobB.ctx.job.attempts = 1; // its own first attempt — not a retry of A, even though A's images postdate it
+
+    const resultA = await generateCharacterRefs(jobA.ctx, services, { characterId: aiko.id });
+    expect(fake.graphs).toHaveLength(3);
+
+    const resultB = await generateCharacterRefs(jobB.ctx, services, { characterId: aiko.id });
+    expect(fake.graphs).toHaveLength(6); // none of A's views (all created after B was queued) were skipped
+    expect(resultB.imageIds).not.toEqual(resultA.imageIds);
+    expect(lib.store.characters.require(aiko.id).refs).toEqual({
+      portrait: aiko.refs.portrait, fullbody: resultB.imageIds[0], side: resultB.imageIds[1], back: resultB.imageIds[2],
+    });
   });
 
   it('rejects and emits no character-updated event when the character is deleted mid-generation', async () => {
