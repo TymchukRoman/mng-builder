@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { ComfyGraph } from '../imaging/comfy-graph.js';
-import { pngSize } from '../imaging/png-size.js';
+import { readImageMeta } from '../files/image-meta.js';
 import { encodeSolidPng } from './png.js';
 
 export interface FakeComfyCall { method: string; path: string; body: unknown }
@@ -65,14 +65,18 @@ const KNOWN_CLASSES = [
   'UpscaleModelLoader', 'ImageUpscaleWithModel', 'ImageScaleBy',
 ];
 
-/** The size a real run of `graph` would produce: the empty-latent size, else the loaded image × upscalers. */
+/** The size a real run of `graph` would produce: the empty-latent size, else the loaded image × upscalers.
+ *  Inputs are sized from their PNG or JPEG header (uploads keep the user's bytes, M8); anything else throws. */
 export function fakeOutputSize(graph: ComfyGraph, uploads: ReadonlyMap<string, Uint8Array>): { width: number; height: number } {
   const nodes = Object.values(graph);
   const latent = nodes.find((n) => LATENTS.has(n.class_type));
   if (latent) return { width: Number(latent.inputs['width']), height: Number(latent.inputs['height']) };
   const load = nodes.find((n) => n.class_type === 'LoadImage');
-  const bytes = load ? uploads.get(String(load.inputs['image'])) : undefined;
-  let { width, height } = bytes ? pngSize(bytes) : { width: 512, height: 512 };
+  const name = String(load?.inputs['image'] ?? '');
+  const bytes = load ? uploads.get(name) : undefined;
+  const meta = bytes ? readImageMeta(bytes) : null;
+  if (bytes && !meta) throw new Error(`LoadImage ${name}: not a PNG or JPEG image`);
+  let { width, height } = meta ?? { width: 512, height: 512 };
   if (nodes.some((n) => n.class_type === 'ImageUpscaleWithModel')) {
     width *= 4;
     height *= 4;
@@ -262,7 +266,22 @@ class FakeComfyServer implements FakeComfy {
       return;
     }
     this.active.add(id);
-    void this.execute(id, b.prompt, b.client_id ?? '').finally(() => this.active.delete(id));
+    // M8: a run that throws (e.g. an input it cannot size) ends as an execution_error, like a real node failure,
+    // instead of an unhandled rejection that takes the whole fakes server down.
+    const clientId = b.client_id ?? '';
+    void this.execute(id, b.prompt, clientId)
+      .catch((err: unknown) => this.recordCrash(id, clientId, err))
+      .finally(() => this.active.delete(id));
+  }
+
+  private recordCrash(id: string, clientId: string, err: unknown): void {
+    if (this.closed) return;
+    const error = {
+      prompt_id: id, node_id: '?', node_type: '?',
+      exception_message: err instanceof Error ? err.message : String(err), exception_type: err instanceof Error ? err.name : 'Error',
+    };
+    this.history.set(id, { prompt: [], outputs: {}, status: { status_str: 'error', completed: false, messages: [['execution_error', error]] } });
+    this.emit(clientId, 'execution_error', error);
   }
 
   private writeToDataDir(kind: 'input' | 'output', key: string, bytes: Uint8Array): void {

@@ -3,6 +3,7 @@ import { encodeSolidPng } from '../src/dev/png.js';
 import { pngSize } from '../src/imaging/png-size.js';
 import type { ComfyGraph } from '../src/imaging/comfy-graph.js';
 import { fakeOutputSize, startFakeComfy, type FakeComfy } from './fakes/fake-comfy.js';
+import { makeJpegHeader } from './helpers/png.js';
 
 let fake: FakeComfy | null = null;
 afterEach(async () => { await fake?.close(); fake = null; });
@@ -23,7 +24,41 @@ describe('fakeOutputSize', () => {
   });
 });
 
+describe('fakeOutputSize with JPEG inputs (M8)', () => {
+  it('sizes an uploaded JPEG like a PNG', () => {
+    const uploads = new Map([['manga-builder/j.png', new Uint8Array(makeJpegHeader(120, 90))]]);
+    expect(fakeOutputSize({
+      '1': { class_type: 'LoadImage', inputs: { image: 'manga-builder/j.png' } },
+      '2': { class_type: 'ImageUpscaleWithModel', inputs: { image: ['1', 0] } },
+    }, uploads)).toEqual({ width: 480, height: 360 });
+  });
+});
+
 describe('FakeComfy', () => {
+  it('records a run that throws as an execution_error instead of crashing the fakes server (M8)', async () => {
+    fake = await startFakeComfy();
+    const form = new FormData();
+    form.append('image', new Blob([new TextEncoder().encode('not an image')], { type: 'image/png' }), 'bad.png');
+    form.append('subfolder', 'manga-builder');
+    await fetch(`${fake.url}/upload/image`, { method: 'POST', body: form });
+    const graph: ComfyGraph = {
+      '1': { class_type: 'LoadImage', inputs: { image: 'manga-builder/bad.png' } },
+      '2': { class_type: 'SaveImage', inputs: { images: ['1', 0], filename_prefix: 't' } },
+    };
+    await fetch(`${fake.url}/prompt`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: graph, prompt_id: 'bad-1' }) });
+    type Entry = { status: { status_str: string; messages: Array<[string, Record<string, unknown>]> } };
+    let history: Record<string, Entry> = {};
+    for (let i = 0; i < 100 && !history['bad-1']; i++) {
+      history = (await (await fetch(`${fake.url}/history/bad-1`)).json()) as typeof history;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(history['bad-1']!.status.status_str).toBe('error');
+    const [type, error] = history['bad-1']!.status.messages[0]!;
+    expect(type).toBe('execution_error');
+    expect(String(error['exception_message'])).toContain('not a PNG or JPEG');
+    expect((await fetch(`${fake.url}/system_stats`)).status).toBe(200);
+  });
+
   it('runs a prompt to a PNG of the latent size and records the graph', async () => {
     fake = await startFakeComfy();
     const graph: ComfyGraph = {

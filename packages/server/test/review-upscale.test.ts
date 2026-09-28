@@ -1,16 +1,19 @@
 import { readdirSync } from 'node:fs';
+import { newId } from '@manga/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { reviewImage } from '../src/handlers/review.js';
 import { upscaleImage } from '../src/handlers/upscale.js';
 import { InvalidOutputError } from '../src/engines/errors.js';
 import { ComfyClient } from '../src/imaging/comfy.js';
 import { nodesOf } from '../src/imaging/comfy-graph.js';
+import { createImageWithId } from '../src/imaging/image-row.js';
 import { loadPrompt } from '../src/prompts/load.js';
 import { NotFoundError } from '../src/store/index.js';
 import { startFakeComfy, type FakeComfy } from './fakes/fake-comfy.js';
 import { handlerServices } from './helpers/handler-services.js';
 import { jobContext } from './helpers/job-context.js';
 import { openTestLibrary, type TestLibrary } from './helpers/library.js';
+import { makeJpegHeader } from './helpers/png.js';
 import { giveRefs, seedCharacter, seedImage, seedManga, updatePanel } from './helpers/seed.js';
 
 let lib: TestLibrary;
@@ -122,6 +125,20 @@ describe('image.upscale', () => {
     expect(nodesOf(fake.graphs[0]!, 'ImageScaleBy')).toHaveLength(0);
     expect(events).toContainEqual({ type: 'entity', entity: 'image', id: image.id, op: 'created', mangaId: manga.id });
     expect(events.filter((e) => e.type === 'entity' && e.entity === 'image' && e.op === 'created')).toHaveLength(1);
+  });
+
+  it('upscales an uploaded JPEG (stored as .png) under the fakes (M8)', async () => {
+    const services = handlerServices(lib.store, comfy);
+    const { manga, panels } = seedManga(lib.store);
+    const id = newId('im');
+    const path = lib.store.files.writeImage(manga.id, id, makeJpegHeader(100, 80));
+    const jpeg = createImageWithId(lib.store, id, {
+      mangaId: manga.id, ownerType: 'panel', ownerId: panels[0]!.id, role: null, path, width: 100, height: 80,
+      source: 'uploaded', parentImageId: null, gen: null, review: null,
+    });
+    const { ctx } = jobContext(lib.store, 'image.upscale', { imageId: jpeg.id, factor: 2 });
+    const result = await upscaleImage(ctx, services, { imageId: jpeg.id, factor: 2 });
+    expect(lib.store.images.require(result.imageId)).toMatchObject({ width: 200, height: 160, source: 'upscaled', parentImageId: jpeg.id });
   });
 
   it('rejects and leaves nothing behind when the owner is deleted mid-upscale', async () => {
