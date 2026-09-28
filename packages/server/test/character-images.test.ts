@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { generateCharacterRefs, generatePortrait, generateSlot } from '../src/handlers/character-images.js';
+import { BW_VIEW_STYLE, VIEW_INSTRUCTION, generateCharacterRefs, generatePortrait, generateSlot } from '../src/handlers/character-images.js';
 import { ComfyClient } from '../src/imaging/comfy.js';
 import { nodesOf, type Link } from '../src/imaging/comfy-graph.js';
 import { PermanentError } from '../src/jobs/index.js';
@@ -103,6 +103,25 @@ describe('character images', () => {
     expect((err as Error).message).toBe("Aiko has no full-body reference yet: generate the sheet's full-body view first");
   });
 
+  it('B&W: side/back prompt drops the appearance tags and ends with the manga-ink style line', async () => {
+    const { manga } = seedManga(lib.store, { preset: 'manga-bw' });
+    const aiko = giveRefs(lib.store, seedCharacter(lib.store, manga.id, 'Aiko', '1girl, navy school uniform'), ['portrait', 'fullbody']);
+    const result = await generateSlot(ctx(), services, { characterId: aiko.id, slot: 'side' });
+    const prompt = lib.store.images.require(result.imageId).gen?.prompt ?? '';
+    expect(prompt).not.toContain('navy school uniform');
+    expect(prompt.endsWith(BW_VIEW_STYLE)).toBe(true);
+  });
+
+  it('colour: side/back prompt drops the appearance tags and gets no style sentence', async () => {
+    const { manga } = seedManga(lib.store, { preset: 'anime-color' });
+    const aiko = giveRefs(lib.store, seedCharacter(lib.store, manga.id, 'Aiko', '1girl, navy school uniform'), ['portrait', 'fullbody']);
+    const result = await generateSlot(ctx(), services, { characterId: aiko.id, slot: 'back' });
+    const prompt = lib.store.images.require(result.imageId).gen?.prompt ?? '';
+    expect(prompt).not.toContain('navy school uniform');
+    expect(prompt).not.toContain(BW_VIEW_STYLE);
+    expect(prompt).toBe(VIEW_INSTRUCTION.back);
+  });
+
   it('character.refs makes full body, side and back in order inside one job', async () => {
     const { manga } = seedManga(lib.store);
     const aiko = giveRefs(lib.store, seedCharacter(lib.store, manga.id, 'Aiko', '1girl, silver hair'), ['portrait']);
@@ -125,7 +144,10 @@ describe('character images', () => {
       expect(loadName(encode.inputs['image1'])).toBe(`manga-builder/${aiko.refs.portrait}.png`);
       expect(loadName(encode.inputs['image2'])).toBe(`manga-builder/${fullbody}.png`);
       expect(String(encode.inputs['prompt'])).toContain(view);
-      expect(String(encode.inputs['prompt'])).toContain('1girl, silver hair');
+      // Fix 2: the pictures carry the identity now, not the appearance tags; this manga is B&W (default
+      // preset 'manga-bw'), so the prompt ends with the manga-ink style line instead.
+      expect(String(encode.inputs['prompt'])).not.toContain('silver hair');
+      expect(String(encode.inputs['prompt']).endsWith(BW_VIEW_STYLE)).toBe(true);
     }
     const labels = progress.map((p) => p.label);
     expect(labels.some((l) => l.startsWith('Full body (1/3): '))).toBe(true);

@@ -16,6 +16,12 @@ export const VIEW_INSTRUCTION: Record<'side' | 'back', string> = {
   side: 'Show the same character as in picture 1 and picture 2: full body, standing, seen exactly from the side in right profile view, plain white background. Keep the face, hair, outfit and colours exactly as in the pictures.',
   back: 'Show the same character as in picture 1 and picture 2: full body, standing, seen from directly behind (back view, face not visible), plain white background. Keep the hair, outfit and colours exactly as in the pictures.',
 };
+/** Side/back views (qwen-edit-ref) already keep the look from the two reference pictures (VIEW_INSTRUCTION says
+ *  so); appending the appearance tags as text made Qwen follow the tags over the pictures instead (live evidence:
+ *  a B&W manga's navy-uniform tag turned the side/back views into flat colour anime instead of inked B&W). For a
+ *  B&W manga only, this one style sentence steers the drawing style itself (which the pictures, being SDXL/anime
+ *  renders, don't carry) without re-describing the character. */
+export const BW_VIEW_STYLE = 'Draw it as a black-and-white manga illustration: black ink lineart with screentone shading on white, in the same drawing style as the pictures.';
 export const SLOT_LABEL: Record<'fullbody' | 'side' | 'back', string> = { fullbody: 'Full body', side: 'Side view', back: 'Back view' };
 
 /** Recipes that can draw a character from tags alone (no reference image required) — candidates for the portrait's default. */
@@ -40,7 +46,7 @@ function slotSpec(ctx: JobContext, character: Character, manga: Manga, slot: Slo
   }
   const fullbody = usableImage(ctx, character.refs.fullbody);
   if (!fullbody) throw new PermanentError(`${character.name} has no full-body reference yet: generate the sheet's full-body view first`);
-  const prompt = [VIEW_INSTRUCTION[slot], nonEmpty(character.appearanceTags) ? `Character: ${character.appearanceTags}.` : ''].filter(nonEmpty).join(' ');
+  const prompt = [VIEW_INSTRUCTION[slot], manga.colorMode === 'bw' ? BW_VIEW_STYLE : ''].filter(nonEmpty).join(' ');
   return { recipe: 'qwen-edit-ref', prompt, negative: BASE_NEGATIVE, refImageIds: [portrait, fullbody], loras: [] };
 }
 
