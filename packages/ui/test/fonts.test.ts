@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { create } from 'fontkit';
 import { BUNDLED_FONTS } from '@manga/shared';
+import { excludeCodepoint } from '../scripts/fetch-fonts.mjs';
 
 const UI = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CSS_PATH = join(UI, 'src', 'styles', 'fonts.css');
@@ -44,7 +45,10 @@ function open(file: string) {
   return f;
 }
 
-const REQUIRED = [...'іїєґІЇЄҐ', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ', ...'abcdefghijklmnopqrstuvwxyz'];
+// U+2019 (’) is the apostrophe used in both English and Ukrainian text; it is a hard requirement like
+// the letters. U+02BC (ʼ, the modifier-letter apostrophe) is checked separately below: it must never be
+// falsely claimed by a unicode-range, but is not required to be present in every family.
+const REQUIRED = [...'іїєґІЇЄҐ', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ', ...'abcdefghijklmnopqrstuvwxyz', '’'];
 const faces = existsSync(CSS_PATH) ? parseFaces(readFileSync(CSS_PATH, 'utf8')) : [];
 
 describe('bundled fonts', () => {
@@ -76,4 +80,34 @@ describe('bundled fonts', () => {
       }
     });
   }
+
+  it('never claims U+02BC (modifier-letter apostrophe) without a glyph', () => {
+    const cp = 0x02bc;
+    for (const face of faces) {
+      if (!face.ranges.some(([lo, hi]) => cp >= lo && cp <= hi)) continue;
+      expect(open(face.file).hasGlyphForCodePoint(cp), `${face.file} (${face.family}) claims U+02BC without a glyph`).toBe(true);
+    }
+  });
+});
+
+describe('excludeCodepoint', () => {
+  it('splits an interior codepoint out of a range', () => {
+    expect(excludeCodepoint('U+0460-052F', 0x0491)).toBe('U+0460-0490, U+0492-052F');
+  });
+
+  it('trims the start edge of a range', () => {
+    expect(excludeCodepoint('U+0460-052F', 0x0460)).toBe('U+0461-052F');
+  });
+
+  it('trims the end edge of a range', () => {
+    expect(excludeCodepoint('U+0460-052F', 0x052f)).toBe('U+0460-052E');
+  });
+
+  it('empties a single-codepoint range', () => {
+    expect(excludeCodepoint('U+02BC', 0x02bc)).toBe('');
+  });
+
+  it('leaves an unrelated range untouched and only trims the matching one', () => {
+    expect(excludeCodepoint('U+0301, U+0490-0491, U+2116', 0x0490)).toBe('U+0301, U+0491, U+2116');
+  });
 });
