@@ -155,6 +155,33 @@ describe('character images', () => {
     expect(labels.some((l) => l.startsWith('Back view (3/3): '))).toBe(true);
   });
 
+  it('a retry of character.refs keeps the views an earlier attempt of the same job made (M6)', async () => {
+    const { manga } = seedManga(lib.store);
+    const aiko = giveRefs(lib.store, seedCharacter(lib.store, manga.id, 'Aiko', '1girl'), ['portrait']);
+    const oldBody = giveRefs(lib.store, lib.store.characters.require(aiko.id), ['fullbody']).refs.fullbody!; // before this job
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const { ctx: jobCtx } = jobContext(lib.store, 'character.refs', { characterId: aiko.id });
+    const originalProgress = jobCtx.progress;
+    let failed = false;
+    jobCtx.progress = (label, value, max) => {
+      if (label.startsWith('Side view') && !failed) {
+        failed = true;
+        fake.failNext = 'boom'; // attempt 1: the side view's run fails
+      }
+      originalProgress(label, value, max);
+    };
+    await expect(generateCharacterRefs(jobCtx, services, { characterId: aiko.id })).rejects.toThrow('boom');
+    const fullbody = lib.store.characters.require(aiko.id).refs.fullbody!;
+    expect(fullbody).not.toBe(oldBody); // an older full body from before the job is regenerated...
+    expect(fake.graphs).toHaveLength(2);
+
+    const retry = await generateCharacterRefs(jobCtx, services, { characterId: aiko.id }); // attempt 2, same job
+    expect(retry.imageIds[0]).toBe(fullbody); // ...but this job's own full body is kept
+    expect(fake.graphs).toHaveLength(4); // side + back only
+    expect(lib.store.images.listByOwner('character', aiko.id).filter((i) => i.role === 'fullbody')).toHaveLength(2);
+    expect(lib.store.characters.require(aiko.id).refs).toEqual({ portrait: aiko.refs.portrait, fullbody, side: retry.imageIds[1], back: retry.imageIds[2] });
+  });
+
   it('rejects and emits no character-updated event when the character is deleted mid-generation', async () => {
     const { manga } = seedManga(lib.store);
     const aiko = giveRefs(lib.store, seedCharacter(lib.store, manga.id, 'Aiko', '1girl'), ['portrait']);

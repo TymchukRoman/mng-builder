@@ -185,6 +185,7 @@ export class ComfyClient {
         say(classType === 'ImageUpscaleWithModel' ? 'Upscaling' : 'Sampling', d.value, d.max);
       }
     });
+    let accepted = false;
     try {
       say('Queued');
       const res = await this.request('/prompt', {
@@ -195,6 +196,7 @@ export class ComfyClient {
         throw new ComfyRejectedError(formatRejection(body), body);
       }
       if (!res.ok) throw new PermanentError(`ComfyUI answered ${res.status} on /prompt`);
+      accepted = true;
       const entry = await this.waitForHistory(promptId, signal);
       // I3: the PNG lives in the library now; ComfyUI's own copy is removed once downloaded (or given up on).
       const images = await this.fetchOutputs(entry, signal).finally(() => this.removeOutputs(entry));
@@ -205,6 +207,9 @@ export class ComfyClient {
         await this.cancelPrompt(promptId);
         throw abortError(signal);
       }
+      // M6: whatever failed after ComfyUI accepted the prompt, take it out of ComfyUI's queue before the job is
+      // retried, so a retry never runs next to (or after) the old prompt. A no-op for a prompt that already ended.
+      if (accepted) await this.cancelPrompt(promptId);
       throw err;
     } finally {
       socket?.close();

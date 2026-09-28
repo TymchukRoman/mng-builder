@@ -123,6 +123,23 @@ describe('ComfyClient.run', () => {
     expect(err).toBeInstanceOf(TransientError);
   });
 
+  it('cancels its prompt on any failure after ComfyUI accepted it, so a retry never double-queues (M6)', async () => {
+    fake.completionDelayMs = 3_000;
+    const run = client.run(miniGraph());
+    setTimeout(() => { fake.up = false; }, 150); // every route now answers 503: a transient failure mid-poll
+    const err = await run.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TransientError);
+    const id = fake.promptIds[0]!;
+    expect(fake.calls).toContainEqual({ method: 'POST', path: '/queue', body: { delete: [id] } });
+    expect(fake.calls).toContainEqual({ method: 'POST', path: '/interrupt', body: { prompt_id: id } });
+
+    fake.up = true;
+    fake.rejectNext = { error: { type: 'x', message: 'bad graph' }, node_errors: {} };
+    const before = fake.calls.filter((c) => c.method === 'POST' && c.path === '/queue').length;
+    await expect(client.run(miniGraph())).rejects.toBeInstanceOf(ComfyRejectedError);
+    expect(fake.calls.filter((c) => c.method === 'POST' && c.path === '/queue')).toHaveLength(before); // never queued
+  });
+
   it('cancels only its own prompt', async () => {
     fake.completionDelayMs = 5_000;
     const controller = new AbortController();

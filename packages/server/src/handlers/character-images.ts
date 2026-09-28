@@ -106,13 +106,23 @@ export async function generateSlot(
   return { imageId: image.id };
 }
 
-/** The `character.refs` job: fullbody → side → back in one job. */
+/**
+ * The `character.refs` job: fullbody → side → back in one job. A retry (M6) keeps the views an earlier attempt of
+ * this same job already made — a slot whose ref points at an image created since the job was queued — so it redoes
+ * only the failed view and after, instead of regenerating the full body and leaving duplicate variants.
+ */
 export async function generateCharacterRefs(
   ctx: JobContext, services: HandlerServices, p: CharacterRefsPayload,
 ): Promise<CharacterRefsResult> {
   const slots = ['fullbody', 'side', 'back'] as const;
   const imageIds: string[] = [];
   for (const [index, slot] of slots.entries()) {
+    const refId = ctx.store.characters.require(p.characterId).refs[slot];
+    const made = refId ? ctx.store.images.get(refId) : null;
+    if (made && made.createdAt >= ctx.job.createdAt) {
+      imageIds.push(made.id);
+      continue;
+    }
     const step: JobContext = {
       ...ctx,
       progress: (label, value, max) => ctx.progress(`${SLOT_LABEL[slot]} (${index + 1}/${slots.length}): ${label}`, value, max),
