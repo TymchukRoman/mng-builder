@@ -7,7 +7,7 @@
   height: var(--topbar-h); padding: 0 var(--sp-3) 0 var(--sp-4);
   background: var(--surface); border-bottom: 1px solid var(--border-1);
 }
-.topbar__brand { display: inline-flex; align-items: center; gap: var(--sp-2); color: var(--text-1); padding: 4px; border-radius: var(--r-sm); }
+.topbar__brand { display: inline-flex; align-items: center; gap: var(--sp-2); color: var(--text-1); padding: var(--sp-1); border-radius: var(--r-sm); }
 .topbar__brand:hover { background: var(--hover-wash); }
 .topbar__conn { margin-right: var(--sp-2); }
 .logo { color: var(--accent); }
