@@ -13,6 +13,11 @@ describe('reorder', () => {
     expect(moveId(ids, 'b', 2)).toEqual(ids);
     expect(moveId(ids, 'zz', 0)).toEqual(ids);
   });
+  it('clamps out-of-range insertion indices', () => {
+    expect(moveId(ids, 'c', -1)).toEqual(['c', 'a', 'b', 'd']);
+    expect(moveId(ids, 'a', 99)).toEqual(['b', 'c', 'd', 'a']);
+    expect(moveId(ids, 'd', 99)).toEqual(ids);
+  });
   it('drops before or after an item by its midpoint', () => {
     expect(dropIndex(100, 40, 110, 3)).toBe(3);
     expect(dropIndex(100, 40, 130, 3)).toBe(4);

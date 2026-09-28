@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Box } from '@manga/shared';
-import { MIN_FRAME, canRotate, defaultTail, dragBox, hasTail, nudgeBox, rotationFromPointer } from '../src/editor/frameDrag';
+import { MIN_FRAME, canRotate, clampBox, defaultTail, dragBox, hasTail, moveFrame, nudgeBox, rotationFromPointer } from '../src/editor/frameDrag';
 import { isTypingTarget, keyAction } from '../src/editor/keys';
 
 function close(actual: Box, expected: Box): void {
@@ -29,6 +29,50 @@ describe('dragBox', () => {
   });
 });
 
+describe('page clamp', () => {
+  it('clampBox keeps the box on the page and caps its size', () => {
+    close(clampBox({ x: -0.2, y: 0.9, w: 0.3, h: 0.2 }), { x: 0, y: 0.8, w: 0.3, h: 0.2 });
+    close(clampBox({ x: 0.5, y: 0.5, w: 2, h: 3 }), { x: 0, y: 0, w: 1, h: 1 });
+    close(clampBox(start), start);
+  });
+  it('a move past each page edge stays on the page', () => {
+    close(dragBox(start, 'move', -1, 0), { x: 0, y: 0.1, w: 0.3, h: 0.2 });
+    close(dragBox(start, 'move', 5, 0), { x: 0.7, y: 0.1, w: 0.3, h: 0.2 });
+    close(dragBox(start, 'move', 0, -1), { x: 0.1, y: 0, w: 0.3, h: 0.2 });
+    close(dragBox(start, 'move', 0, 5), { x: 0.1, y: 0.8, w: 0.3, h: 0.2 });
+  });
+  it('a corner drag past the page edge is clamped and the opposite edge stays put', () => {
+    close(dragBox(start, 'nw', -1, -1), { x: 0, y: 0, w: 0.4, h: 0.3 });
+    close(dragBox(start, 'se', 5, 5), { x: 0.1, y: 0.1, w: 0.9, h: 0.9 });
+    close(dragBox(start, 'ne', 5, -1), { x: 0.1, y: 0, w: 0.9, h: 0.3 });
+    close(dragBox(start, 'sw', -1, 5), { x: 0, y: 0.1, w: 0.4, h: 0.9 });
+  });
+  it('nudges are clamped too', () => {
+    close(nudgeBox({ x: 0, y: 0, w: 0.3, h: 0.2 }, -10, -10, { w: 200, h: 400 }), { x: 0, y: 0, w: 0.3, h: 0.2 });
+    close(nudgeBox({ x: 0.7, y: 0.8, w: 0.3, h: 0.2 }, 10, 10, { w: 200, h: 400 }), { x: 0.7, y: 0.8, w: 0.3, h: 0.2 });
+  });
+  it('moveFrame moves the tail by the same delta as the box', () => {
+    const r = moveFrame({ box: start, tail: { x: 0.2, y: 0.4 } }, 0.05, -0.05);
+    close(r.box, { x: 0.15, y: 0.05, w: 0.3, h: 0.2 });
+    expect(r.tail?.x).toBeCloseTo(0.25, 9);
+    expect(r.tail?.y).toBeCloseTo(0.35, 9);
+  });
+  it('moveFrame translates the tail by the effective (post-clamp) delta', () => {
+    const right = moveFrame({ box: start, tail: { x: 0.2, y: 0.4 } }, 2, 0);
+    close(right.box, { x: 0.7, y: 0.1, w: 0.3, h: 0.2 });
+    expect(right.tail?.x).toBeCloseTo(0.8, 9);
+    expect(right.tail?.y).toBeCloseTo(0.4, 9);
+    const up = moveFrame({ box: start, tail: { x: 0.2, y: 0.4 } }, -1, -1);
+    close(up.box, { x: 0, y: 0, w: 0.3, h: 0.2 });
+    expect(up.tail?.x).toBeCloseTo(0.1, 9);
+    expect(up.tail?.y).toBeCloseTo(0.3, 9);
+  });
+  it('moveFrame keeps a null tail null', () => {
+    expect(moveFrame({ box: start, tail: null }, 0.1, 0.1).tail).toBeNull();
+    expect(moveFrame({ box: start, tail: null }, 5, 5).tail).toBeNull();
+  });
+});
+
 describe('rotation and tails', () => {
   it('measures clockwise degrees from straight up', () => {
     const c = { x: 0, y: 0 };
@@ -47,7 +91,7 @@ describe('rotation and tails', () => {
 });
 
 describe('keys', () => {
-  const k = (key: string, mods: Partial<{ ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }> = {}) =>
+  const k = (key: string, mods: Partial<{ ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; altKey: boolean }> = {}) =>
     keyAction({ key, ctrlKey: false, metaKey: false, shiftKey: false, ...mods });
   it('maps undo, redo, delete, escape', () => {
     expect(k('z', { ctrlKey: true })).toEqual({ type: 'undo' });
@@ -66,6 +110,11 @@ describe('keys', () => {
     expect(k('a')).toBeNull();
     expect(k('a', { ctrlKey: true })).toBeNull();
     expect(k('ArrowUp', { ctrlKey: true })).toBeNull();
+  });
+  it('leaves Alt combinations to the browser', () => {
+    expect(k('ArrowLeft', { altKey: true })).toBeNull();
+    expect(k('Delete', { altKey: true })).toBeNull();
+    expect(k('z', { ctrlKey: true, altKey: true })).toBeNull();
   });
   it('recognises typing targets', () => {
     expect(isTypingTarget({ tagName: 'INPUT' })).toBe(true);

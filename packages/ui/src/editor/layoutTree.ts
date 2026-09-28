@@ -19,6 +19,7 @@ export function areSiblings(tree: LayoutNode, a: string, b: string): boolean {
 export function ratioFromPointer(handle: { dir: SplitDir; parent: Rect }, p: { x: number; y: number }): number {
   const { parent } = handle;
   const raw = handle.dir === 'v' ? (p.x - parent.x) / parent.w : (p.y - parent.y) / parent.h;
+  if (Number.isNaN(raw)) return MIN_RATIO; // zero-size parent
   return Math.min(MAX_RATIO, Math.max(MIN_RATIO, raw));
 }
 

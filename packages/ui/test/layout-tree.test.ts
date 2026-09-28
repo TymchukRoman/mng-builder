@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_PAGE_FORMAT, PRESET_NAMES, presetPanelCount, type LayoutNode } from '@manga/shared';
+import { DEFAULT_PAGE_FORMAT, PRESET_NAMES, buildPreset, computeRects, mirrorLayout, presetPanelCount, type LayoutNode } from '@manga/shared';
 import { areSiblings, mergeState, newPanelId, pathKey, ratioFromPointer, splitState } from '../src/editor/layoutTree';
 import { presetRects } from '../src/editor/presets';
 import { PAGE_SELECTION, clickPanel, frameSelection, panelSelection, reconcileSelection, selectedPanelId } from '../src/editor/selection';
@@ -37,6 +37,11 @@ describe('layout tree helpers', () => {
     expect(ratioFromPointer({ dir: 'v', parent }, { x: -1, y: 0 })).toBe(0.08);
     expect(ratioFromPointer({ dir: 'h', parent }, { x: 0, y: 5 })).toBe(0.92);
   });
+  it('falls back to the minimum ratio for a zero-size parent', () => {
+    const flat = { x: 0.5, y: 0.5, w: 0, h: 0 };
+    expect(ratioFromPointer({ dir: 'v', parent: flat }, { x: 0.5, y: 0.5 })).toBe(0.08);
+    expect(ratioFromPointer({ dir: 'h', parent: flat }, { x: 0.5, y: 0.5 })).toBe(0.08);
+  });
   it('names paths and finds the panel a split created', () => {
     expect(pathKey([])).toBe('root');
     expect(pathKey(['b', 'a'])).toBe('ba');
@@ -49,6 +54,18 @@ describe('layout tree helpers', () => {
 describe('preset previews', () => {
   it('builds one rect per preset panel', () => {
     for (const name of PRESET_NAMES) expect(presetRects(name, 'ltr', DEFAULT_PAGE_FORMAT)).toHaveLength(presetPanelCount(name));
+  });
+  it('previews RTL as the mirror of the LTR tree, not the LTR rects', () => {
+    let differs = 0;
+    for (const name of PRESET_NAMES) {
+      let n = 0;
+      const ltr = buildPreset(name, 'ltr', () => `pv${n++}`);
+      const mirrored = computeRects(mirrorLayout(ltr), DEFAULT_PAGE_FORMAT).map((r) => r.rect);
+      const rtl = presetRects(name, 'rtl', DEFAULT_PAGE_FORMAT);
+      expect(rtl).toEqual(mirrored);
+      if (JSON.stringify(rtl) !== JSON.stringify(presetRects(name, 'ltr', DEFAULT_PAGE_FORMAT))) differs++;
+    }
+    expect(differs).toBeGreaterThan(0);
   });
 });
 

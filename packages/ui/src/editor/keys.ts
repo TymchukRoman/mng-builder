@@ -5,7 +5,8 @@ export type KeyAction =
   | { type: 'escape' }
   | { type: 'nudge'; dx: number; dy: number };
 
-export function keyAction(e: { key: string; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }): KeyAction | null {
+export function keyAction(e: { key: string; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; altKey?: boolean }): KeyAction | null {
+  if (e.altKey === true) return null; // Alt+Arrow stays browser navigation
   const mod = e.ctrlKey || e.metaKey;
   const key = e.key.toLowerCase();
   if (mod && key === 'z') return e.shiftKey ? { type: 'redo' } : { type: 'undo' };
