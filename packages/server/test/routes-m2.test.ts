@@ -96,6 +96,15 @@ describe('M2 routes', () => {
     expect((await s.api('POST', `/api/characters/${aiko.id}/suggest-appearance`, { description: '' })).status).toBe(400);
   });
 
+  it('bounds the appearance description at 4000 characters (M12)', async () => {
+    const { manga } = seedManga(s.deps.store);
+    const aiko = seedCharacter(s.deps.store, manga.id, 'Aiko');
+    const long = await s.api<ApiErrorBody>('POST', `/api/characters/${aiko.id}/suggest-appearance`, { description: 'x'.repeat(4001) });
+    expect(long.status).toBe(400);
+    expect(long.body.error.code).toBe('validation');
+    expect((await s.api('POST', `/api/characters/${aiko.id}/suggest-appearance`, { description: 'x'.repeat(4000) })).status).toBe(200);
+  });
+
   it('answers 404 for unknown ids', async () => {
     const res = await s.api<ApiErrorBody>('POST', '/api/panels/pn_missing0001/generate', {});
     expect(res.status).toBe(404);
