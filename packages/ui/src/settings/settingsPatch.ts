@@ -1,8 +1,8 @@
-import type { EngineName, RecipeInfo, ServiceState, Settings, SettingsPatch, Task } from '@manga/shared';
+import type { EngineName, RecipeInfo, ServiceState, ServiceStatus, Settings, SettingsPatch, Task } from '@manga/shared';
 import { generationRecipes } from '../lib/recipes';
 
 export type TaskChoice = 'default' | EngineName;
-export type SaveSettings = (patch: SettingsPatch) => void;
+export type SaveSettings = (patch: SettingsPatch, opts?: { onError?: () => void }) => void;
 
 export const TASKS: readonly Task[] = ['story', 'prompts', 'dialogue', 'review'];
 export const TASK_LABEL: Record<Task, string> = { story: 'Story', prompts: 'Image prompts', dialogue: 'Dialogue', review: 'Image review' };
@@ -49,7 +49,34 @@ export function modelValue(draft: string, current: string): string | null {
 }
 
 export type ServiceTone = 'ok' | 'down' | 'unknown';
-export function serviceView(state: ServiceState | undefined): { tone: ServiceTone; text: string } {
+export function serviceView(state: ServiceState | undefined, failed = false): { tone: ServiceTone; text: string } {
+  if (failed) return { tone: 'down', text: 'Server not reachable' };
   if (!state) return { tone: 'unknown', text: 'Checking' };
   return { tone: state.ok ? 'ok' : 'down', text: state.detail || (state.ok ? 'Ready' : 'Unavailable') };
+}
+
+/** Tooltip text for the services card header, or undefined until the first status arrives. */
+export function queueSummary(status: ServiceStatus | undefined): string | undefined {
+  return status ? `${status.queue.running} running, ${status.queue.queued} queued` : undefined;
+}
+
+/** Mirrors the server's `mergeSettings`: `engine.tasks` is replaced whole, every other section merges per key. */
+export function applySettingsPatch(base: Settings, patch: SettingsPatch): Settings {
+  return {
+    engine: { mode: patch.engine?.mode ?? base.engine.mode, tasks: patch.engine?.tasks ?? base.engine.tasks },
+    claude: { models: mergeDefined(base.claude.models, patch.claude?.models) },
+    ollama: mergeDefined(base.ollama, patch.ollama),
+    review: mergeDefined(base.review, patch.review),
+    routing: mergeDefined(base.routing, patch.routing),
+  };
+}
+
+/** Like the server's spread-merge after JSON: a key the patch leaves undefined keeps the base value. */
+function mergeDefined<T extends object>(base: T, patch: { [K in keyof T]?: T[K] | undefined } | undefined): T {
+  const out = { ...base };
+  for (const k of Object.keys(patch ?? {}) as Array<keyof T>) {
+    const v = patch?.[k];
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
 }

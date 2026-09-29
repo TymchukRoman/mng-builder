@@ -1,12 +1,12 @@
 import type { JSX } from 'react';
-import type { EngineName, Settings } from '@manga/shared';
+import type { EngineName, Settings, Task } from '@manga/shared';
 import { Field } from '../ui/Field';
 import { Segmented } from '../ui/Segmented';
-import { TASKS, TASK_LABEL, taskChoice, tasksPatch, type SaveSettings, type TaskChoice } from './settingsPatch';
+import { TASKS, TASK_LABEL, taskChoice, type SaveSettings, type TaskChoice } from './settingsPatch';
 
 const ENGINE_LABEL: Record<EngineName, string> = { claude: 'Claude', local: 'Local' };
 
-export function EngineSettings({ settings, save }: { settings: Settings; save: SaveSettings }): JSX.Element {
+export function EngineSettings({ settings, save, setTask }: { settings: Settings; save: SaveSettings; setTask(task: Task, choice: TaskChoice): void }): JSX.Element {
   return (
     <section className="settings-card">
       <h2>Text engine</h2>
@@ -17,7 +17,7 @@ export function EngineSettings({ settings, save }: { settings: Settings; save: S
       {TASKS.map((task) => (
         <Field key={task} label={TASK_LABEL[task]} inline>
           <select className="select select--compact" value={taskChoice(settings, task)}
-            onChange={(e) => save(tasksPatch(settings, task, e.target.value as TaskChoice))}>
+            onChange={(e) => setTask(task, e.target.value as TaskChoice)}>
             <option value="default">Default ({ENGINE_LABEL[settings.engine.mode]})</option>
             <option value="claude">Claude</option>
             <option value="local">Local</option>
