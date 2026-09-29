@@ -23,7 +23,7 @@ export function NewCharacterForm({ manga, onCreated }: { manga: Manga; onCreated
   });
   return (
     <form className="stack" onSubmit={(e) => { e.preventDefault(); const n = name.trim(); if (n) create.mutate({ name: n, role }); }}>
-      <Field label="Name"><input className="input" value={name} onChange={(e) => setName(e.target.value)} autoFocus /></Field>
+      <Field label="Name"><input className="input" value={name} onChange={(e) => setName(e.target.value)} data-autofocus /></Field>
       <Field label="Role" group><Segmented<Character['role']> label="Role" value={role} options={ROLE_OPTIONS} onChange={setRole} /></Field>
       <div className="form-actions">
         <IconButton type="submit" icon={Check} tone="primary" label="Create character" busy={create.isPending} disabled={!name.trim()} />

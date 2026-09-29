@@ -42,7 +42,7 @@ export function CreateMangaModal({ open, onClose, onCreated }: { open: boolean; 
     <Modal open={open} onClose={onClose} title="New manga">
       <form className="stack" onSubmit={submit}>
         <Field label="Title">
-          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
+          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} data-autofocus />
         </Field>
         <div className="form-row">
           <Field label="Language" group>

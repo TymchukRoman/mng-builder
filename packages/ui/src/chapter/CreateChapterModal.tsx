@@ -36,7 +36,7 @@ export function CreateChapterModal({ manga, open, onClose, onCreated }: { manga:
   return (
     <Modal open={open} onClose={close} title="New chapter">
       <form className="stack" onSubmit={(e) => { e.preventDefault(); const t = title.trim(); if (t) create.mutate({ title: t }); }}>
-        <Field label="Title"><input className="input" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus /></Field>
+        <Field label="Title"><input className="input" value={title} onChange={(e) => setTitle(e.target.value)} data-autofocus /></Field>
         <CreateChapterAiSection mangaId={manga.id} onChange={registerStart} />
         <div className="form-actions">
           <IconButton type="submit" icon={Check} tone="primary" label="Create chapter" busy={create.isPending} disabled={!title.trim()} />
