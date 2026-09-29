@@ -11,7 +11,7 @@ import { ArrowLeft, ArrowRight } from '../ui/icons';
 import { NumberField } from '../ui/NumberField';
 import { Segmented } from '../ui/Segmented';
 import { LoraEditor } from './LoraEditor';
-import { pageSizeLabel } from './mangaModel';
+import { pageSizeLabel, recipeOptions } from './mangaModel';
 import { usePatchManga } from './usePatchManga';
 
 type Margin = keyof PageFormat['marginsMm'];
@@ -59,7 +59,7 @@ export function MangaSettingsDrawer({ manga, open, onClose }: { manga: Manga; op
         <Field label="Recipe">
           {(recipes.data ?? []).length > 0 ? (
             <select className="select" value={sg.recipe} onChange={(e) => save(styleBody({ recipe: e.target.value }))}>
-              {(recipes.data ?? []).map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+              {recipeOptions(recipes.data, sg.recipe).map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
             </select>
           ) : (
             <AutoText label="Recipe" value={sg.recipe} onSave={(v) => (v.trim() ? saveAsync(styleBody({ recipe: v.trim() })) : undefined)} />

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_PAGE_FORMAT, type Chapter } from '@manga/shared';
-import { mangaBadges, pageSizeLabel, sortChapters, validLoras } from '../src/manga/mangaModel';
+import { DEFAULT_PAGE_FORMAT, type Chapter, type RecipeInfo } from '@manga/shared';
+import { applyMangaPatch, mangaBadges, pageSizeLabel, recipeOptions, sortChapters, validLoras } from '../src/manga/mangaModel';
 import { makeManga } from './fixtures';
 
 const chapter = (id: string, order: number, number: number): Chapter => ({
@@ -23,5 +23,18 @@ describe('manga model', () => {
   });
   it('shows the fixed page size and resolution on one line', () => {
     expect(pageSizeLabel(DEFAULT_PAGE_FORMAT)).toBe('182 × 257 mm · 300 dpi');
+  });
+  it('merges a patch into the manga and ignores undefined fields', () => {
+    const m = makeManga({ title: 'A', synopsis: 's' });
+    const next = applyMangaPatch(m, { title: 'B', synopsis: undefined, readingDirection: 'ltr' });
+    expect(next).toMatchObject({ title: 'B', synopsis: 's', readingDirection: 'ltr', language: 'en' });
+    expect(m.title).toBe('A');
+  });
+  it('offers generation recipes, plus the current one when it is not among them', () => {
+    const r = (id: string): RecipeInfo => ({ id, label: id.toUpperCase(), maxRefs: 0, requiresRefs: false, supportsPose: false, supportsLineart: false, supportsLoras: false, supportsInit: false });
+    const list = [r('anime'), r('anime-refine'), r('anima')];
+    expect(recipeOptions(list, 'anima')).toEqual([{ id: 'anime', label: 'ANIME' }, { id: 'anima', label: 'ANIMA' }]);
+    expect(recipeOptions(list, 'anime-refine').map((o) => o.id)).toEqual(['anime', 'anima', 'anime-refine']);
+    expect(recipeOptions(list, 'gone').at(-1)).toEqual({ id: 'gone', label: 'gone' });
   });
 });
