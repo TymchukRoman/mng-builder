@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Box } from '@manga/shared';
-import { MIN_FRAME, canRotate, clampBox, defaultTail, dragBox, hasTail, moveFrame, nudgeBox, rotationFromPointer } from '../src/editor/frameDrag';
+import { MIN_FRAME, canRotate, clampBox, defaultTail, dragBox, hasTail, moveFrame, rotationFromPointer } from '../src/editor/frameDrag';
 import { isTypingTarget, keyAction } from '../src/editor/keys';
 
 function close(actual: Box, expected: Box): void {
@@ -24,9 +24,6 @@ describe('dragBox', () => {
     close(dragBox(start, 'nw', 0.5, 0.5), { x: 0.38, y: 0.28, w: MIN_FRAME, h: MIN_FRAME });
     close(dragBox(start, 'se', -1, -1), { x: 0.1, y: 0.1, w: MIN_FRAME, h: MIN_FRAME });
   });
-  it('nudges by screen pixels', () => {
-    close(nudgeBox(start, 10, 10, { w: 200, h: 400 }), { x: 0.15, y: 0.125, w: 0.3, h: 0.2 });
-  });
 });
 
 describe('page clamp', () => {
@@ -46,10 +43,6 @@ describe('page clamp', () => {
     close(dragBox(start, 'se', 5, 5), { x: 0.1, y: 0.1, w: 0.9, h: 0.9 });
     close(dragBox(start, 'ne', 5, -1), { x: 0.1, y: 0, w: 0.9, h: 0.3 });
     close(dragBox(start, 'sw', -1, 5), { x: 0, y: 0.1, w: 0.4, h: 0.9 });
-  });
-  it('nudges are clamped too', () => {
-    close(nudgeBox({ x: 0, y: 0, w: 0.3, h: 0.2 }, -10, -10, { w: 200, h: 400 }), { x: 0, y: 0, w: 0.3, h: 0.2 });
-    close(nudgeBox({ x: 0.7, y: 0.8, w: 0.3, h: 0.2 }, 10, 10, { w: 200, h: 400 }), { x: 0.7, y: 0.8, w: 0.3, h: 0.2 });
   });
   it('moveFrame moves the tail by the same delta as the box', () => {
     const r = moveFrame({ box: start, tail: { x: 0.2, y: 0.4 } }, 0.05, -0.05);

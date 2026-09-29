@@ -286,4 +286,15 @@ describe('editor ops', () => {
     expect(page().panels[0]?.prompt.scene).toBe('');
     expect(calls.map((c) => c.body)).toEqual([{ seed: 7, seedLock: true }, { prompt: { scene: 'x', negative: '' } }]);
   });
+
+  it('every undoable command names its page, so undo and redo can show it', () => {
+    const { ops } = setup({});
+    const frame = makeFrame('tf_1', 'pg_1');
+    const cmds = [
+      ops.resize('pg_1', [], 0.5, 0.6), ops.split('pg_1', 'pn_a', 'v'), ops.addFrame('pg_1', { kind: 'speech' }),
+      ops.updateFrame('pg_1', 'tf_1', {}, {}), ops.deleteFrame(frame), ops.transform('pg_1', 'pn_a', DEFAULT_TRANSFORM, DEFAULT_TRANSFORM),
+      ops.activeImage('pg_1', 'pn_a', null, 'im_1'),
+    ];
+    expect(cmds.map((c) => c.pageId)).toEqual(Array(7).fill('pg_1'));
+  });
 });

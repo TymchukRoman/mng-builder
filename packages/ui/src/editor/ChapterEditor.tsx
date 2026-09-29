@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState, type JSX, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import type { FrameKind, JobRef, Manga, SplitDir } from '@manga/shared';
+import type { FrameKind, JobRef, Manga, Page, SplitDir } from '@manga/shared';
 import { api, ApiError } from '../api';
 import { Inspector } from '../inspector/Inspector';
 import { JobBar } from '../jobs/JobBar';
@@ -15,7 +15,9 @@ import { Canvas } from './Canvas';
 import type { EditorCommand } from './commands';
 import { ConfirmPresetModal } from './ConfirmPresetModal';
 import { EditorToolbar } from './EditorToolbar';
-import { escapeSelection, exportTarget, frameInsert, removedPanelCount, resolveCurrentPage } from './editorModel';
+import {
+  deletePageFlow, escapeSelection, exportTarget, frameInsert, neighbourAfterDelete, pageToShow, removedPanelCount, resolveCurrentPage,
+} from './editorModel';
 import { History, IdMap } from './history';
 import { createOps } from './ops';
 import { OpsContext } from './OpsContext';
@@ -76,13 +78,45 @@ export function ChapterEditor({ manga, mode, chapterId, pageIds, title, backTo, 
   useEffect(() => { if (d) setSelection((s) => reconcileSelection(s, d)); }, [d]);
 
   const selectPage = (id: string | null): void => setSearch(id ? { p: id } : {}, { replace: true });
+  // Read after an await: the page and the page list may have changed while a request ran.
+  const latest = useRef({ pageId, pageIds, selectPage });
+  useLayoutEffect(() => { latest.current = { pageId, pageIds, selectPage }; });
+  /** One History spans the chapter: after an undo or redo, show the page the command changed. */
+  const showCommandPage = (commandPageId: string | null): void => {
+    const l = latest.current;
+    const target = pageToShow(commandPageId, l.pageId, l.pageIds);
+    if (target) l.selectPage(target);
+  };
   const undo = (): void => {
     flushNudge();
-    history.undo().catch((err: unknown) => pushToast('error', errorText(err)));
+    history.undo().then(
+      (done) => { if (done) showCommandPage(history.snapshot().redoPageId); },
+      (err: unknown) => pushToast('error', errorText(err)),
+    );
   };
   const redo = (): void => {
     flushNudge();
-    history.redo().catch((err: unknown) => pushToast('error', errorText(err)));
+    history.redo().then(
+      (done) => { if (done) showCommandPage(history.snapshot().undoPageId); },
+      (err: unknown) => pushToast('error', errorText(err)),
+    );
+  };
+  /** Not undoable, and a barrier: commands that name the page are dropped with it (spec §9.3 keeps page ops out of the history). */
+  const deletePage = async (id: string): Promise<void> => {
+    try {
+      await deletePageFlow(id, {
+        flush: flushNudge,
+        barrier: (fn) => history.barrier(fn),
+        remove: (pid) => api.delete(`/api/pages/${pid}`),
+        after: (pid) => {
+          const l = latest.current;
+          if (pid === l.pageId) l.selectPage(neighbourAfterDelete(l.pageIds, pid));
+          if (chapterId) qc.setQueryData<Page[]>(qk.pages(chapterId), (prev) => prev?.filter((p) => p.id !== pid));
+          qc.removeQueries({ queryKey: qk.page(pid), exact: true });
+          if (chapterId) void qc.invalidateQueries({ queryKey: qk.pages(chapterId) });
+        },
+      });
+    } catch (err) { pushToast('error', errorText(err)); }
   };
   const panelId = selectedPanelId(selection);
   const selectedFrame = d && selection.kind === 'frame' ? d.frames.find((f) => f.id === selection.frameId) : undefined;
@@ -157,7 +191,7 @@ export function ChapterEditor({ manga, mode, chapterId, pageIds, title, backTo, 
         />
         <div className="editor__aside">{aside}</div>
         {mode === 'chapter' && chapterId && (
-          <PageList chapterId={chapterId} manga={manga} pageIds={pageIds} currentId={pageId} onSelectPage={selectPage} />
+          <PageList chapterId={chapterId} manga={manga} pageIds={pageIds} currentId={pageId} onSelectPage={selectPage} onDelete={(id) => void deletePage(id)} />
         )}
         <Canvas detail={d} manga={manga} widthPx={widthPx} selection={selection} onSelect={setSelection}
           onChange={(c) => void run(c)} onResize={onResize} loading={pageId !== null && detail.isPending} />

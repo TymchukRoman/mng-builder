@@ -8,7 +8,7 @@ import type { HistorySnapshot } from '../src/editor/history';
 import { PAGE_SELECTION, panelSelection, type Selection } from '../src/editor/selection';
 import { makeDetail } from './fixtures';
 
-const IDLE: HistorySnapshot = { canUndo: false, canRedo: false, undoLabel: null, redoLabel: null, busy: false };
+const IDLE: HistorySnapshot = { canUndo: false, canRedo: false, undoLabel: null, redoLabel: null, undoPageId: null, redoPageId: null, busy: false };
 const noop = (): void => undefined;
 
 /** The toolbar's accessible labels (used by the E2E specs), rendered without a DOM. */
@@ -60,7 +60,7 @@ describe('editor toolbar', () => {
   });
 
   it('names the command undo and redo would run', () => {
-    const html = render('chapter', PAGE_SELECTION, makeDetail(), { canUndo: true, canRedo: true, undoLabel: 'Resize panels', redoLabel: 'Add speech', busy: false });
+    const html = render('chapter', PAGE_SELECTION, makeDetail(), { canUndo: true, canRedo: true, undoLabel: 'Resize panels', redoLabel: 'Add speech', undoPageId: null, redoPageId: null, busy: false });
     expect(enabled(html, 'Undo: resize panels (Ctrl+Z)')).toBe(true);
     expect(enabled(html, 'Redo: add speech (Ctrl+Y)')).toBe(true);
   });

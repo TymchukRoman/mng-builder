@@ -81,7 +81,7 @@ export function createOps({ api, ids, cache }: OpsDeps) {
 
   return {
     resize(pageId: string, path: SplitPath, from: number, to: number): EditorCommand {
-      return { label: 'Resize panels', apply: () => resizeTo(pageId, path, to), revert: () => resizeTo(pageId, path, from) };
+      return { label: 'Resize panels', pageId, apply: () => resizeTo(pageId, path, to), revert: () => resizeTo(pageId, path, from) };
     },
 
     /**
@@ -96,6 +96,7 @@ export function createOps({ api, ids, cache }: OpsDeps) {
       let created: string | null = null;
       return {
         label: dir === 'h' ? 'Split top and bottom' : 'Split left and right',
+        pageId,
         async apply() {
           const target = ids.resolve(panelId);
           const detail = await api.post<PageDetail>(`/api/pages/${pageId}/layout/split`, { panelId: target, dir });
@@ -117,6 +118,7 @@ export function createOps({ api, ids, cache }: OpsDeps) {
       let current: string | null = null;
       return {
         label: `Add ${input.kind}`,
+        pageId,
         get createdId() { return current; },
         async apply() {
           // The first apply sends the caller's input (the server fills the defaults); a redo re-posts the stored result.
@@ -139,7 +141,7 @@ export function createOps({ api, ids, cache }: OpsDeps) {
     },
 
     updateFrame(pageId: string, frameId: string, before: UpdateFrameBody, after: UpdateFrameBody, label = 'Edit frame'): EditorCommand {
-      return { label, apply: () => patchFrame(pageId, frameId, after), revert: () => patchFrame(pageId, frameId, before) };
+      return { label, pageId, apply: () => patchFrame(pageId, frameId, after), revert: () => patchFrame(pageId, frameId, before) };
     },
 
     /** Deleting a frame cascades to nothing on the server; reverting re-creates it (new id, remapped) and restores its order. */
@@ -147,6 +149,7 @@ export function createOps({ api, ids, cache }: OpsDeps) {
       let current = frame.id;
       return {
         label: 'Delete frame',
+        pageId: frame.pageId,
         async apply() {
           const id = ids.resolve(current);
           await api.delete(`/api/frames/${id}`);
@@ -166,6 +169,7 @@ export function createOps({ api, ids, cache }: OpsDeps) {
     transform(pageId: string, panelId: string, before: ImageTransform, after: ImageTransform): EditorCommand {
       return {
         label: 'Move image',
+        pageId,
         apply: () => patchPanel(pageId, panelId, { imageTransform: after }),
         revert: () => patchPanel(pageId, panelId, { imageTransform: before }),
       };
@@ -185,7 +189,7 @@ export function createOps({ api, ids, cache }: OpsDeps) {
         // detail.images only carries active images, so reload to get the new one's size.
         cache.setPage(await api.get<PageDetail>(`/api/pages/${pageId}`));
       };
-      return { label: 'Switch image', apply: () => set(after), revert: () => set(before) };
+      return { label: 'Switch image', pageId, apply: () => set(after), revert: () => set(before) };
     },
 
     /** Barrier helper (not undoable): run through history.barrier(). */

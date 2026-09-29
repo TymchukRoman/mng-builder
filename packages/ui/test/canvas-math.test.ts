@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_PAGE_FORMAT } from '@manga/shared';
-import { dropIndex, moveId } from '../src/editor/reorder';
+import { dropIndex, isNoopMove, moveId } from '../src/editor/reorder';
 import { fitWidth, stepZoom, zoomFactor, zoomLabel } from '../src/editor/zoom';
 
 describe('reorder', () => {
@@ -18,9 +18,26 @@ describe('reorder', () => {
     expect(moveId(ids, 'a', 99)).toEqual(['b', 'c', 'd', 'a']);
     expect(moveId(ids, 'd', 99)).toEqual(ids);
   });
+  const rows = [{ top: 0, height: 100 }, { top: 108, height: 100 }, { top: 216, height: 100 }];
   it('drops before or after an item by its midpoint', () => {
-    expect(dropIndex(100, 40, 110, 3)).toBe(3);
-    expect(dropIndex(100, 40, 130, 3)).toBe(4);
+    expect(dropIndex(rows, 10)).toBe(0);
+    expect(dropIndex(rows, 60)).toBe(1);
+    expect(dropIndex(rows, 150)).toBe(1);
+    expect(dropIndex(rows, 170)).toBe(2);
+  });
+  it('a drop in the gap between items lands at the next index, and below the last one at the end', () => {
+    expect(dropIndex(rows, 104)).toBe(1);
+    expect(dropIndex(rows, 212)).toBe(2);
+    expect(dropIndex(rows, 290)).toBe(3);
+    expect(dropIndex(rows, 900)).toBe(3);
+    expect(dropIndex([], 50)).toBe(0);
+  });
+  it('knows when a drop would not move the item (no drop indicator)', () => {
+    expect(isNoopMove(ids, 'b', 1)).toBe(true);
+    expect(isNoopMove(ids, 'b', 2)).toBe(true);
+    expect(isNoopMove(ids, 'b', 0)).toBe(false);
+    expect(isNoopMove(ids, 'b', 3)).toBe(false);
+    expect(isNoopMove(ids, 'd', 4)).toBe(true);
   });
 });
 

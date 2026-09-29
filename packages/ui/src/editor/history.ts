@@ -25,6 +25,9 @@ export interface HistorySnapshot {
   canRedo: boolean;
   undoLabel: string | null;
   redoLabel: string | null;
+  /** The page of the command undo (redo) would run next, when it names one. */
+  undoPageId: string | null;
+  redoPageId: string | null;
   busy: boolean;
 }
 
@@ -128,6 +131,8 @@ export class History {
       canRedo: this.redoStack.length > 0,
       undoLabel: this.undoStack.at(-1)?.label ?? null,
       redoLabel: this.redoStack.at(-1)?.label ?? null,
+      undoPageId: this.undoStack.at(-1)?.pageId ?? null,
+      redoPageId: this.redoStack.at(-1)?.pageId ?? null,
       busy: this.running > 0,
     };
   }

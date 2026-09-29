@@ -66,3 +66,27 @@ export function nudgePatch(s: NudgeState): { before: UpdateFrameBody; after: Upd
   const body = (g: FrameGeom): UpdateFrameBody => (s.before.tail === null ? { box: g.box } : { box: g.box, tail: g.tail });
   return { before: body(s.before), after: body(s.after) };
 }
+
+/** The page undo or redo should show after running a command on `commandPageId`, or null to stay put. */
+export function pageToShow(commandPageId: string | null, currentId: string | null, pageIds: readonly string[]): string | null {
+  return commandPageId !== null && commandPageId !== currentId && pageIds.includes(commandPageId) ? commandPageId : null;
+}
+
+export interface DeletePageSteps {
+  /** Commits a pending nudge burst first, so it lands (and is cleared) before the page goes. */
+  flush(): void;
+  barrier<T>(fn: () => Promise<T>): Promise<T>;
+  remove(pageId: string): Promise<unknown>;
+  /** Selection and cache cleanup; runs only when the delete succeeded. */
+  after(pageId: string): void;
+}
+
+/**
+ * Deleting a page is a history barrier: it waits for queued commands, and on success clears both stacks, because
+ * recorded commands may name the deleted page. A refused delete keeps the history and rejects for the caller's toast.
+ */
+export async function deletePageFlow(pageId: string, steps: DeletePageSteps): Promise<void> {
+  steps.flush();
+  await steps.barrier(() => steps.remove(pageId));
+  steps.after(pageId);
+}

@@ -7,6 +7,16 @@ export function moveId(ids: readonly string[], id: string, toIndex: number): str
   return [...rest.slice(0, at), id, ...rest.slice(at)];
 }
 
-export function dropIndex(itemTop: number, itemHeight: number, pointerY: number, index: number): number {
-  return pointerY < itemTop + itemHeight / 2 ? index : index + 1;
+/** True when dropping `id` at `toIndex` leaves the order as it is (just above or below itself). */
+export function isNoopMove(ids: readonly string[], id: string, toIndex: number): boolean {
+  return moveId(ids, id, toIndex).every((x, i) => x === ids[i]);
+}
+
+/**
+ * The insertion index for a pointer over a vertical list: before the first item whose midpoint is below the
+ * pointer, else the end. So a drop in the gap between two items, or in the empty space below the last, still lands.
+ */
+export function dropIndex(items: readonly { top: number; height: number }[], pointerY: number): number {
+  const i = items.findIndex((r) => pointerY < r.top + r.height / 2);
+  return i < 0 ? items.length : i;
 }

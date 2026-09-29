@@ -1,5 +1,4 @@
 import type { Box, FrameKind } from '@manga/shared';
-import type { SizePx } from '../page/geometry';
 
 export type Handle = 'move' | 'nw' | 'ne' | 'sw' | 'se';
 export const MIN_FRAME = 0.02;
@@ -35,10 +34,6 @@ export function dragBox(start: Box, handle: Handle, dx: number, dy: number, min 
     h = Math.max(min, Math.min(h + dy, 1 - y));
   }
   return clampBox({ x, y, w, h });
-}
-
-export function nudgeBox(b: Box, dxPx: number, dyPx: number, size: SizePx): Box {
-  return clampBox({ ...b, x: b.x + dxPx / size.w, y: b.y + dyPx / size.h });
 }
 
 /** Moves a frame on the page. The tail (if any) travels by the same effective delta, so it keeps its place relative to the box. */

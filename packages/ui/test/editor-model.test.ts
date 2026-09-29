@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import type { EditorCommand } from '../src/editor/commands';
+import { History } from '../src/editor/history';
 import { PAGE_SELECTION, frameSelection, panelSelection } from '../src/editor/selection';
 import {
-  COVER_FRAME_KINDS, CHAPTER_FRAME_KINDS, escapeSelection, exportTarget, frameInsert, insertBody, neighbourAfterDelete, nudgePatch, nudgeStep,
+  COVER_FRAME_KINDS, CHAPTER_FRAME_KINDS, deletePageFlow, escapeSelection, exportTarget, frameInsert, insertBody, neighbourAfterDelete, nudgePatch, nudgeStep, pageToShow,
   removedPanelCount, resolveCurrentPage,
 } from '../src/editor/editorModel';
 import { makeFrame } from './fixtures';
@@ -87,5 +89,53 @@ describe('arrow-key nudges', () => {
     const tailed = nudgeStep(null, makeFrame('tf_2', 'pg_1', { tail: { x: 0.2, y: 0.4 } }), 1, 0, size);
     expect(nudgePatch(tailed).before).toEqual({ box: tailed.before.box, tail: { x: 0.2, y: 0.4 } });
     expect(Object.keys(nudgePatch(tailed).after)).toEqual(['box', 'tail']);
+  });
+});
+
+describe('undo and redo show the command page', () => {
+  it('switches to another page of the chapter, and stays put otherwise', () => {
+    expect(pageToShow('pg_2', 'pg_1', ['pg_1', 'pg_2'])).toBe('pg_2');
+    expect(pageToShow('pg_1', 'pg_1', ['pg_1', 'pg_2'])).toBeNull();
+    expect(pageToShow(null, 'pg_1', ['pg_1'])).toBeNull();
+    expect(pageToShow('pg_gone', 'pg_1', ['pg_1'])).toBeNull();
+  });
+});
+
+describe('page delete', () => {
+  const cmd = (label: string, log: string[], pageId: string): EditorCommand => ({
+    label, pageId, apply: async () => { log.push(`apply ${label}`); }, revert: async () => { log.push(`revert ${label}`); },
+  });
+
+  it('flushes the nudge, waits for queued commands, deletes, clears the history, then cleans up', async () => {
+    const log: string[] = [];
+    const h = new History();
+    await h.run(cmd('A', log, 'pg_2'));
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const slow = h.run({ label: 'slow', pageId: 'pg_2', apply: async () => { await gate; log.push('apply slow'); }, revert: async () => undefined });
+    const done = deletePageFlow('pg_2', {
+      flush: () => log.push('flush'),
+      barrier: (fn) => h.barrier(fn),
+      remove: async (id) => { log.push(`delete ${id}`); },
+      after: (id) => log.push(`after ${id}`),
+    });
+    release();
+    await Promise.all([slow, done]);
+    expect(log).toEqual(['apply A', 'flush', 'apply slow', 'delete pg_2', 'after pg_2']);
+    expect(h.snapshot()).toMatchObject({ canUndo: false, canRedo: false });
+  });
+
+  it('a refused delete keeps the history and skips the cleanup', async () => {
+    const log: string[] = [];
+    const h = new History();
+    await h.run(cmd('A', log, 'pg_2'));
+    await expect(deletePageFlow('pg_2', {
+      flush: () => undefined,
+      barrier: (fn) => h.barrier(fn),
+      remove: async () => { throw new Error('404'); },
+      after: () => log.push('after'),
+    })).rejects.toThrow('404');
+    expect(log).toEqual(['apply A']);
+    expect(h.snapshot()).toMatchObject({ canUndo: true, undoPageId: 'pg_2' });
   });
 });

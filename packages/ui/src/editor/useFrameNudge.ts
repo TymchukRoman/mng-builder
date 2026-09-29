@@ -29,9 +29,15 @@ export function useFrameNudge(ops: Ops, cache: OpsCache, run: (c: EditorCommand)
     let p = pending.current;
     if (p && (p.state.frameId !== frame.id || p.pageId !== pageId)) { flush(); p = null; }
     const state = nudgeStep(p ? p.state : null, frame, dx, dy, size);
-    cache.setFrame({ ...frame, box: state.after.box, tail: state.after.tail });
     if (p) clearTimeout(p.timer);
     pending.current = { pageId, state, timer: setTimeout(flush, 300) };
+    // Cancel an in-flight refetch first: a cancelled fetch restores its old data, which would snap the frame back.
+    // The write then shows the burst's latest position (a later key may have moved it on while this one waited).
+    void cache.cancel(pageId).then(() => {
+      const now = pending.current;
+      const latest = now && now.pageId === pageId && now.state.frameId === frame.id ? now.state : state;
+      cache.setFrame({ ...frame, box: latest.after.box, tail: latest.after.tail });
+    });
   }, [cache, flush]);
   return { nudge, flush };
 }

@@ -132,3 +132,18 @@ describe('IdMap', () => {
     expect(['a', 'b', 'c']).toContain(ids.resolve('a'));
   });
 });
+
+describe('History page ids', () => {
+  it('exposes the page of the next undo and redo command', async () => {
+    const log: string[] = [];
+    const h = new History();
+    expect(h.snapshot()).toMatchObject({ undoPageId: null, redoPageId: null });
+    await h.run({ ...cmd('A', log), pageId: 'pg_1' });
+    await h.run({ ...cmd('B', log), pageId: 'pg_2' });
+    expect(h.snapshot()).toMatchObject({ undoPageId: 'pg_2', redoPageId: null });
+    await h.undo();
+    expect(h.snapshot()).toMatchObject({ undoPageId: 'pg_1', redoPageId: 'pg_2' });
+    await h.run(cmd('C', log));
+    expect(h.snapshot()).toMatchObject({ undoPageId: null, redoPageId: null });
+  });
+});

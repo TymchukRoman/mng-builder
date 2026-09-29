@@ -1,4 +1,4 @@
-import { useState, type JSX } from 'react';
+import { useState, type DragEvent, type JSX } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { Manga, Page, PageDetail } from '@manga/shared';
 import { api } from '../api';
@@ -8,17 +8,27 @@ import { qk } from '../queryKeys';
 import { ConfirmIconButton } from '../ui/ConfirmIconButton';
 import { IconButton } from '../ui/IconButton';
 import { FilePlus2 } from '../ui/icons';
-import { insertBody, neighbourAfterDelete } from './editorModel';
-import { dropIndex, moveId } from './reorder';
+import { insertBody } from './editorModel';
+import { dropIndex, isNoopMove, moveId } from './reorder';
 
 const THUMB_W = 96;
 
-/** Page thumbnails (spec §9.1). Page operations are not undoable (spec §9.3); refused calls are toasted by the mutation cache. */
-export function PageList({ chapterId, manga, pageIds, currentId, onSelectPage }: {
-  chapterId: string; manga: Manga; pageIds: string[]; currentId: string | null; onSelectPage(id: string | null): void;
+/** The drop position for a pointer over the list: measured from the items themselves, so gaps and the space below count. */
+function overIndex(e: DragEvent<HTMLElement>): number {
+  const rows = [...e.currentTarget.querySelectorAll<HTMLElement>(':scope > [data-page-id]')].map((el) => el.getBoundingClientRect());
+  return dropIndex(rows, e.clientY);
+}
+
+/**
+ * Page thumbnails (spec §9.1). Add and reorder are not undoable and never invalidate recorded commands, so they run
+ * here; delete goes to the editor (`onDelete`), which runs it as a history barrier. Refusals are toasted by the mutation cache.
+ */
+export function PageList({ chapterId, manga, pageIds, currentId, onSelectPage, onDelete }: {
+  chapterId: string; manga: Manga; pageIds: string[]; currentId: string | null; onSelectPage(id: string | null): void; onDelete(pageId: string): void;
 }): JSX.Element {
   const qc = useQueryClient();
-  const [drag, setDrag] = useState<{ id: string; over: number } | null>(null);
+  // `over` stays null until the pointer moves over a new position, so the dragged item shows no indicator at start.
+  const [drag, setDrag] = useState<{ id: string; over: number | null } | null>(null);
 
   const add = useMutation({
     mutationFn: () => api.post<PageDetail>(`/api/chapters/${chapterId}/pages`, insertBody(pageIds, currentId)),
@@ -26,15 +36,6 @@ export function PageList({ chapterId, manga, pageIds, currentId, onSelectPage }:
       qc.setQueryData(qk.page(d.page.id), d);
       await qc.invalidateQueries({ queryKey: qk.pages(chapterId) });
       onSelectPage(d.page.id);
-    },
-  });
-  const remove = useMutation({
-    mutationFn: (id: string) => api.delete(`/api/pages/${id}`),
-    onSuccess: (_res, id) => {
-      if (id === currentId) onSelectPage(neighbourAfterDelete(pageIds, id));
-      qc.setQueryData<Page[]>(qk.pages(chapterId), (prev) => prev?.filter((p) => p.id !== id));
-      qc.removeQueries({ queryKey: qk.page(id), exact: true });
-      void qc.invalidateQueries({ queryKey: qk.pages(chapterId) });
     },
   });
   // Optimistic: the list shows the new order at once and rolls back when the server refuses it.
@@ -50,36 +51,38 @@ export function PageList({ chapterId, manga, pageIds, currentId, onSelectPage }:
     onSuccess: (pages) => { qc.setQueryData(qk.pages(chapterId), pages); },
   });
 
-  const drop = (dragged: string, to: number): void => {
-    setDrag(null);
-    const next = moveId(pageIds, dragged, to);
-    if (next.join() !== pageIds.join()) reorder.mutate(next);
-  };
+  const shown = drag && drag.over !== null && !isNoopMove(pageIds, drag.id, drag.over) ? drag.over : null;
 
   return (
     <nav className="page-list" aria-label="Pages">
-      <ol className="page-list__items">
+      <ol
+        className="page-list__items"
+        onDragOver={(e) => {
+          if (!drag) return; // not one of our thumbnails (a file, or text from elsewhere)
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          const over = overIndex(e);
+          setDrag((d) => (d && d.over !== over ? { ...d, over } : d));
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDrag((d) => (d ? { ...d, over: null } : d));
+        }}
+        onDrop={(e) => {
+          if (!drag) return;
+          e.preventDefault();
+          const next = moveId(pageIds, drag.id, overIndex(e));
+          setDrag(null);
+          if (next.join() !== pageIds.join()) reorder.mutate(next);
+        }}
+      >
         {pageIds.map((id, i) => (
           <li
             key={id}
             data-page-id={id}
             draggable
-            className={cx('page-list__item', id === currentId && 'is-current', drag?.over === i && 'is-drop-before', drag?.over === i + 1 && 'is-drop-after')}
-            onDragStart={(e) => { e.dataTransfer.setData('text/plain', id); e.dataTransfer.effectAllowed = 'move'; setDrag({ id, over: i }); }}
-            onDragOver={(e) => {
-              if (!drag) return; // not one of our thumbnails (a file, or text from elsewhere)
-              e.preventDefault();
-              e.dataTransfer.dropEffect = 'move';
-              const r = e.currentTarget.getBoundingClientRect();
-              const over = dropIndex(r.top, r.height, e.clientY, i);
-              setDrag((d) => (d && d.over !== over ? { ...d, over } : d));
-            }}
-            onDrop={(e) => {
-              if (!drag) return;
-              e.preventDefault();
-              const r = e.currentTarget.getBoundingClientRect();
-              drop(drag.id, dropIndex(r.top, r.height, e.clientY, i));
-            }}
+            className={cx('page-list__item', id === currentId && 'is-current', drag?.id === id && 'is-dragging',
+              shown === i && 'is-drop-before', shown === pageIds.length && i === pageIds.length - 1 && 'is-drop-after')}
+            onDragStart={(e) => { e.dataTransfer.setData('text/plain', id); e.dataTransfer.effectAllowed = 'move'; setDrag({ id, over: null }); }}
             onDragEnd={() => setDrag(null)}
           >
             <button type="button" className="page-list__thumb" aria-label={`Page ${i + 1}`} data-tip={`Page ${i + 1}`} data-tip-side="right"
@@ -88,7 +91,7 @@ export function PageList({ chapterId, manga, pageIds, currentId, onSelectPage }:
             </button>
             <div className="page-list__foot">
               <span className="page-list__num">{i + 1}</span>
-              <ConfirmIconButton size="sm" label="Delete page" confirmLabel="Click again to delete this page" onConfirm={() => remove.mutate(id)} />
+              <ConfirmIconButton size="sm" label="Delete page" confirmLabel="Click again to delete this page" onConfirm={() => onDelete(id)} />
             </div>
           </li>
         ))}

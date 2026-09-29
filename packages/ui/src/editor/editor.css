@@ -19,6 +19,7 @@
 .page-list__items { list-style: none; margin: 0; padding: var(--sp-2) var(--sp-2) 0; flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: var(--sp-2); }
 .page-list__item { position: relative; display: flex; flex-direction: column; align-items: center; gap: var(--sp-half); padding: var(--sp-1); border-radius: var(--r-sm); cursor: grab; }
 .page-list__item.is-current { background: var(--accent-wash); }
+.page-list__item.is-dragging { opacity: 0.5; }
 .page-list__item.is-drop-before::before, .page-list__item.is-drop-after::after { content: ''; position: absolute; left: var(--sp-1); right: var(--sp-1); height: var(--sp-half); background: var(--accent); }
 /* Centred in the --sp-2 gap between items. */
 .page-list__item.is-drop-before::before { top: calc(var(--sp-1) * -1 - var(--sp-half) / 2); }
