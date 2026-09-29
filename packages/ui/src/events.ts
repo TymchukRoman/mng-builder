@@ -122,9 +122,13 @@ function sameKey(a: QueryKey, b: QueryKey): boolean {
 export function applyServerEvent(qc: QueryClient, e: ServerEvent, deps: EventDeps = defaultDeps): void {
   switch (e.type) {
     case 'hello':
-      // F5: skip the full resync on the first hello of a session; only reconnects need it.
+      // F5: skip the full resync on the first hello of a session; only reconnects need it. M6: but a query that failed
+      // before the socket connected (the UI loaded before the server, say under `npm run dev`) is refetched now.
       if (deps.helloSeen.value) void qc.invalidateQueries();
-      else deps.helloSeen.value = true;
+      else {
+        deps.helloSeen.value = true;
+        void qc.invalidateQueries({ predicate: (q) => q.state.status === 'error' });
+      }
       deps.waiters.recheck(deps.fetchJob);
       return;
     case 'job': {

@@ -1,4 +1,4 @@
-import { QueryClient } from '@tanstack/react-query';
+import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
 import type { Job } from '@manga/shared';
 import { JobWaiters, applyServerEvent, eventsUrl, nextBackoff, parseEvent, upsertJob } from '../src/events';
@@ -112,5 +112,22 @@ describe('applyServerEvent', () => {
     expect(qc.getQueryState(qk.mangas())?.isInvalidated).toBe(false);
     applyServerEvent(qc, { type: 'hello', serverTime: 't2' }, d);
     expect(qc.getQueryState(qk.mangas())?.isInvalidated).toBe(true);
+  });
+  // M6: a UI that loaded before the server (npm run dev) has failed queries; the first hello refetches only those.
+  it('the first hello refetches the queries that failed, and leaves the fresh ones alone', async () => {
+    const qc = new QueryClient();
+    const d = deps();
+    let up = false;
+    let mangaFetches = 0;
+    const failing = new QueryObserver(qc, { queryKey: qk.settings(), retry: false, queryFn: async () => { if (!up) throw new Error('Server not reachable'); return { ok: true }; } });
+    const fresh = new QueryObserver(qc, { queryKey: qk.mangas(), queryFn: async () => { mangaFetches += 1; return []; } });
+    const stop = [failing.subscribe(() => undefined), fresh.subscribe(() => undefined)];
+    await vi.waitFor(() => expect(qc.getQueryState(qk.settings())?.status).toBe('error'));
+    await vi.waitFor(() => expect(mangaFetches).toBe(1));
+    up = true;
+    applyServerEvent(qc, { type: 'hello', serverTime: 't1' }, d);
+    await vi.waitFor(() => expect(qc.getQueryData(qk.settings())).toEqual({ ok: true }));
+    expect(mangaFetches).toBe(1);
+    for (const s of stop) s();
   });
 });
