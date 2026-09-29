@@ -1,4 +1,4 @@
-import { LayoutError, MAX_RATIO, MIN_RATIO, mergePanels, panelIds, type LayoutNode, type Rect, type SplitDir, type SplitPath } from '@manga/shared';
+import { LayoutError, MAX_RATIO, MIN_RATIO, mergePanels, panelIds, type LayoutNode, type Page, type Rect, type SplitDir, type SplitPath } from '@manga/shared';
 import type { Selection } from './selection';
 
 /**
@@ -33,12 +33,22 @@ export function newPanelId(before: LayoutNode, after: LayoutNode): string | null
   return panelIds(after).find((id) => !old.has(id)) ?? null;
 }
 
-export function mergeState(tree: LayoutNode, s: Selection): { enabled: boolean; reason: string } {
+type PageKind = Page['kind'];
+const COVER_LOCK = 'Not available on a cover page';
+
+/** Covers keep their single panel: the server refuses split, merge and preset there, so the UI disables them up front. */
+export function mergeState(tree: LayoutNode, s: Selection, pageKind: PageKind = 'page'): { enabled: boolean; reason: string } {
+  if (pageKind === 'cover') return { enabled: false, reason: COVER_LOCK };
   if (s.kind !== 'panel' || s.mergeWith === null) return { enabled: false, reason: 'Merge: select a panel, then shift-click its neighbour' };
   if (!areSiblings(tree, s.panelId, s.mergeWith)) return { enabled: false, reason: 'Merge: only two panels from the same split can merge' };
   return { enabled: true, reason: 'Merge panels (cannot be undone)' };
 }
 
-export function splitState(s: Selection): { enabled: boolean; reason: string } {
+export function splitState(s: Selection, pageKind: PageKind = 'page'): { enabled: boolean; reason: string } {
+  if (pageKind === 'cover') return { enabled: false, reason: COVER_LOCK };
   return s.kind === 'panel' ? { enabled: true, reason: '' } : { enabled: false, reason: 'Select a panel to split' };
+}
+
+export function presetState(pageKind: PageKind = 'page'): { enabled: boolean; reason: string } {
+  return pageKind === 'cover' ? { enabled: false, reason: COVER_LOCK } : { enabled: true, reason: '' };
 }

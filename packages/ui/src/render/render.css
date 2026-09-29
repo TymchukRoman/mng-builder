@@ -1,0 +1,2 @@
+html.render-mode, html.render-mode body { margin: 0; padding: 0; overflow: hidden; background: var(--paper); }
+.render-root { position: relative; background: var(--paper); }

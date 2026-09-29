@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_PAGE_FORMAT, PRESET_NAMES, buildPreset, computeRects, mirrorLayout, presetPanelCount, type LayoutNode } from '@manga/shared';
-import { areSiblings, mergeState, newPanelId, pathKey, ratioFromPointer, splitState } from '../src/editor/layoutTree';
+import { areSiblings, mergeState, newPanelId, pathKey, presetState, ratioFromPointer, splitState } from '../src/editor/layoutTree';
 import { presetRects } from '../src/editor/presets';
 import { PAGE_SELECTION, clickPanel, frameSelection, panelSelection, reconcileSelection, selectedPanelId } from '../src/editor/selection';
 import { makeDetail, makeFrame } from './fixtures';
@@ -29,6 +29,14 @@ describe('layout tree helpers', () => {
     expect(mergeState(tree, panelSelection('pn_b', { mergeWith: 'pn_c' }))).toEqual({ enabled: true, reason: 'Merge panels (cannot be undone)' });
     expect(splitState(PAGE_SELECTION).enabled).toBe(false);
     expect(splitState(panelSelection('pn_a')).enabled).toBe(true);
+  });
+  it('disables split, merge and preset on cover pages', () => {
+    const locked = { enabled: false, reason: 'Not available on a cover page' };
+    expect(splitState(panelSelection('pn_a'), 'cover')).toEqual(locked);
+    expect(mergeState(tree, panelSelection('pn_b', { mergeWith: 'pn_c' }), 'cover')).toEqual(locked);
+    expect(presetState('cover')).toEqual(locked);
+    expect(presetState('page').enabled).toBe(true);
+    expect(splitState(panelSelection('pn_a'), 'page').enabled).toBe(true);
   });
   it('computes and clamps the ratio from the pointer', () => {
     const parent = { x: 0.1, y: 0.2, w: 0.8, h: 0.6 };
