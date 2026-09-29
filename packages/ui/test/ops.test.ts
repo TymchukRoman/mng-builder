@@ -272,4 +272,18 @@ describe('editor ops', () => {
     await cmd.revert();
     expect(page().page.layout).toEqual(original.page.layout);
   });
+
+  it('savePanel writes the fields optimistically, rolls back on failure and leaves nothing to undo', async () => {
+    const { ops, calls, page } = setup({
+      'PATCH /api/panels/pn_a': [
+        (b) => makePanel('pn_a', 'pg_1', b as Partial<Panel>),
+        () => { throw new Error('422'); },
+      ],
+    });
+    await ops.savePanel('pg_1', 'pn_a', { seed: 7, seedLock: true });
+    expect(page().panels[0]).toMatchObject({ seed: 7, seedLock: true });
+    await expect(ops.savePanel('pg_1', 'pn_a', { prompt: { scene: 'x', negative: '' } })).rejects.toThrow('422');
+    expect(page().panels[0]?.prompt.scene).toBe('');
+    expect(calls.map((c) => c.body)).toEqual([{ seed: 7, seedLock: true }, { prompt: { scene: 'x', negative: '' } }]);
+  });
 });

@@ -171,6 +171,14 @@ export function createOps({ api, ids, cache }: OpsDeps) {
       };
     },
 
+    /**
+     * An autosave of panel fields the spec keeps out of the history (script, prompt, recipe, seed, refs): the same
+     * optimistic write as the undoable panel commands, with the rollback on failure, but no command to undo.
+     */
+    savePanel(pageId: string, panelId: string, patch: UpdatePanelBody): Promise<void> {
+      return patchPanel(pageId, panelId, patch);
+    },
+
     activeImage(pageId: string, panelId: string, before: string | null, after: string | null): EditorCommand {
       const set = async (imageId: string | null): Promise<void> => {
         await api.patch<Panel>(`/api/panels/${ids.resolve(panelId)}`, { activeImageId: imageId });
