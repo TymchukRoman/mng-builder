@@ -165,6 +165,22 @@ describe('editor ops', () => {
     expect(page().frames[0]?.text).toBe('Hi');
   });
 
+  it('a failed nudge rolls back to the server geometry, not to the nudged position already in the cache (M3)', async () => {
+    const { ops, page, qc } = setup({ 'PATCH /api/frames/tf_1': () => { throw new Error('500'); } });
+    const before = { box: { x: 0.1, y: 0.1, w: 0.3, h: 0.12 }, tail: null };
+    const after = { box: { x: 0.15, y: 0.1, w: 0.3, h: 0.12 }, tail: null };
+    // The nudge burst writes the moved frame into the cache before its command runs.
+    queryCache(qc).setFrame({ ...page().frames[0]!, ...after });
+    await expect(ops.updateFrame('pg_1', 'tf_1', before, after, 'Nudge frame').apply()).rejects.toThrow('500');
+    expect(page().frames[0]?.box).toEqual(before.box);
+  });
+
+  it('a failed revert rolls back to the applied side', async () => {
+    const { ops, page } = setup({ 'PATCH /api/frames/tf_1': () => { throw new Error('500'); } }, makeDetail('pg_1', [makeFrame('tf_1', 'pg_1', { text: 'Bye' })]));
+    await expect(ops.updateFrame('pg_1', 'tf_1', { text: 'Hi' }, { text: 'Bye' }).revert()).rejects.toThrow('500');
+    expect(page().frames[0]?.text).toBe('Bye');
+  });
+
   it('transform patches the panel; activeImage patches then reloads the page', async () => {
     const moved = { x: 0.1, y: 0, scale: 1.5 };
     const { ops, calls, page } = setup({

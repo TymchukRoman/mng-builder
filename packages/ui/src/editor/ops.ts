@@ -106,13 +106,22 @@ export function createOps({ api, ids, cache, format, onFrameError }: OpsDeps) {
     await saveMoves(pageId, moves, detail.frames);
   };
 
-  const patchFrame = async (pageId: string, frameId: string, patch: UpdateFrameBody): Promise<void> => {
+  // A stored anchor may name a panel that a redo re-created under a new id.
+  const resolveAnchor = (patch: UpdateFrameBody): UpdateFrameBody =>
+    typeof patch.panelId === 'string' ? { ...patch, panelId: ids.resolve(patch.panelId) } : patch;
+
+  /**
+   * `rollback` is the command's other side. A failed PATCH restores the cached frame with it laid over, because the cache
+   * may already show `patch`: a nudge burst writes the moved frame ahead of its command (M3), and rolling back to that
+   * cached value would keep the unsaved position on screen.
+   */
+  const patchFrame = async (pageId: string, frameId: string, patch: UpdateFrameBody, rollback: UpdateFrameBody): Promise<void> => {
     const id = ids.resolve(frameId);
-    // A stored anchor may name a panel that a redo re-created under a new id.
-    const body: UpdateFrameBody = typeof patch.panelId === 'string' ? { ...patch, panelId: ids.resolve(patch.panelId) } : patch;
+    const body = resolveAnchor(patch);
     await cache.cancel(pageId);
-    const prev = cache.getPage(pageId)?.frames.find((f) => f.id === id);
-    if (prev) cache.setFrame({ ...prev, ...body } as TextFrame);
+    const cached = cache.getPage(pageId)?.frames.find((f) => f.id === id);
+    const prev = cached ? ({ ...cached, ...resolveAnchor(rollback) } as TextFrame) : undefined;
+    if (cached) cache.setFrame({ ...cached, ...body } as TextFrame);
     try {
       cache.setFrame(await api.patch<TextFrame>(`/api/frames/${seg(id)}`, body));
     } catch (err) {
@@ -222,7 +231,7 @@ export function createOps({ api, ids, cache, format, onFrameError }: OpsDeps) {
     },
 
     updateFrame(pageId: string, frameId: string, before: UpdateFrameBody, after: UpdateFrameBody, label = 'Edit frame'): EditorCommand {
-      return { label, pageId, apply: () => patchFrame(pageId, frameId, after), revert: () => patchFrame(pageId, frameId, before) };
+      return { label, pageId, apply: () => patchFrame(pageId, frameId, after, before), revert: () => patchFrame(pageId, frameId, before, after) };
     },
 
     /** Deleting a frame cascades to nothing on the server; reverting re-creates it (new id, remapped) and restores its order. */
