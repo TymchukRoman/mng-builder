@@ -1,12 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, type CSSProperties, type JSX, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type JSX, type PointerEvent as ReactPointerEvent } from 'react';
 import { DEFAULT_TRANSFORM, type Image, type ImageTransform, type Panel } from '@manga/shared';
 import { imageUrl } from '../api';
 import { cx } from '../lib/cx';
 import { IconButton } from '../ui/IconButton';
-import { Check, RotateCcw } from '../ui/icons';
+import { Check, RotateCcw, TriangleAlert } from '../ui/icons';
 import { startDrag } from './drag';
 import { panBy, type Placement } from './geometry';
-import { placeImage, sameTransform, usableSize, wheelZoom } from './pageModel';
+import { panelImageView, placeImage, sameTransform, usableSize, wheelZoom } from './pageModel';
 import { useLiveOverride } from './useLiveOverride';
 
 export interface PanelViewProps {
@@ -97,6 +97,10 @@ export function PanelView(p: PanelViewProps): JSX.Element {
   };
 
   const edit = mode === 'edit';
+  // Keyed by URL, so a new active image gets its own chance to load.
+  const src = image ? imageUrl(image.id) : null;
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const view = panelImageView(src !== null, src !== null && failedSrc === src, mode);
   const imgStyle: CSSProperties = {
     ...(placed ? { left: placed.left, top: placed.top, width: placed.width, height: placed.height } : CSS_COVER),
     ...(imageFilter ? { filter: imageFilter } : {}),
@@ -104,14 +108,17 @@ export function PanelView(p: PanelViewProps): JSX.Element {
   return (
     <div
       ref={ref}
-      className={cx('panel', !image && mode !== 'print' && 'panel--empty', adjusting && 'is-adjusting')}
+      className={cx('panel', view.empty && 'panel--empty', adjusting && 'is-adjusting')}
       data-panel-id={panelId}
       data-selected={selected || undefined}
       style={{ left: rect.left, top: rect.top, width: rect.width, height: rect.height }}
       onPointerDown={edit ? onDown : undefined}
       onDoubleClick={edit && image ? () => p.onDoubleClick?.(panelId) : undefined}
     >
-      {image && <img className="panel__img" src={imageUrl(image.id)} alt="" draggable={false} style={imgStyle} />}
+      {view.showImage && src && (
+        <img className="panel__img" src={src} alt="" draggable={false} style={imgStyle} onError={mode === 'print' ? undefined : () => setFailedSrc(src)} />
+      )}
+      {view.badge && <span className="panel__broken" role="img" aria-label="Image failed to load" data-tip="Image failed to load"><TriangleAlert size={14} aria-hidden /></span>}
       <div className="panel__border" style={{ borderWidth: borderPx }} />
       {edit && (selected || mergeCandidate) && <div className={cx('panel__sel', mergeCandidate && 'panel__sel--merge')} />}
       {edit && adjusting && (

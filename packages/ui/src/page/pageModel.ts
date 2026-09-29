@@ -34,6 +34,16 @@ export function panelImageFilter(colorMode: ColorMode): string | undefined {
   return colorMode === 'bw' ? 'grayscale(1)' : undefined;
 }
 
+/**
+ * How a panel shows its image (M7). An image that failed to load shows the empty screentone, and in edit mode a warning
+ * badge, instead of plain paper. Print mode keeps the image: the print route fails fast on a decode error instead.
+ */
+export function panelImageView(hasImage: boolean, failed: boolean, mode: 'edit' | 'thumb' | 'print'): { showImage: boolean; empty: boolean; badge: boolean } {
+  if (mode === 'print') return { showImage: hasImage, empty: false, badge: false };
+  const broken = hasImage && failed;
+  return { showImage: hasImage && !broken, empty: !hasImage || broken, badge: broken && mode === 'edit' };
+}
+
 /** Pixels per mm at full print DPI: the scale text is fitted at, so a pt is the same in every mode. */
 export function printPpm(format: PageFormat): number {
   return pxPerMm(format, printSizePx(format).w);

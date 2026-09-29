@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_PAGE_FORMAT, DEFAULT_TRANSFORM, resizeSplit } from '@manga/shared';
 import { printSizePx } from '../src/page/geometry';
 import {
-  dragFrameGeom, dragLabel, framesInOrder, geomPatch, ghostTailAt, rotateHandleAt, wheelZoom, imageFor, liveFrames, panelImageFilter, placeImage, printPpm, renderSize, sameTransform, usableSize,
+  dragFrameGeom, dragLabel, framesInOrder, geomPatch, ghostTailAt, rotateHandleAt, wheelZoom, imageFor, liveFrames, panelImageFilter, panelImageView, placeImage, printPpm, renderSize, sameTransform, usableSize,
 } from '../src/page/pageModel';
 import { makeDetail, makeFrame, makeImage, makePanel } from './fixtures';
 
@@ -131,6 +131,21 @@ describe('page model helpers', () => {
       expect(wheelZoom(DEFAULT_TRANSFORM, 10000, panel, image).scale).toBe(1);
       expect(wheelZoom({ x: 0, y: 0, scale: 8 }, -10000, panel, image).scale).toBe(8);
     });
+  });
+});
+
+describe('panelImageView (M7: an image that failed to load is not a blank panel)', () => {
+  it('shows a loaded image, and the screentone for a panel without one', () => {
+    expect(panelImageView(true, false, 'edit')).toEqual({ showImage: true, empty: false, badge: false });
+    expect(panelImageView(false, false, 'edit')).toEqual({ showImage: false, empty: true, badge: false });
+    expect(panelImageView(false, false, 'print')).toEqual({ showImage: false, empty: false, badge: false });
+  });
+  it('a broken image shows the screentone, plus a warning badge in edit mode', () => {
+    expect(panelImageView(true, true, 'edit')).toEqual({ showImage: false, empty: true, badge: true });
+    expect(panelImageView(true, true, 'thumb')).toEqual({ showImage: false, empty: true, badge: false });
+  });
+  it('print mode keeps the image: the print route fails fast on a decode error instead', () => {
+    expect(panelImageView(true, true, 'print')).toEqual({ showImage: true, empty: false, badge: false });
   });
 });
 

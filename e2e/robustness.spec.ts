@@ -72,3 +72,20 @@ test('a failed load says so and offers Retry, which recovers once the server ans
   await expect(page.locator('.page-view--edit [data-panel-id]')).toHaveCount(4);
   expect(errors.all()).toEqual([]);
 });
+
+test('a panel image that fails to load shows a warning badge, not a blank panel (M7)', async ({ page, request }) => {
+  const { mangaId, chapterId, pageId } = await seedManga(request, 'E2E broken image');
+  const detail = (await (await request.get(`/api/pages/${pageId}`)).json()) as { panels: Array<{ id: string }> };
+  const panelId = detail.panels[0]?.id ?? '';
+  const job = (await (await request.post(`/api/panels/${panelId}/generate`, { data: {} })).json()) as { jobId: string };
+  await expect.poll(async () => ((await (await request.get(`/api/jobs/${job.jobId}`)).json()) as { status: string }).status).toBe('succeeded');
+
+  const errors = collectErrors(page, { allowedFailures: { status: 404, urlSuffix: '.png' } });
+  await page.route('**/files/images/**', (route) => route.fulfill({ status: 404, body: '' }));
+  await page.goto(`/m/${mangaId}/c/${chapterId}?p=${pageId}`);
+  const panel = page.locator(`.page-view--edit [data-panel-id="${panelId}"]`);
+  await expect(panel.getByRole('img', { name: 'Image failed to load' })).toBeVisible();
+  await expect(panel).toHaveClass(/panel--empty/);
+  await expect(panel.locator('img')).toHaveCount(0);
+  expect(errors.all()).toEqual([]);
+});
