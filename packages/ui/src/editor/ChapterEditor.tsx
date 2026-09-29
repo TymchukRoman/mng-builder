@@ -60,7 +60,10 @@ export function ChapterEditor({ manga, mode, chapterId, pageIds, title, backTo, 
   const [ids] = useState(() => new IdMap());
   const cache = useMemo(() => queryCache(qc), [qc]);
   // Stable for the editor's lifetime: the Inspector and PageView build commands from it.
-  const ops = useMemo(() => createOps({ api, ids, cache }), [ids, cache]);
+  // The ops read the page format at use time (panel rects decide where frames follow their panel), so the ops themselves stay stable.
+  const formatRef = useRef(manga.pageFormat);
+  useLayoutEffect(() => { formatRef.current = manga.pageFormat; });
+  const ops = useMemo(() => createOps({ api, ids, cache, format: () => formatRef.current }), [ids, cache]);
   const snap = useHistorySnapshot(history);
 
   const run = useCallback(async (cmd: EditorCommand): Promise<void> => {
@@ -127,9 +130,11 @@ export function ChapterEditor({ manga, mode, chapterId, pageIds, title, backTo, 
     flushNudge();
     setPresetBusy(true);
     try {
-      await history.barrier(() => ops.applyPreset(pageId, name, confirmed));
+      const { framesError } = await history.barrier(() => ops.applyPreset(pageId, name, confirmed));
       setConfirm(null);
       setSelection(PAGE_SELECTION);
+      // The layout changed; only moving the frames along failed.
+      if (framesError) pushToast('error', errorText(framesError));
     } catch (err) {
       if (err instanceof ApiError && err.code === 'needs_confirm' && !confirmed) setConfirm({ preset: name, removed: removedPanelCount(err.details) });
       else { setConfirm(null); pushToast('error', errorText(err)); }

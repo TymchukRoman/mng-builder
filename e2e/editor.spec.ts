@@ -8,6 +8,14 @@ async function frameTexts(request: APIRequestContext, pageId: string): Promise<s
   return ((await res.json()) as { frames: Array<{ text: string }> }).frames.map((f) => f.text);
 }
 
+/** The geometry of a page's frames as the server holds it, serialised so two reads compare with `toBe`. */
+async function frameGeometry(request: APIRequestContext, pageId: string): Promise<{ panelIds: Array<string | null>; geometry: string }> {
+  const res = await request.get(`/api/pages/${pageId}`);
+  expect(res.ok()).toBe(true);
+  const frames = ((await res.json()) as { frames: Array<{ panelId: string | null; box: unknown; tail: unknown }> }).frames;
+  return { panelIds: frames.map((f) => f.panelId), geometry: JSON.stringify(frames.map((f) => [f.box, f.tail])) };
+}
+
 test('create, lay out, letter and generate a page; everything survives a reload', async ({ page, request }) => {
   // The preset step answers 409 needs_confirm on purpose; Chrome logs that one as a resource error. Any other failed load fails the test.
   const errors = collectErrors(page, { allowedFailures: { status: 409, urlSuffix: '/layout/preset' } });
@@ -67,6 +75,14 @@ test('create, lay out, letter and generate a page; everything survives a reload'
   await page.getByRole('button', { name: 'Merge panels (cannot be undone)' }).click();
   await expect(panels).toHaveCount(3);
 
+  // A speech bubble on the first panel: it is anchored, so it follows its panel when the gutter moves
+  const target = (await panelIds(page))[0] ?? '';
+  await canvas.locator(`[data-panel-id="${target}"]`).click();
+  await page.getByRole('button', { name: 'Add speech bubble' }).click();
+  await expect(frame).toHaveCount(1);
+  await expect.poll(async () => (await frameGeometry(request, pageId)).panelIds).toEqual([target]);
+  const frameBefore = (await frameGeometry(request, pageId)).geometry;
+
   // Resize by dragging the root gutter along its axis, then undo and redo it from the keyboard
   const layoutBefore = await layoutOf(request, pageId);
   const gutter = canvas.locator('[data-gutter="root"]');
@@ -81,16 +97,20 @@ test('create, lay out, letter and generate a page; everything survives a reload'
   expect((await resized).ok()).toBe(true);
   const layoutAfter = await layoutOf(request, pageId);
   expect(layoutAfter).not.toBe(layoutBefore);
+  // The anchored frame moved with its panel (the server has the new box), and stays anchored
+  await expect.poll(async () => (await frameGeometry(request, pageId)).geometry).not.toBe(frameBefore);
+  const frameAfter = await frameGeometry(request, pageId);
+  expect(frameAfter.panelIds).toEqual([target]);
   await page.keyboard.press('Control+z');
   await expect.poll(() => layoutOf(request, pageId)).toBe(layoutBefore);
+  // Undo puts the frame back exactly, not just approximately
+  await expect.poll(async () => (await frameGeometry(request, pageId)).geometry).toBe(frameBefore);
   await page.keyboard.press('Control+y');
   await expect.poll(() => layoutOf(request, pageId)).toBe(layoutAfter);
+  await expect.poll(async () => (await frameGeometry(request, pageId)).geometry).toBe(frameAfter.geometry);
 
-  // Speech bubble with Ukrainian text
-  const target = (await panelIds(page))[0] ?? '';
-  await canvas.locator(`[data-panel-id="${target}"]`).click();
-  await page.getByRole('button', { name: 'Add speech bubble' }).click();
-  await expect(frame).toHaveCount(1);
+  // Speech bubble with Ukrainian text (the bubble from above)
+  await frame.locator('.frame__hit').click();
   const text = page.getByLabel('Text', { exact: true });
   await text.fill('Привіт, їжаку!!');
   // Editor keys never fire while typing: Backspace edits the text, and neither it nor Delete removes the frame.

@@ -1,6 +1,6 @@
 import { QueryClient } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
-import { DEFAULT_TRANSFORM, mergePanels, splitPanel, type LayoutNode, type PageDetail, type Panel, type TextFrame } from '@manga/shared';
+import { computeRects, DEFAULT_PAGE_FORMAT, DEFAULT_TRANSFORM, mergePanels, resizeSplit, splitPanel, type LayoutNode, type PageDetail, type Panel, type TextFrame } from '@manga/shared';
 import { queryCache } from '../src/editor/cacheAdapter';
 import { IdMap } from '../src/editor/history';
 import { createOps, type OpsApi } from '../src/editor/ops';
@@ -48,7 +48,7 @@ function setup(routes: Record<string, Handler | Handler[]>, initial: PageDetail 
   qc.setQueryData(qk.page('pg_1'), initial);
   const ids = new IdMap();
   const { api, calls } = fakeApi(routes);
-  const ops = createOps({ api, ids, cache: queryCache(qc) });
+  const ops = createOps({ api, ids, cache: queryCache(qc), format: () => DEFAULT_PAGE_FORMAT });
   const page = (): PageDetail => qc.getQueryData<PageDetail>(qk.page('pg_1')) as PageDetail;
   const ratio = (): number => (page().page.layout as SplitNode).ratio;
   return { ids, calls, ops, page, ratio, qc };
@@ -296,5 +296,168 @@ describe('editor ops', () => {
       ops.activeImage('pg_1', 'pn_a', null, 'im_1'),
     ];
     expect(cmds.map((c) => c.pageId)).toEqual(Array(7).fill('pg_1'));
+  });
+  describe('text frames follow their panel', () => {
+    const anchored = (id: string, panelId: string, box: TextFrame['box'], tail: TextFrame['tail'] = null): TextFrame =>
+      makeFrame(id, 'pg_1', { panelId, box, tail });
+    const rectOf = (d: PageDetail, id: string) => computeRects(d.page.layout, DEFAULT_PAGE_FORMAT).find((r) => r.panelId === id)!.rect;
+
+    /** A server with the real layout functions (resize, split, merge that re-anchors B's frames to A) and a frame PATCH. */
+    function server(initial: PageDetail, patchFails = false) {
+      let state = initial;
+      let n = 0;
+      const routes: Record<string, Handler> = {
+        'POST /api/pages/pg_1/layout/resize': (b) => {
+          const { path, ratio } = b as { path: Array<'a' | 'b'>; ratio: number };
+          state = { ...state, page: { ...state.page, layout: resizeSplit(state.page.layout, path, ratio) } };
+          return state;
+        },
+        'POST /api/pages/pg_1/layout/split': (b) => {
+          const { panelId, dir } = b as { panelId: string; dir: 'h' | 'v' };
+          n += 1;
+          const id = `pn_new${n}`;
+          state = { ...state, page: { ...state.page, layout: splitPanel(state.page.layout, panelId, dir, id) }, panels: [...state.panels, makePanel(id)] };
+          return state;
+        },
+        'POST /api/pages/pg_1/layout/merge': (b) => {
+          const { panelIdA, panelIdB } = b as { panelIdA: string; panelIdB: string };
+          const { tree, keptId, removedId } = mergePanels(state.page.layout, panelIdA, panelIdB);
+          state = {
+            ...state, page: { ...state.page, layout: tree }, panels: state.panels.filter((p) => p.id !== removedId),
+            frames: state.frames.map((f) => (f.panelId === removedId ? { ...f, panelId: keptId } : f)),
+          };
+          return state;
+        },
+      };
+      for (const f of initial.frames) {
+        routes[`PATCH /api/frames/${f.id}`] = (b) => {
+          if (patchFails) throw new Error('frame 500');
+          const merged = { ...state.frames.find((x) => x.id === f.id)!, ...(b as Partial<TextFrame>) };
+          state = { ...state, frames: state.frames.map((x) => (x.id === f.id ? merged : x)) };
+          return merged;
+        };
+      }
+      return { routes, get: () => state };
+    }
+
+    const box = { x: 0.2, y: 0.3, w: 0.15, h: 0.1 };
+    const tail = { x: 0.25, y: 0.45 };
+    const free = { x: 0.4, y: 0.7, w: 0.2, h: 0.1 };
+    const threeFrames = (): PageDetail => makeDetail('pg_1', [
+      anchored('tf_a', 'pn_a', box, tail),
+      anchored('tf_b', 'pn_b', { x: 0.6, y: 0.5, w: 0.15, h: 0.1 }),
+      makeFrame('tf_free', 'pg_1', { panelId: null, box: free }),
+    ]);
+    const shape = (d: PageDetail) => d.frames.map((f) => [f.id, f.panelId, f.box, f.tail]);
+
+    it('resize moves the anchored frames with their panel, PATCHes them, and revert restores the exact snapshot', async () => {
+      const initial = threeFrames();
+      const s = server(initial);
+      const { ops, calls, page } = setup(s.routes, initial);
+      const cmd = ops.resize('pg_1', [], 0.5, 0.7);
+      await cmd.apply();
+
+      const oldA = rectOf(initial, 'pn_a');
+      const newA = rectOf(s.get(), 'pn_a');
+      const moved = page().frames.find((f) => f.id === 'tf_a')!;
+      expect(moved.box.x).toBeCloseTo(newA.x + ((box.x - oldA.x) * newA.w) / oldA.w, 12);
+      expect(moved.box.w).toBeCloseTo((box.w * newA.w) / oldA.w, 12);
+      expect(moved.box.y).toBeCloseTo(box.y, 12);
+      expect(moved.tail?.x).toBeCloseTo(newA.x + ((tail.x - oldA.x) * newA.w) / oldA.w, 12);
+      expect(moved).toEqual(s.get().frames.find((f) => f.id === 'tf_a'));
+      expect(page().frames.find((f) => f.id === 'tf_b')?.box.x).not.toBe(0.6);
+      expect(page().frames.find((f) => f.id === 'tf_free')?.box).toEqual(free);
+      const patched = calls.filter((c) => c.method === 'PATCH').map((c) => c.path).sort();
+      expect(patched).toEqual(['/api/frames/tf_a', '/api/frames/tf_b']);
+      expect(calls.find((c) => c.path === '/api/frames/tf_a')?.body).toEqual({ box: moved.box, tail: moved.tail });
+
+      await cmd.revert();
+      for (const state of [page(), s.get()]) {
+        expect(shape(state)).toEqual(shape(initial));
+        expect(state.page.layout).toEqual(initial.page.layout);
+      }
+      // Redo repeats the apply from the restored state.
+      await cmd.apply();
+      expect(page().frames.find((f) => f.id === 'tf_a')).toEqual(moved);
+    });
+
+    it('a resize whose frame PATCH fails rejects, keeps the layout and shows the frames as the server has them', async () => {
+      const initial = threeFrames();
+      const s = server(initial, true);
+      const { ops, page } = setup(s.routes, initial);
+      await expect(ops.resize('pg_1', [], 0.5, 0.7).apply()).rejects.toThrow('frame 500');
+      expect((page().page.layout as SplitNode).ratio).toBe(0.7);
+      expect(page().frames.map((f) => f.box)).toEqual(initial.frames.map((f) => f.box));
+    });
+
+    it('a resize without anchored frames sends no frame PATCH', async () => {
+      const initial = makeDetail('pg_1', [makeFrame('tf_free', 'pg_1')]);
+      const s = server(initial);
+      const { ops, calls } = setup(s.routes, initial);
+      const cmd = ops.resize('pg_1', [], 0.5, 0.6);
+      await cmd.apply();
+      await cmd.revert();
+      expect(calls.every((c) => c.path.endsWith('/layout/resize'))).toBe(true);
+    });
+
+    it('split re-anchors the frames centred over the new panel; undo (merge) leaves them on A; redo follows the recreated panel', async () => {
+      // pn_a is the left column (x 0.055 to 0.5, y 0.05 to 0.95); an h split makes the lower half the new panel.
+      const initial = makeDetail('pg_1', [
+        anchored('tf_top', 'pn_a', { x: 0.2, y: 0.2, w: 0.1, h: 0.05 }),
+        anchored('tf_low', 'pn_a', { x: 0.2, y: 0.7, w: 0.1, h: 0.05 }),
+      ]);
+      const s = server(initial);
+      const { ops, page, ids } = setup(s.routes, initial);
+      const cmd = ops.split('pg_1', 'pn_a', 'h');
+      await cmd.apply();
+      const created = page().panels.find((p) => p.id.startsWith('pn_new'))!.id;
+      expect(shape(page())).toEqual([
+        ['tf_top', 'pn_a', initial.frames[0]!.box, null],
+        ['tf_low', created, initial.frames[1]!.box, null],
+      ]);
+      expect(s.get().frames.map((f) => f.panelId)).toEqual(['pn_a', created]);
+
+      await cmd.revert();
+      expect(page().frames.map((f) => f.panelId)).toEqual(['pn_a', 'pn_a']);
+      expect(page().frames.map((f) => f.box)).toEqual(initial.frames.map((f) => f.box));
+
+      await cmd.apply();
+      const recreated = page().panels.find((p) => p.id.startsWith('pn_new') && p.id !== created)!.id;
+      expect(ids.resolve(created)).toBe(recreated);
+      expect(page().frames.map((f) => f.panelId)).toEqual(['pn_a', recreated]);
+      expect(s.get().frames.map((f) => f.panelId)).toEqual(['pn_a', recreated]);
+    });
+
+    it('preset maps the frames of a kept panel to its new rect, and returns a frame failure instead of throwing', async () => {
+      const initial = threeFrames();
+      const after = resizeSplit(initial.page.layout, [], 0.3);
+      const s = server(initial);
+      s.routes['POST /api/pages/pg_1/layout/preset'] = () => ({ ...initial, page: { ...initial.page, layout: after } });
+      const { ops, page } = setup(s.routes, initial);
+      const out = await ops.applyPreset('pg_1', 'whatever', false);
+      expect(out.framesError).toBeNull();
+      const oldA = rectOf(initial, 'pn_a');
+      const newA = rectOf(out.detail, 'pn_a');
+      expect(page().frames.find((f) => f.id === 'tf_a')?.box.w).toBeCloseTo((box.w * newA.w) / oldA.w, 12);
+      expect(page().frames.find((f) => f.id === 'tf_free')?.box).toEqual(free);
+
+      const failing = server(initial, true);
+      failing.routes['POST /api/pages/pg_1/layout/preset'] = () => ({ ...initial, page: { ...initial.page, layout: after } });
+      const again = setup(failing.routes, initial);
+      const res = await again.ops.applyPreset('pg_1', 'whatever', false);
+      expect((res.framesError as Error).message).toBe('frame 500');
+      expect(again.page().frames.map((f) => f.box)).toEqual(initial.frames.map((f) => f.box));
+    });
+
+    it('merge sends no frame PATCH: the server re-anchors the frames and their boxes stay', async () => {
+      const initial = threeFrames();
+      const s = server(initial);
+      const { ops, calls, page } = setup(s.routes, initial);
+      await ops.merge('pg_1', 'pn_a', 'pn_b');
+      expect(calls.map((c) => c.method)).toEqual(['POST']);
+      expect(shape(page())).toEqual([
+        ['tf_a', 'pn_a', box, tail], ['tf_b', 'pn_a', initial.frames[1]!.box, null], ['tf_free', null, free, null],
+      ]);
+    });
   });
 });

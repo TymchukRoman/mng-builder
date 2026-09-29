@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_PAGE_FORMAT, DEFAULT_TRANSFORM } from '@manga/shared';
+import { DEFAULT_PAGE_FORMAT, DEFAULT_TRANSFORM, resizeSplit } from '@manga/shared';
 import { printSizePx } from '../src/page/geometry';
 import {
-  dragFrameGeom, dragLabel, framesInOrder, geomPatch, ghostTailAt, rotateHandleAt, wheelZoom, imageFor, panelImageFilter, placeImage, printPpm, renderSize, sameTransform, usableSize,
+  dragFrameGeom, dragLabel, framesInOrder, geomPatch, ghostTailAt, rotateHandleAt, wheelZoom, imageFor, liveFrames, panelImageFilter, placeImage, printPpm, renderSize, sameTransform, usableSize,
 } from '../src/page/pageModel';
 import { makeDetail, makeFrame, makeImage, makePanel } from './fixtures';
 
@@ -131,5 +131,25 @@ describe('page model helpers', () => {
       expect(wheelZoom(DEFAULT_TRANSFORM, 10000, panel, image).scale).toBe(1);
       expect(wheelZoom({ x: 0, y: 0, scale: 8 }, -10000, panel, image).scale).toBe(8);
     });
+  });
+});
+
+describe('liveFrames', () => {
+  const detail = makeDetail('pg_1', [
+    makeFrame('tf_a', 'pg_1', { panelId: 'pn_a', box: { x: 0.2, y: 0.3, w: 0.15, h: 0.1 } }),
+    makeFrame('tf_free', 'pg_1', { panelId: null }),
+  ]);
+  const committed = detail.page.layout;
+
+  it('is the same array while nothing is dragged', () => {
+    expect(liveFrames(detail.frames, committed, committed, DEFAULT_PAGE_FORMAT)).toBe(detail.frames);
+  });
+
+  it('moves anchored frames with the live layout and leaves unanchored ones and the input alone', () => {
+    const live = resizeSplit(committed, [], 0.7);
+    const out = liveFrames(detail.frames, committed, live, DEFAULT_PAGE_FORMAT);
+    expect(out.find((f) => f.id === 'tf_a')?.box.w).toBeGreaterThan(0.15);
+    expect(out.find((f) => f.id === 'tf_free')).toBe(detail.frames[1]);
+    expect(detail.frames[0]?.box).toEqual({ x: 0.2, y: 0.3, w: 0.15, h: 0.1 });
   });
 });

@@ -1,6 +1,7 @@
-import type { ColorMode, Image, ImageTransform, PageDetail, PageFormat, Panel, TextFrame } from '@manga/shared';
+import type { ColorMode, Image, ImageTransform, LayoutNode, PageDetail, PageFormat, Panel, TextFrame } from '@manga/shared';
 import type { Box } from '@manga/shared';
 import { defaultTail, dragBox, moveFrame, rotationFromPointer, type Handle } from '../editor/frameDrag';
+import { applyMoves, reanchorFrames, rectMap } from '../editor/reanchor';
 import type { UpdateFrameBody } from '../types';
 import type { BoxPx, PointPx } from './bubbles';
 import { coverFit, pageSizePx, printSizePx, pxPerMm, zoomBy, type Placement, type SizePx } from './geometry';
@@ -9,6 +10,15 @@ export type FrameGeom = Pick<TextFrame, 'box' | 'tail' | 'rotation'>;
 
 export function framesInOrder(frames: readonly TextFrame[]): TextFrame[] {
   return [...frames].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+}
+
+/**
+ * The frames as they look while a gutter is dragged: the live layout replaces the committed one, and anchored frames follow
+ * their panel exactly as they will once the resize is saved (`reanchorFrames`). Nothing is saved from here.
+ */
+export function liveFrames(frames: readonly TextFrame[], committed: LayoutNode, live: LayoutNode, format: PageFormat): readonly TextFrame[] {
+  if (live === committed) return frames;
+  return applyMoves(frames, reanchorFrames(frames, rectMap(committed, format), rectMap(live, format)));
 }
 
 export function imageFor(detail: PageDetail, panel: Panel | undefined): Image | null {

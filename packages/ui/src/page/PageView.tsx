@@ -6,7 +6,7 @@ import { PAGE_SELECTION, clickPanel, frameSelection, panelSelection, type Select
 import { FrameView } from './FrameView';
 import { GutterHandles } from './GutterHandles';
 import { pageSizePx, pxPerMm, rectPx } from './geometry';
-import { framesInOrder, geomPatch, imageFor, panelImageFilter, printPpm } from './pageModel';
+import { framesInOrder, geomPatch, imageFor, liveFrames, panelImageFilter, printPpm } from './pageModel';
 import { PanelView } from './PanelView';
 import { useLiveOverride } from './useLiveOverride';
 import './page.css';
@@ -35,7 +35,10 @@ export function PageView({ detail, manga, widthPx, mode, selection = PAGE_SELECT
   const layout = useLiveOverride(detail.page.layout);
   const rects = useMemo(() => computeRects(layout.value, format), [layout.value, format]);
   const panels = useMemo(() => new Map(detail.panels.map((p) => [p.id, p])), [detail.panels]);
-  const frames = useMemo(() => framesInOrder(detail.frames), [detail.frames]);
+  const frames = useMemo(
+    () => framesInOrder(liveFrames(detail.frames, detail.page.layout, layout.value, format)),
+    [detail.frames, detail.page.layout, layout.value, format],
+  );
   const imageFilter = panelImageFilter(manga.colorMode);
   const borderPx = Math.max(format.borderMm * ppm, mode === 'print' ? 0 : 0.5);
   const adjustId = selection.kind === 'panel' && selection.adjust ? selection.panelId : null;

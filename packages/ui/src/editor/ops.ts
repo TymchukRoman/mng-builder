@@ -1,8 +1,9 @@
-import { resizeSplit, type ImageTransform, type LayoutNode, type PageDetail, type Panel, type SplitDir, type SplitPath, type TextFrame } from '@manga/shared';
+import { resizeSplit, type ImageTransform, type LayoutNode, type PageDetail, type PageFormat, type Panel, type SplitDir, type SplitPath, type TextFrame } from '@manga/shared';
 import type { ApiClient } from '../api';
 import type { CreateFrameBody, UpdateFrameBody, UpdatePanelBody } from '../types';
 import type { EditorCommand, FrameCreateCommand } from './commands';
 import type { IdMap } from './history';
+import { applyMoves, movePatch, reanchorFrames, rectMap, restoreMoves, type FrameMove } from './reanchor';
 
 export type OpsApi = Pick<ApiClient, 'get' | 'post' | 'patch' | 'delete'>;
 
@@ -16,7 +17,11 @@ export interface OpsCache {
   setPanel(panel: Panel): void;
 }
 
-export interface OpsDeps { api: OpsApi; ids: IdMap; cache: OpsCache }
+/** `format` is read at every use: the manga's page format decides the panel rects that frames are re-anchored between. */
+export interface OpsDeps { api: OpsApi; ids: IdMap; cache: OpsCache; format: () => PageFormat }
+
+/** The result of a barrier layout change: the layout is done, and re-anchoring the frames may still have failed (`framesError`). */
+export interface LayoutChange { detail: PageDetail; framesError: unknown }
 
 /** The body that re-creates `f` (POST /api/pages/:id/frames): every field the server stores, minus id, order and timestamps. */
 function frameBody(f: TextFrame, ids: IdMap): CreateFrameBody {
@@ -36,19 +41,62 @@ function splitChildOf(layout: LayoutNode, panelId: string): string | null {
   return splitChildOf(layout.a, panelId) ?? splitChildOf(layout.b, panelId);
 }
 
-export function createOps({ api, ids, cache }: OpsDeps) {
+export function createOps({ api, ids, cache, format }: OpsDeps) {
   const loadPage = async (pageId: string): Promise<PageDetail> => cache.getPage(pageId) ?? api.get<PageDetail>(`/api/pages/${pageId}`);
 
-  const resizeTo = async (pageId: string, path: SplitPath, ratio: number): Promise<void> => {
+  /**
+   * Resizes the split. With `moveFrames`, the frames anchored to the panels move with them (optimistically too, in the same
+   * cache write as the layout, so a gutter drag never shows the frames snapping back). Rolls both back on failure.
+   */
+  const resizeTo = async (pageId: string, path: SplitPath, ratio: number, moveFrames: boolean): Promise<{ prev: PageDetail; detail: PageDetail; moves: FrameMove[] }> => {
     await cache.cancel(pageId);
     const prev = await loadPage(pageId);
-    cache.setPage({ ...prev, page: { ...prev.page, layout: resizeSplit(prev.page.layout, [...path], ratio) } });
+    const layout = resizeSplit(prev.page.layout, [...path], ratio);
+    // The same shared function the server runs, so the optimistic frames land where the server's layout will put the panels.
+    const moves = moveFrames ? reanchorFrames(prev.frames, rectMap(prev.page.layout, format()), rectMap(layout, format())) : [];
+    cache.setPage({ ...prev, page: { ...prev.page, layout }, frames: applyMoves(prev.frames, moves) });
     try {
-      cache.setPage(await api.post<PageDetail>(`/api/pages/${pageId}/layout/resize`, { path, ratio }));
+      const detail = await api.post<PageDetail>(`/api/pages/${pageId}/layout/resize`, { path, ratio });
+      cache.setPage({ ...detail, frames: applyMoves(detail.frames, moves) });
+      return { prev, detail, moves };
     } catch (err) {
       cache.setPage(prev);
       throw err;
     }
+  };
+
+  /**
+   * PATCHes moved frames in parallel (the caller has already shown them moved) and confirms each in the cache. A frame whose
+   * PATCH fails goes back to its `before` state in the cache, and the first failure is thrown. The layout change that caused
+   * the moves stays: it is already saved, and a frame the user can drag back is a smaller problem than losing the layout.
+   */
+  const saveMoves = async (pageId: string, moves: readonly FrameMove[], before: readonly TextFrame[]): Promise<void> => {
+    const byId = new Map(before.map((f) => [f.id, f]));
+    const results = await Promise.allSettled(moves.map(async (move) => {
+      const from = byId.get(move.id);
+      if (!from) return;
+      const patch = movePatch(from, move);
+      if (Object.keys(patch).length === 0) return;
+      const body: UpdateFrameBody = typeof patch.panelId === 'string' ? { ...patch, panelId: ids.resolve(patch.panelId) } : patch;
+      try {
+        cache.setFrame(await api.patch<TextFrame>(`/api/frames/${ids.resolve(move.id)}`, body));
+      } catch (err) {
+        cache.setFrame(from);
+        throw err;
+      }
+    }));
+    const failed = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+    if (failed) throw failed.reason;
+  };
+
+  /** After a layout change the server made (split, preset): re-anchors the frames of the response and saves the moves. */
+  const followLayout = async (
+    pageId: string, detail: PageDetail, oldLayout: LayoutNode, opts?: { splitFrom: { panelId: string; newPanelId: string } },
+  ): Promise<void> => {
+    const moves = reanchorFrames(detail.frames, rectMap(oldLayout, format()), rectMap(detail.page.layout, format()), opts);
+    await cache.cancel(pageId);
+    cache.setPage({ ...detail, frames: applyMoves(detail.frames, moves) });
+    await saveMoves(pageId, moves, detail.frames);
   };
 
   const patchFrame = async (pageId: string, frameId: string, patch: UpdateFrameBody): Promise<void> => {
@@ -80,8 +128,28 @@ export function createOps({ api, ids, cache }: OpsDeps) {
   };
 
   return {
+    /**
+     * Frames anchored to a panel move with it (proportionally, see `reanchorFrames`). Reverting resizes back and PATCHes the
+     * moved frames to the exact boxes and tails they had before, never re-mapped, so undo is exact.
+     */
     resize(pageId: string, path: SplitPath, from: number, to: number): EditorCommand {
-      return { label: 'Resize panels', pageId, apply: () => resizeTo(pageId, path, to), revert: () => resizeTo(pageId, path, from) };
+      let restore: TextFrame[] = [];
+      return {
+        label: 'Resize panels',
+        pageId,
+        async apply() {
+          const { prev, detail, moves } = await resizeTo(pageId, path, to, true);
+          restore = prev.frames.filter((f) => moves.some((m) => m.id === f.id));
+          await saveMoves(pageId, moves, detail.frames);
+        },
+        async revert() {
+          const { detail } = await resizeTo(pageId, path, from, false);
+          const back = restoreMoves(restore);
+          await cache.cancel(pageId);
+          cache.setPage({ ...detail, frames: applyMoves(detail.frames, back) });
+          await saveMoves(pageId, back, detail.frames);
+        },
+      };
     },
 
     /**
@@ -99,12 +167,14 @@ export function createOps({ api, ids, cache }: OpsDeps) {
         pageId,
         async apply() {
           const target = ids.resolve(panelId);
+          const before = cache.getPage(pageId)?.page.layout;
           const detail = await api.post<PageDetail>(`/api/pages/${pageId}/layout/split`, { panelId: target, dir });
           const id = splitChildOf(detail.page.layout, target);
           if (id === null) throw new Error('The split did not create a panel');
           if (created !== null) ids.set(created, id);
           created = id;
-          cache.setPage(detail);
+          // Frames centred over the new half follow it (their boxes stay put). A failing PATCH rejects; the split stays.
+          await followLayout(pageId, detail, before ?? detail.page.layout, { splitFrom: { panelId: target, newPanelId: id } });
         },
         async revert() {
           if (created === null) return;
@@ -192,15 +262,29 @@ export function createOps({ api, ids, cache }: OpsDeps) {
       return { label: 'Switch image', pageId, apply: () => set(after), revert: () => set(before) };
     },
 
-    /** Barrier helper (not undoable): run through history.barrier(). */
-    async applyPreset(pageId: string, preset: string, confirm: boolean): Promise<PageDetail> {
+    /**
+     * Barrier helper (not undoable): run through history.barrier(). The layout call throws as it is (needs_confirm must reach
+     * the caller). Frames follow their panels once it succeeded; a failure there is returned, not thrown, so the barrier still
+     * clears the history of a page whose layout really changed.
+     */
+    async applyPreset(pageId: string, preset: string, confirm: boolean): Promise<LayoutChange> {
+      const prev = await loadPage(pageId);
       const detail = await api.post<PageDetail>(`/api/pages/${pageId}/layout/preset`, { preset, confirm });
-      cache.setPage(detail);
-      return detail;
+      try {
+        await followLayout(pageId, detail, prev.page.layout);
+        return { detail, framesError: null };
+      } catch (framesError) {
+        return { detail, framesError };
+      }
     },
 
-    /** Barrier helper (not undoable): run through history.barrier(). */
+    /**
+     * Barrier helper (not undoable): run through history.barrier(). The server re-anchors the removed panel's frames to the kept
+     * one and no box changes: the merged panel covers both old areas, so every frame is still over its panel (mapping the kept
+     * panel's frames from its old rect to the union would displace them).
+     */
     async merge(pageId: string, a: string, b: string): Promise<PageDetail> {
+      await cache.cancel(pageId);
       const detail = await api.post<PageDetail>(`/api/pages/${pageId}/layout/merge`, { panelIdA: ids.resolve(a), panelIdB: ids.resolve(b) });
       cache.setPage(detail);
       return detail;
