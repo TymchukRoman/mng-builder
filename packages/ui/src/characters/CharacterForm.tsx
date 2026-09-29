@@ -44,7 +44,7 @@ export function CharacterForm({ character }: { character: Character }): JSX.Elem
         </Field>
         <Field label="Seed" hint="Used for every portrait">
           <div className="row">
-            <NumberField label="Seed" value={character.seed} min={0} integer onSave={(seed) => patch.mutate({ seed })} />
+            <NumberField label="Seed" value={character.seed} min={0} integer onSave={(seed) => save({ seed })} />
             <IconButton icon={Dices} label="Random seed" onClick={() => patch.mutate({ seed: randomSeed() })} />
           </div>
         </Field>
