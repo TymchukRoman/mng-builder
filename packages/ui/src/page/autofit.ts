@@ -44,6 +44,15 @@ export function isBelowReadable(pt: number): boolean {
   return pt < MIN_READABLE_PT;
 }
 
+/**
+ * The measuring box: `printMeasure` with the width rounded up to a whole pixel. `scrollWidth` is an integer, so a box of
+ * 451.4999... px would otherwise read every fitting line as 1px too wide and shrink the text to the floor.
+ */
+export function measureBox(box: { w: number; h: number }, ppm: number, printPpm: number): { w: number; h: number; ppm: number } {
+  const m = printMeasure(box, ppm, printPpm);
+  return { ...m, w: Math.ceil(m.w - 1e-6) };
+}
+
 /** The fitted size is measured once at the print scale, so screen, thumbnail and print all show the same pt. */
 export function printMeasure(box: { w: number; h: number }, ppm: number, printPpm: number): { w: number; h: number; ppm: number } {
   const s = printPpm / ppm;

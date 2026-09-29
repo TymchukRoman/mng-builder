@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties, type JSX } from 'react';
 import type { TextFrame } from '@manga/shared';
 import { TriangleAlert } from '../ui/icons';
-import { AUTOFIT_MIN_PT, fitFontSize, fitWarning, fontFamilyFor, printMeasure, type FitResult } from './autofit';
+import { AUTOFIT_MIN_PT, fitFontSize, fitWarning, fontFamilyFor, measureBox, type FitResult } from './autofit';
 import type { BoxPx } from './bubbles';
 import { ptToPx } from './geometry';
 import { useFontsReady } from './useFontsReady';
@@ -25,7 +25,7 @@ export function FrameText({ frame, box, ppm, printPpm, mode }: FrameTextProps): 
   useLayoutEffect(() => {
     const el = measureRef.current;
     if (!el) return;
-    const pm = printMeasure(box, ppm, printPpm);
+    const pm = measureBox(box, ppm, printPpm);
     el.style.width = `${pm.w}px`;
     const measure = (pt: number): { w: number; h: number } => {
       el.style.fontSize = `${ptToPx(pt, pm.ppm)}px`;

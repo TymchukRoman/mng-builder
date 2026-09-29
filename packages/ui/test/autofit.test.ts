@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AUTOFIT_MIN_PT, fitFontSize, fitWarning, fontFamilyFor, isBelowReadable, printMeasure } from '../src/page/autofit';
+import { AUTOFIT_MIN_PT, fitFontSize, fitWarning, fontFamilyFor, isBelowReadable, measureBox, printMeasure } from '../src/page/autofit';
 
 describe('fitFontSize', () => {
   it('keeps the preferred size when it fits', () => {
@@ -110,5 +110,16 @@ describe('fitWarning', () => {
   });
   it('is silent at or above 7 pt', () => {
     expect(fitWarning({ pt: 7, overflow: false }, 9, true)).toBeNull();
+  });
+});
+
+describe('measureBox', () => {
+  it('rounds the width up so an integer scrollWidth can equal it', () => {
+    // 0.3 * 0.7 of a 2150 px page: 451.49999999999994 px, which the browser measures as 452.
+    const m = measureBox({ w: 451.49999999999994, h: 254.94 }, 11.813, 11.813);
+    expect(m.w).toBe(452);
+    expect(m.h).toBeCloseTo(254.94, 6);
+    expect(measureBox({ w: 452, h: 10 }, 1, 1).w).toBe(452);
+    expect(measureBox({ w: 100, h: 10 }, 1, 2)).toEqual({ w: 200, h: 20, ppm: 2 });
   });
 });
