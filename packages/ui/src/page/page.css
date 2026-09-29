@@ -1,6 +1,6 @@
 /* The page is paper and ink in every theme (print is never themed); editor chrome uses the theme accent. */
 .page-view { position: relative; flex: none; overflow: hidden; background: var(--paper); user-select: none; }
-/* Edit mode clips to the page too, but lets the 9px corner handles of a frame on the page edge stay whole. */
+/* Edit mode clips to the page too, but lets the 9px corner handles of a frame on the page edge stay whole. (overflow-clip-margin is unsupported in Safari; this tool targets Chromium.) */
 .page-view--edit { overflow: clip; overflow-clip-margin: var(--handle); outline: 1px solid var(--border-2); }
 .page-thumb { line-height: 0; outline: 1px solid var(--border-2); }
 .page-thumb .page-view { pointer-events: none; }
@@ -30,6 +30,8 @@
 .gutter:hover { background: var(--accent-wash); }
 
 .frame { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+/* The selected frame's handles stay grabbable over a later frame that overlaps it. */
+.frame.is-selected { z-index: 4; }
 .frame-shape { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
 .frame__hit { position: absolute; pointer-events: auto; cursor: move; transform-origin: center; }
 .frame__handles { position: absolute; inset: 0; pointer-events: none; }

@@ -1,6 +1,6 @@
 import { useMemo, type JSX, type PointerEvent as ReactPointerEvent } from 'react';
 import type { TextFrame } from '@manga/shared';
-import { canRotate, defaultTail, hasTail } from '../editor/frameDrag';
+import { canRotate, hasTail } from '../editor/frameDrag';
 import { cx } from '../lib/cx';
 import { shapeFor, textBox } from './bubbles';
 import { startDrag } from './drag';
@@ -8,7 +8,7 @@ import { FrameHandles } from './FrameHandles';
 import { FrameShape } from './FrameShape';
 import { FrameText } from './FrameText';
 import type { SizePx } from './geometry';
-import { dragFrameGeom, dragLabel, geomPatch, type FrameGeom, type FrameHandle } from './pageModel';
+import { dragFrameGeom, dragLabel, geomPatch, ghostTailAt, rotateHandleAt, type FrameGeom, type FrameHandle } from './pageModel';
 import { useLiveOverride } from './useLiveOverride';
 
 export interface FrameViewProps {
@@ -33,7 +33,6 @@ export function FrameView({ frame, size, ppm, printPpm, mode, selected, toNorm, 
   const g = live.value;
   const box = { x: g.box.x * size.w, y: g.box.y * size.h, w: g.box.w * size.w, h: g.box.h * size.h };
   const tip = hasTail(frame.kind) && g.tail ? { x: g.tail.x * size.w, y: g.tail.y * size.h } : null;
-  const ghost = defaultTail(g.box);
   const shapes = shapeFor(frame.kind, box, tip);
   const rotate = canRotate(frame.kind) && g.rotation !== 0 ? `rotate(${g.rotation}deg)` : undefined;
 
@@ -44,6 +43,7 @@ export function FrameView({ frame, size, ppm, printPpm, mode, selected, toNorm, 
     const p0 = toNorm(e);
     live.begin();
     startDrag(e, {
+      // A corner drag on a rotated sfx/title frame is axis-aligned (`dragBox` ignores the rotation): a known limitation.
       move: (ev) => live.update(dragFrameGeom(start, handle, p0, toNorm(ev), size)),
       end: (ok) => {
         const end = live.end();
@@ -66,7 +66,7 @@ export function FrameView({ frame, size, ppm, printPpm, mode, selected, toNorm, 
           onPointerDown={(e) => drag(e, 'move')} />
       )}
       {edit && selected && (
-        <FrameHandles box={box} tip={tip} ghostTip={{ x: ghost.x * size.w, y: ghost.y * size.h }} kind={frame.kind} rotation={g.rotation} onHandle={drag} />
+        <FrameHandles box={box} tip={tip} ghostTip={ghostTailAt(g.box, size)} rotateAt={rotateHandleAt(box, size)} kind={frame.kind} rotation={g.rotation} onHandle={drag} />
       )}
     </div>
   );

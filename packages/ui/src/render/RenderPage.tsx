@@ -1,9 +1,10 @@
 import { useEffect, useRef, type JSX } from 'react';
 import { useParams, useSearchParams } from 'react-router';
 import { PageView } from '../page/PageView';
-import { renderSize } from '../page/pageModel';
+import { renderPageSize } from '../page/pageModel';
 import { useManga, usePageDetail } from '../queries';
 import { errorText } from '../ui/toasts';
+import { renderOutcome } from './renderOutcome';
 import './render.css';
 
 declare global {
@@ -45,7 +46,15 @@ export function RenderPage(): JSX.Element {
     void (async () => {
       await document.fonts.ready;
       const imgs = Array.from(rootRef.current?.querySelectorAll('img') ?? []);
-      await Promise.all(imgs.map((img) => img.decode().catch(() => undefined)));
+      const results = await Promise.all(imgs.map((img) => img.decode().then(
+        () => ({ label: img.closest<HTMLElement>('[data-panel-id]')?.dataset.panelId ?? img.src, ok: true }),
+        () => ({ label: img.closest<HTMLElement>('[data-panel-id]')?.dataset.panelId ?? img.src, ok: false }),
+      )));
+      const outcome = renderOutcome(results);
+      if (!outcome.ready) {
+        if (!cancelled) window.__MANGA_RENDER_ERROR__ = outcome.error; // fail fast: the exporter must not wait for READY
+        return;
+      }
       await frames(2); // lets FrameText re-measure with the loaded fonts and commit
       await document.fonts.ready;
       await frames(1); // a font that finished loading just now re-fits the text; let that commit before signalling
@@ -55,7 +64,8 @@ export function RenderPage(): JSX.Element {
   }, [detail.data, manga.data]);
 
   if (!detail.data || !manga.data) return <div className="render-root" />;
-  const size = renderSize(manga.data.pageFormat, search.get('scale'));
+  // Root and PageView share one size (PageView derives its height from the width), so no sliver of paper shows at any scale.
+  const size = renderPageSize(manga.data.pageFormat, search.get('scale'));
   return (
     <div ref={rootRef} className="render-root" style={{ width: size.w, height: size.h }}>
       <PageView detail={detail.data} manga={manga.data} widthPx={size.w} mode="print" />

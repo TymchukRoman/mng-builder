@@ -5,8 +5,8 @@ import { cx } from '../lib/cx';
 import { IconButton } from '../ui/IconButton';
 import { Check, RotateCcw } from '../ui/icons';
 import { startDrag } from './drag';
-import { panBy, zoomBy, type Placement } from './geometry';
-import { placeImage, sameTransform, usableSize } from './pageModel';
+import { panBy, type Placement } from './geometry';
+import { placeImage, sameTransform, usableSize, wheelZoom } from './pageModel';
 import { useLiveOverride } from './useLiveOverride';
 
 export interface PanelViewProps {
@@ -48,20 +48,24 @@ export function PanelView(p: PanelViewProps): JSX.Element {
     const el = ref.current;
     if (!el || !adjusting) return;
     let start: ImageTransform | null = null;
+    // The latest computed transform. Set synchronously in the handler, so two wheel events between renders both count.
+    let current: ImageTransform | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const flush = (): void => {
       clearTimeout(timer);
       const s = start;
       start = null;
+      current = null;
       const end = live.end();
       if (!(s && end && !sameTransform(s, end) && latest.current.props.onTransform?.(panelId, s, end))) live.cancel();
     };
     const onWheel = (e: WheelEvent): void => {
-      const { t: cur, natural: size, box: b } = latest.current;
+      const { t: rendered, natural: size, box: b } = latest.current;
       if (!size) return;
       e.preventDefault();
-      if (!start) { start = cur; live.begin(); }
-      live.update(zoomBy(cur, Math.exp(-e.deltaY * 0.0015), b, size));
+      if (!start) { start = rendered; live.begin(); }
+      current = wheelZoom(current ?? rendered, e.deltaY, b, size);
+      live.update(current);
       clearTimeout(timer);
       timer = setTimeout(flush, 300);
     };

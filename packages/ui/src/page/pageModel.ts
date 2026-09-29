@@ -1,7 +1,9 @@
 import type { ColorMode, Image, ImageTransform, PageDetail, PageFormat, Panel, TextFrame } from '@manga/shared';
-import { dragBox, moveFrame, rotationFromPointer, type Handle } from '../editor/frameDrag';
+import type { Box } from '@manga/shared';
+import { defaultTail, dragBox, moveFrame, rotationFromPointer, type Handle } from '../editor/frameDrag';
 import type { UpdateFrameBody } from '../types';
-import { coverFit, printSizePx, pxPerMm, type Placement, type SizePx } from './geometry';
+import type { BoxPx, PointPx } from './bubbles';
+import { coverFit, pageSizePx, printSizePx, pxPerMm, zoomBy, type Placement, type SizePx } from './geometry';
 
 export type FrameGeom = Pick<TextFrame, 'box' | 'tail' | 'rotation'>;
 
@@ -91,4 +93,34 @@ export function renderSize(format: PageFormat, scaleParam: string | null): SizeP
   const n = scaleParam === null ? 1 : Number(scaleParam);
   const scale = Number.isFinite(n) && n > 0 ? Math.min(4, Math.max(0.1, n)) : 1;
   return printSizePx(format, scale);
+}
+
+/**
+ * The size of the print route's root: the print width from `renderSize`, with the height PageView derives from that width.
+ * `printSizePx` rounds the height on its own and can differ from it by a few pixels at scales other than 1.
+ */
+export function renderPageSize(format: PageFormat, scaleParam: string | null): SizePx {
+  return pageSizePx(format, renderSize(format, scaleParam).w);
+}
+
+const ROTATE_GAP_PX = 18;
+
+/** The rotate handle sits above the box; on the page's top edge it moves below the box so it stays on the page. */
+export function rotateHandleAt(box: BoxPx, size: SizePx): PointPx {
+  const x = box.x + box.w / 2;
+  const above = box.y - ROTATE_GAP_PX;
+  if (above >= 0) return { x, y: above };
+  return { x, y: Math.min(size.h, box.y + box.h + ROTATE_GAP_PX) };
+}
+
+/** The ghost tail starts below the box (Task 10 `defaultTail`); on the page's bottom edge it starts above the box. */
+export function ghostTailAt(box: Box, size: SizePx): PointPx {
+  const below = defaultTail(box);
+  if (below.y <= 1) return { x: below.x * size.w, y: below.y * size.h };
+  return { x: below.x * size.w, y: Math.max(0, box.y + (box.y + box.h - below.y)) * size.h };
+}
+
+/** One wheel event of the image zoom. Feed it the previous result, not the rendered transform, so events between renders accumulate. */
+export function wheelZoom(t: ImageTransform, deltaY: number, panel: SizePx, image: SizePx): ImageTransform {
+  return zoomBy(t, Math.exp(-deltaY * 0.0015), panel, image);
 }

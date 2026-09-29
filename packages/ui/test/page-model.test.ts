@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_PAGE_FORMAT, DEFAULT_TRANSFORM } from '@manga/shared';
 import { printSizePx } from '../src/page/geometry';
 import {
-  dragFrameGeom, dragLabel, framesInOrder, geomPatch, imageFor, panelImageFilter, placeImage, printPpm, renderSize, sameTransform, usableSize,
+  dragFrameGeom, dragLabel, framesInOrder, geomPatch, ghostTailAt, rotateHandleAt, wheelZoom, imageFor, panelImageFilter, placeImage, printPpm, renderSize, sameTransform, usableSize,
 } from '../src/page/pageModel';
 import { makeDetail, makeFrame, makeImage, makePanel } from './fixtures';
 
@@ -96,6 +96,40 @@ describe('page model helpers', () => {
     it('labels each drag for the undo history', () => {
       expect(['move', 'nw', 'se', 'tail', 'rotate'].map((h) => dragLabel(h as never))).toEqual(
         ['Move frame', 'Resize frame', 'Resize frame', 'Move tail', 'Rotate frame']);
+    });
+  });
+
+  describe('handles at the page edge', () => {
+    const size = { w: 1000, h: 1000 };
+    it('puts the rotate handle above the box, or below it on the top edge', () => {
+      expect(rotateHandleAt({ x: 400, y: 300, w: 200, h: 100 }, size)).toEqual({ x: 500, y: 282 });
+      expect(rotateHandleAt({ x: 400, y: 10, w: 200, h: 100 }, size)).toEqual({ x: 500, y: 128 });
+      expect(rotateHandleAt({ x: 0, y: 0, w: 1000, h: 1000 }, size)).toEqual({ x: 500, y: 1000 });
+    });
+    it('starts the ghost tail below the box, or above it on the bottom edge', () => {
+      const mid = ghostTailAt({ x: 0.4, y: 0.3, w: 0.2, h: 0.1 }, size);
+      expect(mid.x).toBeCloseTo(460, 6);
+      expect(mid.y).toBeCloseTo(440, 6);
+      const bottom = ghostTailAt({ x: 0.4, y: 0.9, w: 0.2, h: 0.1 }, size);
+      expect(bottom.x).toBeCloseTo(460, 6);
+      expect(bottom.y).toBeCloseTo(860, 6);
+      expect(ghostTailAt({ x: 0, y: 0, w: 1, h: 1 }, size).y).toBe(0);
+    });
+  });
+
+  describe('wheel zoom', () => {
+    const panel = { w: 400, h: 300 };
+    const image = { w: 800, h: 600 };
+    it('zooms in on a negative delta and out on a positive one', () => {
+      expect(wheelZoom(DEFAULT_TRANSFORM, -100, panel, image).scale).toBeCloseTo(Math.exp(0.15), 9);
+      expect(wheelZoom({ x: 0, y: 0, scale: 2 }, 100, panel, image).scale).toBeCloseTo(2 * Math.exp(-0.15), 9);
+    });
+    it('accumulates when fed its own result, and stays within the scale limits', () => {
+      const once = wheelZoom(DEFAULT_TRANSFORM, -100, panel, image);
+      const twice = wheelZoom(once, -100, panel, image);
+      expect(twice.scale).toBeCloseTo(Math.exp(0.3), 9);
+      expect(wheelZoom(DEFAULT_TRANSFORM, 10000, panel, image).scale).toBe(1);
+      expect(wheelZoom({ x: 0, y: 0, scale: 8 }, -10000, panel, image).scale).toBe(8);
     });
   });
 });

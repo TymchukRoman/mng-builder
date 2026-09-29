@@ -7,12 +7,14 @@ import type { FrameHandle } from './pageModel';
 
 const CORNERS: Handle[] = ['nw', 'ne', 'sw', 'se'];
 
-export function FrameHandles({ box, tip, ghostTip, kind, rotation, onHandle }: {
+export function FrameHandles({ box, tip, ghostTip, rotateAt, kind, rotation, onHandle }: {
   box: BoxPx;
   /** The tail tip in page pixels, or null when the frame has no tail. */
   tip: PointPx | null;
-  /** Where a first tail would start (Task 10 `defaultTail`, in page pixels): shown as a ghost handle. */
+  /** Where a first tail would start (`ghostTailAt`, in page pixels): shown as a ghost handle. */
   ghostTip: PointPx;
+  /** Where the rotate handle sits (`rotateHandleAt`: above the box, or below it on the page's top edge). */
+  rotateAt: PointPx;
   kind: FrameKind;
   rotation: number;
   onHandle(e: ReactPointerEvent, h: FrameHandle): void;
@@ -35,7 +37,7 @@ export function FrameHandles({ box, tip, ghostTip, kind, rotation, onHandle }: {
       )}
       {canRotate(kind) && (
         <div className="handle handle--rotate" data-handle="rotate" data-tip={`Rotate (${rotation}°)`}
-          style={{ left: box.x + box.w / 2, top: box.y - 18 }} onPointerDown={(e) => onHandle(e, 'rotate')} />
+          style={{ left: rotateAt.x, top: rotateAt.y }} onPointerDown={(e) => onHandle(e, 'rotate')} />
       )}
     </div>
   );

@@ -123,3 +123,21 @@ describe('measureBox', () => {
     expect(measureBox({ w: 100, h: 10 }, 1, 2)).toEqual({ w: 200, h: 20, ppm: 2 });
   });
 });
+
+describe('fitting at a fractional box width (scrollWidth is an integer)', () => {
+  // The browser lays a style width out in 1/64 px and reports scrollWidth as a whole number, never below the element's width.
+  const scrollWidth = (styleWidth: number, textWidth: number): number =>
+    Math.max(Math.round(Math.round(styleWidth * 64) / 64), Math.ceil(textWidth));
+  const fitAt = (box: { w: number; h: number }): { pt: number; overflow: boolean } =>
+    fitFontSize({ maxPt: 9, box, measure: (pt) => ({ w: scrollWidth(box.w, pt * 10), h: pt * 3 }) });
+
+  it('repro: the unrounded 451.4999... box reads every size as too wide and drops to the floor', () => {
+    const raw = printMeasure({ w: 451.49999999999994, h: 254.94 }, 11.813, 11.813);
+    expect(fitAt(raw)).toEqual({ pt: 4, overflow: true });
+  });
+
+  it('measureBox lets a one-line text keep its preferred size', () => {
+    const box = measureBox({ w: 451.49999999999994, h: 254.94 }, 11.813, 11.813);
+    expect(fitAt(box)).toEqual({ pt: 9, overflow: false });
+  });
+});
