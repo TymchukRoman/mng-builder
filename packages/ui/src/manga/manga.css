@@ -1,0 +1,22 @@
+.manga-head { display: grid; grid-template-columns: auto 1fr auto; gap: var(--sp-5); align-items: start; margin-bottom: var(--sp-5); }
+.manga-head__cover { padding: 0; border: 0; background: none; cursor: pointer; line-height: 0; border-radius: var(--r-sm); }
+.manga-head__cover:hover { box-shadow: 0 0 0 var(--sp-half) var(--accent); }
+.manga-head__text { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; max-width: 72ch; }
+.manga-head__text h1 { font-size: var(--fs-xl); }
+.manga-head__badges { display: flex; gap: var(--sp-1); }
+.manga-head__actions { display: flex; gap: var(--sp-1); }
+
+.chapter-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-half); max-width: 880px; }
+.chapter-row { display: flex; align-items: center; gap: var(--sp-1); border-radius: var(--r-md); }
+.chapter-row:hover { background: var(--hover-wash); }
+.chapter-row__link { flex: 1; min-width: 0; display: grid; grid-template-columns: 40px 32px 1fr 48px 88px; align-items: center; gap: var(--sp-3); padding: var(--sp-1) var(--sp-2); color: var(--text-1); }
+.chapter-row__thumb { line-height: 0; }
+.chapter-row__num { color: var(--text-2); text-align: right; }
+.chapter-row__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chapter-row__pages { color: var(--text-2); text-align: right; }
+.chapter-row--new { width: 100%; height: 40px; justify-content: center; background: none; border: 1px dashed var(--border-3); color: var(--text-3); cursor: pointer; }
+.chapter-row--new:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-wash); }
+
+.lora-editor { display: flex; flex-direction: column; gap: var(--sp-2); }
+.lora-row { display: grid; grid-template-columns: 1fr 88px auto; gap: var(--sp-2); align-items: center; }
+.page-size { align-self: flex-start; }
