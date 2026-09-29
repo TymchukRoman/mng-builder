@@ -1,0 +1,30 @@
+.portrait-grid { display: grid; grid-template-columns: repeat(auto-fill, 112px); gap: var(--sp-4); }
+.portrait-card { display: flex; flex-direction: column; gap: var(--sp-2); padding: 0; background: none; border: 0; cursor: pointer; color: var(--text-1); text-align: left; }
+.portrait-card__art {
+  width: 112px; height: 150px; display: flex; align-items: center; justify-content: center; overflow: hidden;
+  background: var(--surface-2); border-radius: var(--r-md); color: var(--text-3);
+}
+.portrait-card__art img { width: 100%; height: 100%; object-fit: cover; }
+.portrait-card:hover .portrait-card__art { box-shadow: 0 0 0 var(--sp-half) var(--accent); }
+.portrait-card__name { font-size: var(--fs-md); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.portrait-card--new { width: 112px; height: 150px; align-items: center; justify-content: center; color: var(--text-3); border: 1px dashed var(--border-3); border-radius: var(--r-md); }
+.portrait-card--new:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-wash); }
+
+.variant-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-2); }
+.variant-grid--small { grid-template-columns: repeat(4, 64px); }
+.variant { position: relative; aspect-ratio: 832 / 1216; border-radius: var(--r-sm); overflow: hidden; background: var(--surface-2); }
+.variant--pending { display: flex; align-items: flex-end; padding: var(--sp-1); }
+.variant--pending .status-loader { font-size: var(--fs-xs); flex-wrap: wrap; }
+.variant__pick { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: pointer; border-radius: var(--r-sm); overflow: hidden; }
+.variant__pick img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.variant.is-picked, .variant__pick.is-picked { box-shadow: 0 0 0 var(--sp-half) var(--accent); }
+.variant__delete { position: absolute; top: var(--sp-half); right: var(--sp-half); background: var(--surface); opacity: 0; }
+.variant:hover .variant__delete, .variant__delete:focus-visible, .variant__delete.icon-btn--danger { opacity: 1; }
+
+.slot-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-2); }
+.ref-slot { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; }
+.ref-slot__art { aspect-ratio: 3 / 4; display: flex; align-items: center; justify-content: center; overflow: hidden; border-radius: var(--r-sm); background: var(--surface-2); color: var(--text-3); }
+.ref-slot__art img { width: 100%; height: 100%; object-fit: cover; }
+.ref-slot__bar { display: flex; align-items: center; gap: var(--sp-half); }
+.ref-slot__label { flex: 1; min-width: 0; font-size: var(--fs-xs); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.suggest-popover { width: 320px; }
