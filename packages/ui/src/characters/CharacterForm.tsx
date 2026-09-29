@@ -31,21 +31,21 @@ export function CharacterForm({ character }: { character: Character }): JSX.Elem
         <AutoText label="Name" value={character.name} onSave={(v) => (v.trim() ? save({ name: v.trim() }) : undefined)} />
       </Field>
       <Field label="Role" group>
-        <Segmented<Character['role']> label="Role" value={character.role} options={ROLE_OPTIONS} onChange={(role) => void save({ role })} />
+        <Segmented<Character['role']> label="Role" value={character.role} options={ROLE_OPTIONS} onChange={(role) => patch.mutate({ role })} />
       </Field>
       <Field label="Personality"><AutoText multiline label="Personality" value={character.personality} onSave={(personality) => save({ personality })} /></Field>
       <Field label="Speech style"><AutoText multiline label="Speech style" value={character.speechStyle} onSave={(speechStyle) => save({ speechStyle })} /></Field>
       <AppearanceField character={character} onSave={(appearanceTags) => save({ appearanceTags })} />
       <div className="grid-2">
         <Field label="Recipe">
-          <select className="select" value={character.recipe ?? ''} onChange={(e) => void save({ recipe: e.target.value || null })}>
+          <select className="select" value={character.recipe ?? ''} onChange={(e) => patch.mutate({ recipe: e.target.value || null })}>
             {characterRecipeOptions(recipes.data, character.recipe).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </Field>
         <Field label="Seed" hint="Used for every portrait">
           <div className="row">
-            <NumberField label="Seed" value={character.seed} min={0} integer onSave={(seed) => void save({ seed })} />
-            <IconButton icon={Dices} label="Random seed" onClick={() => void save({ seed: randomSeed() })} />
+            <NumberField label="Seed" value={character.seed} min={0} integer onSave={(seed) => patch.mutate({ seed })} />
+            <IconButton icon={Dices} label="Random seed" onClick={() => patch.mutate({ seed: randomSeed() })} />
           </div>
         </Field>
       </div>

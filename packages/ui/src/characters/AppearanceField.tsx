@@ -9,6 +9,7 @@ import { qk } from '../queryKeys';
 import { AutoText } from '../ui/AutoText';
 import { IconButton } from '../ui/IconButton';
 import { Sparkles, WandSparkles } from '../ui/icons';
+import { shouldClearDescription } from './characterModel';
 import { Popover } from '../ui/Popover';
 import { StatusLoader } from '../ui/StatusLoader';
 
@@ -30,7 +31,8 @@ export function AppearanceField({ character, onSave }: { character: Character; o
       // The job writes character.appearanceTags itself; a failure is toasted by the socket handler.
       return waitForJob(id);
     },
-    onSuccess: () => setDescription(''),
+    // waitForJob resolves on every terminal state; keep the typed text unless the job succeeded, so a failed one can be retried.
+    onSuccess: (finished) => { if (shouldClearDescription(finished)) setDescription(''); },
     onSettled: () => {
       setJobId(null);
       void qc.invalidateQueries({ queryKey: qk.character(character.id) });

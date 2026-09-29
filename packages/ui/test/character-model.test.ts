@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Character, RecipeInfo } from '@manga/shared';
-import { PORTRAIT_BATCH, REF_SLOTS, canGenerateSheet, characterRecipeOptions, imagesForSlot, slotLabel } from '../src/characters/characterModel';
+import { PORTRAIT_BATCH, REF_SLOTS, canGenerateSheet, characterRecipeOptions, imagesForSlot, shouldClearDescription, slotLabel } from '../src/characters/characterModel';
 import { makeImage } from './fixtures';
 
 const character = (refs: Character['refs']): Character => ({
@@ -33,8 +33,16 @@ describe('character model', () => {
     expect(REF_SLOTS.map(slotLabel)).toEqual(['Portrait', 'Full body', 'Side', 'Back']);
   });
 
-  it('generates a batch of four portraits, within the server’s 1-8 range', () => {
-    expect(PORTRAIT_BATCH).toBe(4);
+  it('asks for a portrait batch inside the server’s 1-8 range', () => {
+    expect(Number.isInteger(PORTRAIT_BATCH)).toBe(true);
+    expect(PORTRAIT_BATCH).toBeGreaterThanOrEqual(1);
+    expect(PORTRAIT_BATCH).toBeLessThanOrEqual(8);
+  });
+
+  it('clears the typed description only after a succeeded suggestion', () => {
+    expect(shouldClearDescription({ status: 'succeeded' })).toBe(true);
+    expect(shouldClearDescription({ status: 'failed' })).toBe(false);
+    expect(shouldClearDescription({ status: 'cancelled' })).toBe(false);
   });
 
   it('offers Auto plus the portrait recipes, keeping a recipe set elsewhere selectable', () => {

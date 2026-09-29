@@ -1,4 +1,4 @@
-import type { Character, Image, RecipeInfo, RefSlot } from '@manga/shared';
+import type { Character, Image, Job, RecipeInfo, RefSlot } from '@manga/shared';
 import { portraitRecipes } from '../lib/recipes';
 
 export const REF_SLOTS: readonly RefSlot[] = ['portrait', 'fullbody', 'side', 'back'];
@@ -29,4 +29,9 @@ export function characterRecipeOptions(list: readonly RecipeInfo[] | undefined, 
     options.push({ value: current, label: (list ?? []).find((r) => r.id === current)?.label ?? current });
   }
   return options;
+}
+
+/** The description box is cleared only once the AI job succeeded; a failed or cancelled job keeps the text for a retry. */
+export function shouldClearDescription(job: Pick<Job, 'status'>): boolean {
+  return job.status === 'succeeded';
 }
