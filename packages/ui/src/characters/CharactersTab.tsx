@@ -3,6 +3,7 @@ import type { Manga } from '@manga/shared';
 import { imageUrl } from '../api';
 import { useCharacters } from '../queries';
 import { Plus, UserRound } from '../ui/icons';
+import { ErrorState } from '../ui/ErrorState';
 import { StatusLoader } from '../ui/StatusLoader';
 import { CharacterDrawer } from './CharacterDrawer';
 import './characters.css';
@@ -12,6 +13,7 @@ export function CharactersTab({ manga }: { manga: Manga }): JSX.Element {
   const [open, setOpen] = useState<string | 'new' | null>(null);
   return (
     <div className="tab-body">
+      {characters.error && <ErrorState error={characters.error} onRetry={() => void characters.refetch()} retrying={characters.isFetching} />}
       {characters.isPending ? <StatusLoader label="Loading characters" /> : (
         <div className="portrait-grid">
           {(characters.data ?? []).map((c) => (

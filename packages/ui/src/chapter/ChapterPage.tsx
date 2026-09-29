@@ -3,8 +3,8 @@ import { useParams } from 'react-router';
 import { ChapterEditor } from '../editor/ChapterEditor';
 import { isId } from '../lib/ids';
 import { useChapter, useManga, usePages } from '../queries';
+import { ErrorState } from '../ui/ErrorState';
 import { StatusLoader } from '../ui/StatusLoader';
-import { errorText } from '../ui/toasts';
 import { EpisodePanel } from './EpisodePanel';
 
 /** /m/:mangaId/c/:chapterId — the chapter editor, with the M4 episode stepper slot above it. */
@@ -14,10 +14,15 @@ export function ChapterPage(): JSX.Element {
   const manga = useManga(valid ? mangaId : undefined);
   const chapter = useChapter(valid ? chapterId : undefined);
   const pages = usePages(valid ? chapterId : undefined);
-  if (!valid) return <section className="screen"><p className="error-text">Not found</p></section>;
+  if (!valid) return <section className="screen"><ErrorState text="Not found" backTo="/" backLabel="All manga" /></section>;
   if (!manga.data || !chapter.data || !pages.data) {
     const err = manga.error ?? chapter.error ?? pages.error;
-    return <section className="screen">{err ? <p className="error-text">{errorText(err)}</p> : <StatusLoader label="Loading chapter" />}</section>;
+    const retry = (): void => { for (const q of [manga, chapter, pages]) if (q.isError) void q.refetch(); };
+    return (
+      <section className="screen">
+        {err ? <ErrorState error={err} onRetry={retry} backTo={`/m/${mangaId}`} backLabel="Back to the manga" /> : <StatusLoader label="Loading chapter" />}
+      </section>
+    );
   }
   return (
     <ChapterEditor

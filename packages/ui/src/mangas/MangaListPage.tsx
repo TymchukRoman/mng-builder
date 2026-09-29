@@ -2,8 +2,8 @@ import { useState, type CSSProperties, type JSX } from 'react';
 import { useNavigate } from 'react-router';
 import { useMangas } from '../queries';
 import { Plus } from '../ui/icons';
+import { ErrorState } from '../ui/ErrorState';
 import { StatusLoader } from '../ui/StatusLoader';
-import { errorText } from '../ui/toasts';
 import { CreateMangaModal } from './CreateMangaModal';
 import { MangaCard } from './MangaCard';
 import { COVER_H, COVER_W, sortMangas } from './mangaList';
@@ -20,10 +20,11 @@ export function MangaListPage(): JSX.Element {
   return (
     <section className="screen" aria-label="All manga">
       {mangas.isPending && <StatusLoader label="Loading manga" />}
-      {mangas.error && <p className="error-text">{errorText(mangas.error)}</p>}
-      {mangas.data && (
+      {mangas.error && <ErrorState error={mangas.error} onRetry={() => void mangas.refetch()} retrying={mangas.isFetching} />}
+      {/* The "+" card stays on the error path: creating a manga does not need the list. */}
+      {!mangas.isPending && (
         <div className="cover-grid" style={GRID_VARS}>
-          {sortMangas(mangas.data).map((m) => <MangaCard key={m.id} manga={m} />)}
+          {sortMangas(mangas.data ?? []).map((m) => <MangaCard key={m.id} manga={m} />)}
           <button type="button" className="cover-card cover-card--new" aria-label="New manga" data-tip="New manga" onClick={() => setCreating(true)}>
             <Plus size={28} strokeWidth={1.5} aria-hidden />
           </button>

@@ -2,8 +2,8 @@ import type { JSX, RefObject } from 'react';
 import type { PageFormat, ReadingDirection } from '@manga/shared';
 import { useLayouts } from '../queries';
 import { Popover } from '../ui/Popover';
+import { ErrorState } from '../ui/ErrorState';
 import { StatusLoader } from '../ui/StatusLoader';
-import { errorText } from '../ui/toasts';
 import { PresetPreview } from './PresetPreview';
 
 export function PresetPicker({ anchor, open, onClose, readingDirection, format, onPick }: {
@@ -13,7 +13,7 @@ export function PresetPicker({ anchor, open, onClose, readingDirection, format, 
   return (
     <Popover anchor={anchor} open={open} onClose={onClose} label="Layout presets (cannot be undone)" className="preset-popover">
       {layouts.isPending && <StatusLoader label="Loading presets" />}
-      {layouts.error && <p className="error-text">{errorText(layouts.error)}</p>}
+      {layouts.error && <ErrorState error={layouts.error} onRetry={() => void layouts.refetch()} retrying={layouts.isFetching} />}
       {layouts.data && (
         <div className="preset-grid">
           {layouts.data.map((p) => {

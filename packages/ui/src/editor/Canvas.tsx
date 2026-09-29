@@ -1,13 +1,16 @@
 import { useLayoutEffect, useRef, type JSX } from 'react';
 import type { Manga, PageDetail } from '@manga/shared';
 import { PageView } from '../page/PageView';
+import { ErrorState } from '../ui/ErrorState';
 import { StatusLoader } from '../ui/StatusLoader';
 import type { EditorCommand } from './commands';
 import { PAGE_SELECTION, type Selection } from './selection';
 
-export function Canvas({ detail, manga, widthPx, selection, onSelect, onChange, onResize, loading }: {
+/** Without a page it says why: loading, a failed load (M1: `error`, with Retry) or an empty chapter. */
+export function Canvas({ detail, manga, widthPx, selection, onSelect, onChange, onResize, loading, error, onRetry }: {
   detail: PageDetail | null; manga: Manga; widthPx: number; selection: Selection;
   onSelect(s: Selection): void; onChange(c: EditorCommand): void; onResize(size: { w: number; h: number }): void; loading: boolean;
+  error: unknown; onRetry(): void;
 }): JSX.Element {
   const ref = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -36,8 +39,9 @@ export function Canvas({ detail, manga, widthPx, selection, onSelect, onChange, 
     >
       <div className="canvas__inner">
         {detail && <PageView detail={detail} manga={manga} widthPx={widthPx} mode="edit" selection={selection} onSelect={onSelect} onChange={onChange} />}
-        {!detail && loading && <StatusLoader label="Loading page" />}
-        {!detail && !loading && <p className="muted">No pages yet</p>}
+        {!detail && error ? <ErrorState error={error} onRetry={onRetry} /> : null}
+        {!detail && !error && loading && <StatusLoader label="Loading page" />}
+        {!detail && !error && !loading && <p className="muted">No pages yet</p>}
       </div>
     </div>
   );

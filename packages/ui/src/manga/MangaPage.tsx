@@ -4,9 +4,9 @@ import { CharactersTab } from '../characters/CharactersTab';
 import { isId } from '../lib/ids';
 import { useManga } from '../queries';
 import { BookOpen, Users } from '../ui/icons';
+import { ErrorState } from '../ui/ErrorState';
 import { StatusLoader } from '../ui/StatusLoader';
 import { Tabs } from '../ui/Tabs';
-import { errorText } from '../ui/toasts';
 import { ChaptersTab } from './ChaptersTab';
 import { MangaHeader } from './MangaHeader';
 import { MangaSettingsDrawer } from './MangaSettingsDrawer';
@@ -23,9 +23,11 @@ export function MangaPage(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const tab: TabId = search.get('tab') === 'characters' ? 'characters' : 'chapters';
 
-  if (!valid) return <section className="screen"><p className="error-text">Not found</p></section>;
+  if (!valid) return <section className="screen"><ErrorState text="Not found" backTo="/" backLabel="All manga" /></section>;
   if (manga.isPending) return <section className="screen"><StatusLoader label="Loading manga" /></section>;
-  if (!manga.data) return <section className="screen"><p className="error-text">{errorText(manga.error)}</p></section>;
+  if (!manga.data) {
+    return <section className="screen"><ErrorState error={manga.error} onRetry={() => void manga.refetch()} retrying={manga.isFetching} backTo="/" backLabel="All manga" /></section>;
+  }
   const m = manga.data;
   return (
     <section className="screen">

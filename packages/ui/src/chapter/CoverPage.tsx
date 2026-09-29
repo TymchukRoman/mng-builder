@@ -7,10 +7,8 @@ import { ChapterEditor } from '../editor/ChapterEditor';
 import { isId } from '../lib/ids';
 import { useManga } from '../queries';
 import { qk } from '../queryKeys';
-import { IconButton } from '../ui/IconButton';
-import { RefreshCw } from '../ui/icons';
+import { ErrorState } from '../ui/ErrorState';
 import { StatusLoader } from '../ui/StatusLoader';
-import { errorText } from '../ui/toasts';
 
 interface CoverTarget { key: string; mangaId: string; chapterId: string | null }
 
@@ -40,7 +38,7 @@ export function CoverPage(): JSX.Element {
     mutate({ key, mangaId, chapterId: chapterId ?? null });
   }, [valid, key, mangaId, chapterId, mutate]);
 
-  if (!valid) return <section className="screen"><p className="error-text">Not found</p></section>;
+  if (!valid) return <section className="screen"><ErrorState text="Not found" backTo="/" backLabel="All manga" /></section>;
 
   // A previous cover's result is ignored until this one's arrives (the component survives a route change).
   const pageId = open.data && open.variables?.key === key ? open.data.page.id : null;
@@ -49,10 +47,8 @@ export function CoverPage(): JSX.Element {
     return (
       <section className="screen">
         {err ? (
-          <div className="row">
-            <p className="error-text">{errorText(err)}</p>
-            {open.error && <IconButton icon={RefreshCw} label="Try again" onClick={() => mutate({ key, mangaId, chapterId: chapterId ?? null })} />}
-          </div>
+          <ErrorState error={err} backTo={`/m/${mangaId}`} backLabel="Back to the manga"
+            onRetry={() => { if (manga.error) void manga.refetch(); if (open.error) mutate({ key, mangaId, chapterId: chapterId ?? null }); }} />
         ) : <StatusLoader label="Opening cover" />}
       </section>
     );

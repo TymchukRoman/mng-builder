@@ -2,6 +2,7 @@ import type { JSX } from 'react';
 import type { RecipeInfo } from '@manga/shared';
 import { useRecipes } from '../queries';
 import { Check } from '../ui/icons';
+import { ErrorState } from '../ui/ErrorState';
 import { StatusLoader } from '../ui/StatusLoader';
 
 const FLAGS: Array<[keyof RecipeInfo, string]> = [
@@ -13,7 +14,9 @@ export function RecipeList(): JSX.Element {
   return (
     <section className="settings-card settings-card--wide">
       <h2>Recipes</h2>
-      {!query.data && <StatusLoader label="Loading recipes" />}
+      {!query.data && (query.isError
+        ? <ErrorState error={query.error} onRetry={() => void query.refetch()} retrying={query.isFetching} />
+        : <StatusLoader label="Loading recipes" />)}
       {query.data && (
         <table className="recipe-table">
           <thead>

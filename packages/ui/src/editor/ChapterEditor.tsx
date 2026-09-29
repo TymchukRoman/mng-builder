@@ -199,7 +199,8 @@ export function ChapterEditor({ manga, mode, chapterId, pageIds, title, backTo, 
           <PageList chapterId={chapterId} manga={manga} pageIds={pageIds} currentId={pageId} onSelectPage={selectPage} onDelete={(id) => void deletePage(id)} />
         )}
         <Canvas detail={d} manga={manga} widthPx={widthPx} selection={selection} onSelect={setSelection}
-          onChange={(c) => void run(c)} onResize={onResize} loading={pageId !== null && detail.isPending} />
+          onChange={(c) => void run(c)} onResize={onResize} loading={pageId !== null && detail.isPending}
+          error={pageId !== null ? detail.error : null} onRetry={() => void detail.refetch()} />
         {d ? (
           <Inspector manga={manga} detail={d} pageNumber={pageId ? pageIds.indexOf(pageId) + 1 : null}
             selection={selection} onSelect={setSelection} run={run} ops={ops} mode={mode} />

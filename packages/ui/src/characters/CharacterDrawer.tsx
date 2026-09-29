@@ -6,6 +6,7 @@ import { useCharacter } from '../queries';
 import { qk } from '../queryKeys';
 import { ConfirmIconButton } from '../ui/ConfirmIconButton';
 import { Drawer } from '../ui/Drawer';
+import { ErrorState } from '../ui/ErrorState';
 import { StatusLoader } from '../ui/StatusLoader';
 import { CharacterForm } from './CharacterForm';
 import { NewCharacterForm } from './NewCharacterForm';
@@ -31,7 +32,9 @@ export function CharacterDrawer({ manga, characterId, onClose, onCreated }: {
       actions={!isNew && c ? <ConfirmIconButton label="Delete character" confirmLabel="Click again to delete this character" onConfirm={() => remove.mutate(c.id)} /> : undefined}
     >
       {isNew && <NewCharacterForm manga={manga} onCreated={onCreated} />}
-      {!isNew && !c && <StatusLoader label="Loading character" />}
+      {!isNew && !c && (character.error
+        ? <ErrorState error={character.error} onRetry={() => void character.refetch()} retrying={character.isFetching} />
+        : <StatusLoader label="Loading character" />)}
       {!isNew && c && (
         <>
           <CharacterForm key={`f-${c.id}`} character={c} />

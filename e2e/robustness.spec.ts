@@ -44,3 +44,31 @@ test('create dialogs open on their first field: typing fills it and Enter does n
   await expect(page.getByRole('dialog', { name: 'New character' }).getByLabel('Name', { exact: true })).toBeFocused();
   expect(errors.all()).toEqual([]);
 });
+
+const INJECTED = { status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'internal', message: 'Injected failure' } }) };
+
+test('a failed load says so and offers Retry, which recovers once the server answers (M1, M2)', async ({ page, request }) => {
+  const { mangaId, chapterId, pageId } = await seedManga(request, 'E2E retry');
+  const errors = collectErrors(page, { allowedFailures: [{ status: 503, urlSuffix: '/api/mangas' }, { status: 503, urlSuffix: `/api/pages/${pageId}` }] });
+
+  // The manga list: the error, Retry, and the "+" card stays.
+  await page.route('**/api/mangas', (route) => route.fulfill(INJECTED));
+  await page.goto('/');
+  await expect(page.getByRole('alert').filter({ hasText: 'Injected failure' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'New manga' })).toBeVisible();
+  await page.unroute('**/api/mangas');
+  await page.getByRole('button', { name: 'Retry' }).click();
+  await expect(page.locator(`[data-manga-id="${mangaId}"]`)).toBeVisible();
+  await expect(page.getByRole('alert').filter({ hasText: 'Injected failure' })).toHaveCount(0);
+
+  // The editor canvas: a page that failed to load is not "No pages yet".
+  await page.route(`**/api/pages/${pageId}`, (route) => route.fulfill(INJECTED));
+  await page.goto(`/m/${mangaId}/c/${chapterId}?p=${pageId}`);
+  const canvas = page.locator('.canvas');
+  await expect(canvas.getByRole('alert').filter({ hasText: 'Injected failure' })).toBeVisible();
+  await expect(canvas.getByText('No pages yet')).toHaveCount(0);
+  await page.unroute(`**/api/pages/${pageId}`);
+  await canvas.getByRole('button', { name: 'Retry' }).click();
+  await expect(page.locator('.page-view--edit [data-panel-id]')).toHaveCount(4);
+  expect(errors.all()).toEqual([]);
+});

@@ -11,6 +11,7 @@ import { useJobs, usePanelImages } from '../queries';
 import { qk } from '../queryKeys';
 import { IconButton } from '../ui/IconButton';
 import { ImageUp, Move, ScanEye, Sparkles } from '../ui/icons';
+import { ErrorState } from '../ui/ErrorState';
 import { StatusLoader } from '../ui/StatusLoader';
 import { panelJobs } from './inspectorModel';
 import { ReviewBadge } from './ReviewBadge';
@@ -57,6 +58,7 @@ export function ImageSection({ detail, panel, colorMode, selection, onSelect, ru
         const prog = jobProgress(j);
         return <StatusLoader key={j.id} label={jobStatusLabel(j)} value={prog?.value} max={prog?.max} />;
       })}
+      {images.error && <ErrorState error={images.error} onRetry={() => void images.refetch()} retrying={images.isFetching} />}
       <VariantStrip images={images.data ?? []} activeId={panel.activeImageId} filter={panelImageFilter(colorMode)}
         onActivate={(id) => void run(ops.activeImage(pageId, panel.id, panel.activeImageId, id))}
         onDelete={(id) => remove.mutate(id)} />

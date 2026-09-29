@@ -1,5 +1,6 @@
 import type { JSX } from 'react';
 import { useSettings } from '../queries';
+import { ErrorState } from '../ui/ErrorState';
 import { StatusLoader } from '../ui/StatusLoader';
 import { ConfigSection } from './ConfigSection';
 import { EngineSettings } from './EngineSettings';
@@ -14,7 +15,9 @@ import './settings.css';
 export function SettingsPage(): JSX.Element {
   const settings = useSettings();
   const { save, setTask } = useSaveSettings();
-  if (settings.isError) return <section className="screen"><p className="muted" role="alert">Settings could not be loaded.</p></section>;
+  if (!settings.data && settings.isError) {
+    return <section className="screen"><ErrorState error={settings.error} onRetry={() => void settings.refetch()} retrying={settings.isFetching} backTo="/" backLabel="All manga" /></section>;
+  }
   if (!settings.data) return <section className="screen"><StatusLoader label="Loading settings" /></section>;
   const s = settings.data;
   return (
