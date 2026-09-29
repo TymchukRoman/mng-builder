@@ -1,6 +1,6 @@
 import { QueryClient } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
-import { DEFAULT_TRANSFORM, type LayoutNode, type PageDetail, type Panel, type TextFrame } from '@manga/shared';
+import { DEFAULT_TRANSFORM, mergePanels, splitPanel, type LayoutNode, type PageDetail, type Panel, type TextFrame } from '@manga/shared';
 import { queryCache } from '../src/editor/cacheAdapter';
 import { IdMap } from '../src/editor/history';
 import { createOps, type OpsApi } from '../src/editor/ops';
@@ -51,7 +51,7 @@ function setup(routes: Record<string, Handler | Handler[]>, initial: PageDetail 
   const ops = createOps({ api, ids, cache: queryCache(qc) });
   const page = (): PageDetail => qc.getQueryData<PageDetail>(qk.page('pg_1')) as PageDetail;
   const ratio = (): number => (page().page.layout as SplitNode).ratio;
-  return { ids, calls, ops, page, ratio };
+  return { ids, calls, ops, page, ratio, qc };
 }
 
 describe('editor ops', () => {
@@ -193,5 +193,83 @@ describe('editor ops', () => {
     await ops.merge('pg_1', 'pn_old', 'pn_b');
     await ops.applyPreset('pg_1', '3-rows', true);
     expect(calls.map((c) => c.body)).toEqual([{ panelIdA: 'pn_a', panelIdB: 'pn_b' }, { preset: '3-rows', confirm: true }]);
+  });
+  it('deleteFrame revert keeps the id map and the cache right when the order fix fails', async () => {
+    const { ops, ids, page } = setup({
+      'DELETE /api/frames/tf_1': () => ({ ok: true }),
+      'POST /api/pages/pg_1/frames': () => makeFrame('tf_back', 'pg_1', { order: 3 }),
+      'PATCH /api/frames/tf_back': () => { throw new Error('order 500'); },
+    });
+    const del = ops.deleteFrame(page().frames[0]!);
+    await del.apply();
+    await expect(del.revert()).rejects.toThrow('order 500');
+    expect(ids.resolve('tf_1')).toBe('tf_back');
+    expect(page().frames.map((f) => f.id)).toEqual(['tf_back']);
+  });
+
+  it('keeps frames sorted by order when a patch changes it', async () => {
+    const two = makeDetail('pg_1', [makeFrame('tf_1', 'pg_1', { order: 0 }), makeFrame('tf_2', 'pg_1', { order: 1 })]);
+    const { ops, page } = setup({
+      'PATCH /api/frames/tf_1': (b) => makeFrame('tf_1', 'pg_1', { ...(b as Partial<TextFrame>) }),
+    }, two);
+    await ops.updateFrame('pg_1', 'tf_1', { order: 0 }, { order: 5 }).apply();
+    expect(page().frames.map((f) => f.id)).toEqual(['tf_2', 'tf_1']);
+  });
+
+  it('cancels an in-flight refetch so it cannot overwrite an optimistic write', async () => {
+    let open!: () => void;
+    const gate = new Promise<void>((r) => { open = r; });
+    const { ops, page, qc } = setup({
+      'PATCH /api/frames/tf_1': (b) => makeFrame('tf_1', 'pg_1', b as Partial<TextFrame>),
+    });
+    const stale = qc.fetchQuery({ queryKey: qk.page('pg_1'), staleTime: 0, queryFn: async () => { await gate; return base(); } });
+    stale.catch(() => undefined);
+    await ops.updateFrame('pg_1', 'tf_1', { text: 'Hi' }, { text: 'Bye' }).apply();
+    open();
+    await stale.catch(() => undefined);
+    expect(page().frames[0]?.text).toBe('Bye');
+  });
+
+  it('split takes the new panel id from the response layout, not from the cache', async () => {
+    const { ops, calls, page, qc } = setup({
+      'POST /api/pages/pg_1/layout/split': () => splitDetail('pn_n1'),
+      'POST /api/pages/pg_1/layout/merge': () => base(),
+    });
+    // The cache already shows the layout after the split (e.g. a refetch landed first): a diff would find nothing.
+    qc.setQueryData(qk.page('pg_1'), splitDetail('pn_n1'));
+    const cmd = ops.split('pg_1', 'pn_a', 'h');
+    await cmd.apply();
+    await cmd.revert();
+    expect(calls[1]?.body).toEqual({ panelIdA: 'pn_a', panelIdB: 'pn_n1' });
+    expect(page().panels.map((p) => p.id)).toEqual(['pn_a', 'pn_b']);
+  });
+
+  it('split then undo against the real layout functions restores the original tree', async () => {
+    const original = base();
+    let server = original;
+    let n = 0;
+    const { ops, page } = setup({
+      'POST /api/pages/pg_1/layout/split': (b) => {
+        const { panelId, dir } = b as { panelId: string; dir: 'h' | 'v' };
+        n += 1;
+        const id = `pn_new${n}`;
+        server = { ...server, page: { ...server.page, layout: splitPanel(server.page.layout, panelId, dir, id) }, panels: [...server.panels, makePanel(id)] };
+        return server;
+      },
+      'POST /api/pages/pg_1/layout/merge': (b) => {
+        const { panelIdA, panelIdB } = b as { panelIdA: string; panelIdB: string };
+        const { tree, removedId } = mergePanels(server.page.layout, panelIdA, panelIdB);
+        server = { ...server, page: { ...server.page, layout: tree }, panels: server.panels.filter((p) => p.id !== removedId) };
+        return server;
+      },
+    }, original);
+    const cmd = ops.split('pg_1', 'pn_b', 'v');
+    await cmd.apply();
+    expect(page().page.layout).not.toEqual(original.page.layout);
+    await cmd.revert();
+    expect(page().page.layout).toEqual(original.page.layout);
+    await cmd.apply();
+    await cmd.revert();
+    expect(page().page.layout).toEqual(original.page.layout);
   });
 });

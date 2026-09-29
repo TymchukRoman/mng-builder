@@ -3,10 +3,10 @@ import type { PageDetail, TextFrame } from '@manga/shared';
 import { qk } from '../queryKeys';
 import type { OpsCache } from './ops';
 
-/** The server lists frames by `order` (ties by creation), so a frame that appears is slotted in the same way. */
+/** The server lists frames by `order` (ties by creation); every write keeps the cache in that order (the sort is stable). */
 function withFrame(frames: TextFrame[], frame: TextFrame): TextFrame[] {
-  if (frames.some((f) => f.id === frame.id)) return frames.map((f) => (f.id === frame.id ? frame : f));
-  return [...frames, frame].sort((a, b) => a.order - b.order);
+  const next = frames.some((f) => f.id === frame.id) ? frames.map((f) => (f.id === frame.id ? frame : f)) : [...frames, frame];
+  return next.sort((a, b) => a.order - b.order);
 }
 
 /** Editor ops read and write page details through the TanStack Query cache. */
@@ -15,6 +15,7 @@ export function queryCache(qc: QueryClient): OpsCache {
     qc.setQueryData<PageDetail>(qk.page(pageId), (d) => (d ? fn(d) : d));
   };
   return {
+    cancel: (pageId) => qc.cancelQueries({ queryKey: qk.page(pageId), exact: true }),
     getPage: (pageId) => qc.getQueryData<PageDetail>(qk.page(pageId)),
     setPage: (detail) => { qc.setQueryData(qk.page(detail.page.id), detail); },
     setFrame: (frame) => update(frame.pageId, (d) => ({ ...d, frames: withFrame(d.frames, frame) })),
