@@ -114,7 +114,15 @@ The exit code is `0` on success, `1` for API or validation errors (the message g
 npm test                # vitest over all packages, against the TypeScript sources
 npm run typecheck       # tsc --build --force, then the UI's own tsc -p
 npm run dev             # tsc --build, then tsc --build --watch + the server (node --watch) + Vite, together
+npm run build           # tsc --build, then the UI's vite build into packages/ui/dist (the server serves it at /)
+npm run e2e             # build, then the Playwright specs in e2e/ against the built UI
 ```
+
+The UI dev server is `http://127.0.0.1:5173`; it proxies `/api` (with the WebSocket) and `/files` to the server. Open the UI there during `npm run dev`; the built UI is served by the server itself at `http://127.0.0.1:4317/`.
+
+`npm run e2e` is hermetic: Playwright starts its own built server with `MANGA_FAKES=1` (fake AI engines, no ComfyUI or ollama), a throwaway library in the OS temp folder, a config path that does not exist, and port 4399 (`MANGA_E2E_PORT` overrides it). It never touches port 4317 or your library.
+
+The lettering fonts in `packages/ui/public/fonts` and `src/styles/fonts.css` are committed; `npm run fonts --workspace @manga/ui` downloads them again.
 
 Before `npm run dev`, run `manga stop`: the dev server runs its own copy of `@manga/server` on the default library and port 4317, replacing any background server already serving that library. The Vite dev proxy (`packages/ui/vite.config.ts`) assumes the server is on `127.0.0.1:4317`.
 
