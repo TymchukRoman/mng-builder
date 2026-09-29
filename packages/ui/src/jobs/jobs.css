@@ -1,0 +1,3 @@
+.job-bar { grid-area: jobs; display: flex; align-items: center; gap: var(--sp-5); padding: 0 var(--sp-3); min-width: 0; overflow: hidden; background: var(--surface); border-top: 1px solid var(--border-1); }
+.job-bar__item { max-width: 360px; }
+.job-bar__more { flex: none; font-size: var(--fs-xs); color: var(--text-2); padding: var(--sp-half) var(--sp-1); border-radius: var(--r-full); background: var(--surface-2); }

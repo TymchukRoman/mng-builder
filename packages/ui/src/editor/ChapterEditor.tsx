@@ -1,0 +1,174 @@
+import { useCallback, useEffect, useMemo, useState, type JSX, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import type { FrameKind, JobRef, Manga, SplitDir } from '@manga/shared';
+import { api, ApiError } from '../api';
+import { Inspector } from '../inspector/Inspector';
+import { JobBar } from '../jobs/JobBar';
+import { cx } from '../lib/cx';
+import { pageSizePx } from '../page/geometry';
+import { usePageDetail } from '../queries';
+import { qk } from '../queryKeys';
+import { errorText, pushToast } from '../ui/toasts';
+import { queryCache } from './cacheAdapter';
+import { Canvas } from './Canvas';
+import type { EditorCommand } from './commands';
+import { ConfirmPresetModal } from './ConfirmPresetModal';
+import { EditorToolbar } from './EditorToolbar';
+import { escapeSelection, exportTarget, frameInsert, removedPanelCount, resolveCurrentPage } from './editorModel';
+import { History, IdMap } from './history';
+import { createOps } from './ops';
+import { OpsContext } from './OpsContext';
+import { PageList } from './PageList';
+import { PAGE_SELECTION, frameSelection, panelSelection, reconcileSelection, selectedPanelId, type Selection } from './selection';
+import { useEditorKeys } from './useEditorKeys';
+import { useFrameNudge } from './useFrameNudge';
+import { useHistorySnapshot } from './useHistory';
+import { fitWidth, zoomFactor, type Zoom } from './zoom';
+import './editor.css';
+
+export interface ChapterEditorProps {
+  manga: Manga;
+  mode: 'chapter' | 'cover';
+  chapterId: string | null;
+  pageIds: string[];
+  title: string;
+  backTo: string;
+  aside?: ReactNode;
+}
+
+/**
+ * The chapter and cover editor (spec §9, §11). The current page lives in `?p=<pageId>`. Every layout, frame, transform
+ * and variant edit runs through one History: PageView and the Inspector only emit commands, and this host runs them
+ * (preset and merge as barriers) and toasts rejections.
+ */
+export function ChapterEditor({ manga, mode, chapterId, pageIds, title, backTo, aside }: ChapterEditorProps): JSX.Element {
+  const qc = useQueryClient();
+  const [search, setSearch] = useSearchParams();
+  const pageId = resolveCurrentPage(pageIds, search.get('p'));
+  const detail = usePageDetail(pageId);
+  const d = detail.data ?? null;
+
+  const [selection, setSelection] = useState<Selection>(PAGE_SELECTION);
+  const [zoom, setZoom] = useState<Zoom>({ mode: 'fit' });
+  const [container, setContainer] = useState({ w: 800, h: 1000 });
+  const [confirm, setConfirm] = useState<{ preset: string; removed: number } | null>(null);
+  const [presetBusy, setPresetBusy] = useState(false);
+  const [history] = useState(() => new History(200));
+  const [ids] = useState(() => new IdMap());
+  const cache = useMemo(() => queryCache(qc), [qc]);
+  // Stable for the editor's lifetime: the Inspector and PageView build commands from it.
+  const ops = useMemo(() => createOps({ api, ids, cache }), [ids, cache]);
+  const snap = useHistorySnapshot(history);
+
+  const run = useCallback(async (cmd: EditorCommand): Promise<void> => {
+    try { await history.run(cmd); } catch (err) { pushToast('error', errorText(err)); }
+  }, [history]);
+  const nudger = useFrameNudge(ops, cache, run);
+  const flushNudge = nudger.flush;
+  const widthPx = Math.max(120, Math.round(fitWidth(container, manga.pageFormat) * zoomFactor(zoom)));
+  const size = pageSizePx(manga.pageFormat, widthPx);
+  const onResize = useCallback((next: { w: number; h: number }) => {
+    setContainer((c) => (c.w === next.w && c.h === next.h ? c : next));
+  }, []);
+
+  useEffect(() => { flushNudge(); setSelection(PAGE_SELECTION); }, [pageId, flushNudge]);
+  useEffect(() => { if (d) setSelection((s) => reconcileSelection(s, d)); }, [d]);
+
+  const selectPage = (id: string | null): void => setSearch(id ? { p: id } : {}, { replace: true });
+  const undo = (): void => {
+    flushNudge();
+    history.undo().catch((err: unknown) => pushToast('error', errorText(err)));
+  };
+  const redo = (): void => {
+    flushNudge();
+    history.redo().catch((err: unknown) => pushToast('error', errorText(err)));
+  };
+  const panelId = selectedPanelId(selection);
+  const selectedFrame = d && selection.kind === 'frame' ? d.frames.find((f) => f.id === selection.frameId) : undefined;
+
+  /** Not undoable: a barrier clears both stacks. A preset with fewer panels asks first (409 needs_confirm). */
+  const applyPreset = async (name: string, confirmed: boolean): Promise<void> => {
+    if (!pageId) return;
+    flushNudge();
+    setPresetBusy(true);
+    try {
+      await history.barrier(() => ops.applyPreset(pageId, name, confirmed));
+      setConfirm(null);
+      setSelection(PAGE_SELECTION);
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'needs_confirm' && !confirmed) setConfirm({ preset: name, removed: removedPanelCount(err.details) });
+      else { setConfirm(null); pushToast('error', errorText(err)); }
+    } finally {
+      setPresetBusy(false);
+    }
+  };
+  const split = (dir: SplitDir): void => { if (pageId && panelId) void run(ops.split(pageId, panelId, dir)); };
+  /** Not undoable: the selected panel (A) keeps its id; the shift-clicked partner is merged into it. */
+  const merge = async (): Promise<void> => {
+    if (!pageId || selection.kind !== 'panel' || selection.mergeWith === null) return;
+    const keep = selection.panelId;
+    const other = selection.mergeWith;
+    flushNudge();
+    try {
+      await history.barrier(() => ops.merge(pageId, keep, other));
+      setSelection(panelSelection(keep));
+    } catch (err) { pushToast('error', errorText(err)); }
+  };
+  const addFrame = async (kind: FrameKind): Promise<void> => {
+    if (!pageId) return;
+    const cmd = ops.addFrame(pageId, frameInsert(kind, selection));
+    await run(cmd);
+    if (cmd.createdId) setSelection(frameSelection(cmd.createdId));
+  };
+  // Generating with `{}` uses the panel's own recipe, seed and lock. Refusals are toasted by the mutation cache.
+  const generate = useMutation({
+    mutationFn: (id: string) => api.post<JobRef>(`/api/panels/${id}/generate`, {}),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: qk.jobs() }); },
+  });
+
+  useEditorKeys({
+    onUndo: undo,
+    onRedo: redo,
+    onDelete: () => {
+      if (!selectedFrame) return;
+      flushNudge();
+      setSelection(PAGE_SELECTION);
+      void run(ops.deleteFrame(selectedFrame));
+    },
+    onEscape: () => setSelection(escapeSelection),
+    onNudge: (dx, dy) => { if (selectedFrame && pageId) nudger.nudge(pageId, selectedFrame, dx, dy, size); },
+  });
+
+  return (
+    <OpsContext.Provider value={ops}>
+      <div className={cx('editor', mode === 'cover' && 'editor--cover')}>
+        <EditorToolbar
+          mode={mode} title={title} backTo={backTo} detail={d} selection={selection} history={snap}
+          readingDirection={manga.readingDirection} format={manga.pageFormat} zoom={zoom} generating={generate.isPending}
+          exportTarget={exportTarget(chapterId, pageId)}
+          onUndo={undo} onRedo={redo}
+          onApplyPreset={(name) => void applyPreset(name, false)}
+          onSplit={split}
+          onMerge={() => void merge()}
+          onAddFrame={(kind) => void addFrame(kind)}
+          onGenerate={() => { if (panelId) generate.mutate(panelId); }}
+          onZoom={setZoom}
+        />
+        <div className="editor__aside">{aside}</div>
+        {mode === 'chapter' && chapterId && (
+          <PageList chapterId={chapterId} manga={manga} pageIds={pageIds} currentId={pageId} onSelectPage={selectPage} />
+        )}
+        <Canvas detail={d} manga={manga} widthPx={widthPx} selection={selection} onSelect={setSelection}
+          onChange={(c) => void run(c)} onResize={onResize} loading={pageId !== null && detail.isPending} />
+        {d ? (
+          <Inspector manga={manga} detail={d} pageNumber={pageId ? pageIds.indexOf(pageId) + 1 : null}
+            selection={selection} onSelect={setSelection} run={run} ops={ops} mode={mode} />
+        ) : <aside className="inspector" aria-label="Inspector" />}
+        <JobBar />
+        <ConfirmPresetModal open={confirm !== null} preset={confirm?.preset ?? ''} removed={confirm?.removed ?? 0} busy={presetBusy}
+          onCancel={() => setConfirm(null)} onConfirm={() => { if (confirm) void applyPreset(confirm.preset, true); }} />
+      </div>
+    </OpsContext.Provider>
+  );
+}
