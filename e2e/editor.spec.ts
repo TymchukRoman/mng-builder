@@ -9,8 +9,8 @@ async function frameTexts(request: APIRequestContext, pageId: string): Promise<s
 }
 
 test('create, lay out, letter and generate a page; everything survives a reload', async ({ page, request }) => {
-  // The preset step answers 409 needs_confirm on purpose; Chrome logs that as a resource error.
-  const errors = collectErrors(page, { ignoreResourceErrors: true });
+  // The preset step answers 409 needs_confirm on purpose; Chrome logs that one as a resource error. Any other failed load fails the test.
+  const errors = collectErrors(page, { allowedFailures: { status: 409, urlSuffix: '/layout/preset' } });
   const canvas = editPage(page);
   const panels = canvas.locator('[data-panel-id]');
   const frame = canvas.locator('[data-frame-id]');
@@ -91,8 +91,7 @@ test('create, lay out, letter and generate a page; everything survives a reload'
   await canvas.locator(`[data-panel-id="${target}"]`).click();
   await page.getByRole('button', { name: 'Add speech bubble' }).click();
   await expect(frame).toHaveCount(1);
-  // The label wraps the textarea, so its text grows with the value: match by prefix, not exactly.
-  const text = page.getByRole('textbox', { name: /^Text/ });
+  const text = page.getByLabel('Text', { exact: true });
   await text.fill('Привіт, їжаку!!');
   // Editor keys never fire while typing: Backspace edits the text, and neither it nor Delete removes the frame.
   await text.press('Backspace');
@@ -154,11 +153,11 @@ test('create, lay out, letter and generate a page; everything survives a reload'
   expect(size).toEqual({ w: 2150, h: 3035 });
   await expect(page.locator(`[data-panel-id="${target}"] img`)).toHaveCSS('filter', 'grayscale(1)');
 
-  expect(errors).toEqual([]);
+  expect(errors.all()).toEqual([]);
 });
 
 test('the cover editors create their page with exactly one POST each', async ({ page, request }) => {
-  const errors = collectErrors(page, { ignoreResourceErrors: false });
+  const errors = collectErrors(page);
   const { mangaId, chapterId } = await seedManga(request, 'E2E Cover');
   const posts: string[] = [];
   page.on('request', (r) => {
@@ -183,5 +182,5 @@ test('the cover editors create their page with exactly one POST each', async ({ 
 
   // A cover keeps its one panel: the layout tools are not offered
   await expect(page.getByRole('button', { name: 'Layout presets' })).toHaveCount(0);
-  expect(errors).toEqual([]);
+  expect(errors.all()).toEqual([]);
 });

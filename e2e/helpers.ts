@@ -1,15 +1,38 @@
 import { expect, type APIRequestContext, type Locator, type Page } from '@playwright/test';
 
-/** Console errors and uncaught exceptions. `ignoreResourceErrors` drops Chrome's "Failed to load resource" lines (e.g. an expected 409). */
-export function collectErrors(page: Page, opts: { ignoreResourceErrors: boolean }): string[] {
+/** A response the test expects to fail, so that Chrome's console line for it is not an error. */
+export interface AllowedFailure { status: number; urlSuffix: string }
+
+export interface ErrorLog {
+  /** Console errors and uncaught exceptions so far. A "Failed to load resource" line counts unless a recorded response of an allowed failure explains it. */
+  all(): string[];
+}
+
+/**
+ * Console errors and uncaught exceptions. Chrome logs every failed load (404, 409, 500...) as a console error without a status
+ * in the message, so each one is matched to its recorded response: only `allowedFailures` are dropped, anything else stays an error.
+ */
+export function collectErrors(page: Page, opts: { allowedFailures?: AllowedFailure | AllowedFailure[] } = {}): ErrorLog {
+  const allowed = opts.allowedFailures === undefined ? [] : [opts.allowedFailures].flat();
   const errors: string[] = [];
+  const resourceErrors: Array<{ text: string; url: string }> = [];
+  const failed = new Map<string, number>(); // url -> status of the failed responses seen
+  page.on('response', (r) => { if (r.status() >= 400) failed.set(r.url(), r.status()); });
   page.on('console', (m) => {
     if (m.type() !== 'error') return;
-    if (opts.ignoreResourceErrors && m.text().startsWith('Failed to load resource')) return;
-    errors.push(m.text());
+    if (m.text().startsWith('Failed to load resource')) resourceErrors.push({ text: m.text(), url: m.location().url });
+    else errors.push(m.text());
   });
   page.on('pageerror', (e) => errors.push(e.message));
-  return errors;
+  return {
+    all: () => [
+      ...errors,
+      // Judged on read, so a console line that arrives before its response event still matches.
+      ...resourceErrors
+        .filter(({ url }) => !allowed.some((a) => failed.get(url) === a.status && url.endsWith(a.urlSuffix)))
+        .map((e) => e.text),
+    ],
+  };
 }
 
 /** The editable page on the canvas (thumbnails are PageViews too, in `thumb` mode). */

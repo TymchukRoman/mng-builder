@@ -35,7 +35,7 @@ export function FrameInspector({ manga, detail, frame, characters, run, ops, onS
       </div>
       <section className="insp-section">
         <Field label="Text">
-          <textarea className="textarea frame-textarea" rows={4} value={text.draft} onBlur={text.flush}
+          <textarea className="textarea frame-textarea" aria-label="Text" rows={4} value={text.draft} onBlur={text.flush}
             style={{ fontFamily: `"${frame.font}", sans-serif` }} onChange={(e) => text.setDraft(e.target.value)} />
         </Field>
         <Field label="Kind" group>

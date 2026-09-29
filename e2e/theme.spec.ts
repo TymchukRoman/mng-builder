@@ -6,7 +6,7 @@ const BG = { light: 'rgb(239, 239, 236)', dark: 'rgb(22, 23, 25)' } as const;
 
 for (const scheme of ['light', 'dark'] as const) {
   test(`the ${scheme} theme loads every screen without console errors`, async ({ page, request }, testInfo) => {
-    const errors = collectErrors(page, { ignoreResourceErrors: false });
+    const errors = collectErrors(page);
     const { mangaId, chapterId, pageId } = await seedManga(request, `E2E ${scheme}`);
     await page.emulateMedia({ colorScheme: scheme });
 
@@ -25,12 +25,12 @@ for (const scheme of ['light', 'dark'] as const) {
 
     await page.goto('/settings');
     await expect(page.getByRole('button', { name: /^Switch to (light|dark) theme$/ })).toBeVisible();
-    expect(errors).toEqual([]);
+    expect(errors.all()).toEqual([]);
   });
 }
 
 test('the theme toggle persists across a reload', async ({ page }) => {
-  const errors = collectErrors(page, { ignoreResourceErrors: false });
+  const errors = collectErrors(page);
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.goto('/');
   await expect(page.getByRole('button', { name: 'New manga' })).toBeVisible();
@@ -41,11 +41,11 @@ test('the theme toggle persists across a reload', async ({ page }) => {
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await expect(page.getByRole('button', { name: 'Switch to dark theme' })).toBeVisible();
-  expect(errors).toEqual([]);
+  expect(errors.all()).toEqual([]);
 });
 
 test('the app still works when localStorage throws', async ({ page }) => {
-  const errors = collectErrors(page, { ignoreResourceErrors: false });
+  const errors = collectErrors(page);
   await page.addInitScript(() => {
     Object.defineProperty(window, 'localStorage', { configurable: true, get() { throw new DOMException('blocked', 'SecurityError'); } });
   });
@@ -54,5 +54,5 @@ test('the app still works when localStorage throws', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'New manga' })).toBeVisible();
   await page.getByRole('button', { name: 'Switch to light theme' }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
-  expect(errors).toEqual([]);
+  expect(errors.all()).toEqual([]);
 });
