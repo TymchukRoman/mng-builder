@@ -61,6 +61,20 @@ describe('reanchorFrames', () => {
     expect(m?.tail?.y).toBeCloseTo(0.35, 12);
   });
 
+  it('never shrinks a box below MIN_FRAME, and keeps a box that was already smaller', () => {
+    const big = rects({ pn_a: { x: 0.1, y: 0.1, w: 0.8, h: 0.8 } });
+    const tiny = rects({ pn_a: { x: 0.1, y: 0.1, w: 0.04, h: 0.04 } });
+    const f = makeFrame('tf_1', 'pg_1', { panelId: 'pn_a', box: { x: 0.3, y: 0.3, w: 0.2, h: 0.2 }, tail: { x: 0.35, y: 0.55 } });
+    const [m] = reanchorFrames([f], big, tiny);
+    // Proportional size would be 0.01; the floor is MIN_FRAME (0.02). The position and the tail still map proportionally.
+    expect(m?.box.w).toBe(0.02);
+    expect(m?.box.h).toBe(0.02);
+    expect(m?.box.x).toBeCloseTo(0.1 + (0.2 * 0.04) / 0.8, 12);
+    expect(m?.tail?.x).toBeCloseTo(0.1 + (0.25 * 0.04) / 0.8, 12);
+    const small = makeFrame('tf_2', 'pg_1', { panelId: 'pn_a', box: { x: 0.3, y: 0.3, w: 0.01, h: 0.01 } });
+    expect(reanchorFrames([small], big, tiny)[0]?.box).toMatchObject({ w: 0.01, h: 0.01 });
+  });
+
   describe('a split', () => {
     const before = rects({ pn_a: { x: 0.1, y: 0.1, w: 0.8, h: 0.8 } });
     const after = rects({ pn_a: { x: 0.1, y: 0.1, w: 0.8, h: 0.39 }, pn_n: { x: 0.1, y: 0.51, w: 0.8, h: 0.39 } });

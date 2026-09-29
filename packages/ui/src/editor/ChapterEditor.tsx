@@ -63,7 +63,7 @@ export function ChapterEditor({ manga, mode, chapterId, pageIds, title, backTo, 
   // The ops read the page format at use time (panel rects decide where frames follow their panel), so the ops themselves stay stable.
   const formatRef = useRef(manga.pageFormat);
   useLayoutEffect(() => { formatRef.current = manga.pageFormat; });
-  const ops = useMemo(() => createOps({ api, ids, cache, format: () => formatRef.current }), [ids, cache]);
+  const ops = useMemo(() => createOps({ api, ids, cache, format: () => formatRef.current, onFrameError: (err) => pushToast('error', errorText(err)) }), [ids, cache]);
   const snap = useHistorySnapshot(history);
 
   const run = useCallback(async (cmd: EditorCommand): Promise<void> => {

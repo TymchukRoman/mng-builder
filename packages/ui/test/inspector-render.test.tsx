@@ -21,7 +21,7 @@ function render(selection: Selection, mode: 'chapter' | 'cover' = 'chapter'): st
   qc.setQueryData(qk.panelImages('pn_a'), [image, makeImage('im_2', { ownerId: 'pn_a', createdAt: '2026-09-28T00:00:00.000Z' })]);
   qc.setQueryData(qk.jobs(), []);
   qc.setQueryData(qk.recipes(), []);
-  const ops = createOps({ api, ids: new IdMap(), cache: queryCache(qc), format: () => manga.pageFormat });
+  const ops = createOps({ api, ids: new IdMap(), cache: queryCache(qc), format: () => manga.pageFormat, onFrameError: () => undefined });
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>
       <Inspector manga={manga} detail={detail} pageNumber={2} selection={selection} onSelect={() => undefined} run={() => Promise.resolve()} ops={ops} mode={mode} />

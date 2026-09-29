@@ -17,8 +17,12 @@ export interface OpsCache {
   setPanel(panel: Panel): void;
 }
 
-/** `format` is read at every use: the manga's page format decides the panel rects that frames are re-anchored between. */
-export interface OpsDeps { api: OpsApi; ids: IdMap; cache: OpsCache; format: () => PageFormat }
+/**
+ * `format` is read at every use: the manga's page format decides the panel rects that frames are re-anchored between.
+ * `onFrameError` receives a failure to save the frames that followed a layout change (resize, split). The layout is already
+ * saved by then, so the command still succeeds and stays undoable; the host shows the error.
+ */
+export interface OpsDeps { api: OpsApi; ids: IdMap; cache: OpsCache; format: () => PageFormat; onFrameError: (err: unknown) => void }
 
 /** The result of a barrier layout change: the layout is done, and re-anchoring the frames may still have failed (`framesError`). */
 export interface LayoutChange { detail: PageDetail; framesError: unknown }
@@ -41,19 +45,21 @@ function splitChildOf(layout: LayoutNode, panelId: string): string | null {
   return splitChildOf(layout.a, panelId) ?? splitChildOf(layout.b, panelId);
 }
 
-export function createOps({ api, ids, cache, format }: OpsDeps) {
+export function createOps({ api, ids, cache, format, onFrameError }: OpsDeps) {
   const loadPage = async (pageId: string): Promise<PageDetail> => cache.getPage(pageId) ?? api.get<PageDetail>(`/api/pages/${pageId}`);
 
   /**
-   * Resizes the split. With `moveFrames`, the frames anchored to the panels move with them (optimistically too, in the same
-   * cache write as the layout, so a gutter drag never shows the frames snapping back). Rolls both back on failure.
+   * Resizes the split. `frameMoves` says where the frames go with it; they are written (optimistically too) in the same cache
+   * write as the layout, so neither a gutter drag nor an undo shows the frames over the wrong panel. Rolls both back on failure.
    */
-  const resizeTo = async (pageId: string, path: SplitPath, ratio: number, moveFrames: boolean): Promise<{ prev: PageDetail; detail: PageDetail; moves: FrameMove[] }> => {
+  const resizeTo = async (
+    pageId: string, path: SplitPath, ratio: number,
+    frameMoves: (prev: PageDetail, layout: LayoutNode) => FrameMove[],
+  ): Promise<{ prev: PageDetail; detail: PageDetail; moves: FrameMove[] }> => {
     await cache.cancel(pageId);
     const prev = await loadPage(pageId);
     const layout = resizeSplit(prev.page.layout, [...path], ratio);
-    // The same shared function the server runs, so the optimistic frames land where the server's layout will put the panels.
-    const moves = moveFrames ? reanchorFrames(prev.frames, rectMap(prev.page.layout, format()), rectMap(layout, format())) : [];
+    const moves = frameMoves(prev, layout);
     cache.setPage({ ...prev, page: { ...prev.page, layout }, frames: applyMoves(prev.frames, moves) });
     try {
       const detail = await api.post<PageDetail>(`/api/pages/${pageId}/layout/resize`, { path, ratio });
@@ -68,18 +74,19 @@ export function createOps({ api, ids, cache, format }: OpsDeps) {
   /**
    * PATCHes moved frames in parallel (the caller has already shown them moved) and confirms each in the cache. A frame whose
    * PATCH fails goes back to its `before` state in the cache, and the first failure is thrown. The layout change that caused
-   * the moves stays: it is already saved, and a frame the user can drag back is a smaller problem than losing the layout.
+   * the moves stays: it is already saved. Move ids are resolved through the IdMap (a frame may have been re-created since).
    */
   const saveMoves = async (pageId: string, moves: readonly FrameMove[], before: readonly TextFrame[]): Promise<void> => {
     const byId = new Map(before.map((f) => [f.id, f]));
     const results = await Promise.allSettled(moves.map(async (move) => {
-      const from = byId.get(move.id);
+      const id = ids.resolve(move.id);
+      const from = byId.get(id);
       if (!from) return;
       const patch = movePatch(from, move);
       if (Object.keys(patch).length === 0) return;
       const body: UpdateFrameBody = typeof patch.panelId === 'string' ? { ...patch, panelId: ids.resolve(patch.panelId) } : patch;
       try {
-        cache.setFrame(await api.patch<TextFrame>(`/api/frames/${ids.resolve(move.id)}`, body));
+        cache.setFrame(await api.patch<TextFrame>(`/api/frames/${id}`, body));
       } catch (err) {
         cache.setFrame(from);
         throw err;
@@ -130,7 +137,9 @@ export function createOps({ api, ids, cache, format }: OpsDeps) {
   return {
     /**
      * Frames anchored to a panel move with it (proportionally, see `reanchorFrames`). Reverting resizes back and PATCHes the
-     * moved frames to the exact boxes and tails they had before, never re-mapped, so undo is exact.
+     * moved frames to the exact boxes and tails they had before, never re-mapped, so undo is exact (and idempotent: a frame
+     * already at its snapshot is not PATCHed). A frame that failed to save does not fail the command: the layout is saved,
+     * so the command must stay undoable; the error goes to `onFrameError`.
      */
     resize(pageId: string, path: SplitPath, from: number, to: number): EditorCommand {
       let restore: TextFrame[] = [];
@@ -138,16 +147,16 @@ export function createOps({ api, ids, cache, format }: OpsDeps) {
         label: 'Resize panels',
         pageId,
         async apply() {
-          const { prev, detail, moves } = await resizeTo(pageId, path, to, true);
+          const { prev, detail, moves } = await resizeTo(pageId, path, to, (p, layout) =>
+            reanchorFrames(p.frames, rectMap(p.page.layout, format()), rectMap(layout, format())));
           restore = prev.frames.filter((f) => moves.some((m) => m.id === f.id));
-          await saveMoves(pageId, moves, detail.frames);
+          try { await saveMoves(pageId, moves, detail.frames); } catch (err) { onFrameError(err); }
         },
         async revert() {
-          const { detail } = await resizeTo(pageId, path, from, false);
-          const back = restoreMoves(restore);
-          await cache.cancel(pageId);
-          cache.setPage({ ...detail, frames: applyMoves(detail.frames, back) });
-          await saveMoves(pageId, back, detail.frames);
+          // Ids at revert time: a frame deleted and restored in between has a new one.
+          const back = () => restoreMoves(restore).map((m) => ({ ...m, id: ids.resolve(m.id) }));
+          const { detail, moves } = await resizeTo(pageId, path, from, back);
+          try { await saveMoves(pageId, moves, detail.frames); } catch (err) { onFrameError(err); }
         },
       };
     },
@@ -173,8 +182,10 @@ export function createOps({ api, ids, cache, format }: OpsDeps) {
           if (id === null) throw new Error('The split did not create a panel');
           if (created !== null) ids.set(created, id);
           created = id;
-          // Frames centred over the new half follow it (their boxes stay put). A failing PATCH rejects; the split stays.
-          await followLayout(pageId, detail, before ?? detail.page.layout, { splitFrom: { panelId: target, newPanelId: id } });
+          // Frames centred over the new half follow it (their boxes stay put). A failing PATCH is reported, not thrown: the split is saved and must stay undoable.
+          try {
+            await followLayout(pageId, detail, before ?? detail.page.layout, { splitFrom: { panelId: target, newPanelId: id } });
+          } catch (err) { onFrameError(err); }
         },
         async revert() {
           if (created === null) return;

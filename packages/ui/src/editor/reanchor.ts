@@ -1,6 +1,6 @@
 import { computeRects, type Box, type LayoutNode, type PageFormat, type Rect, type TextFrame } from '@manga/shared';
 import type { UpdateFrameBody } from '../types';
-import { clampBox } from './frameDrag';
+import { clampBox, MIN_FRAME } from './frameDrag';
 
 type Point = { x: number; y: number };
 
@@ -40,8 +40,8 @@ function inside(r: Rect, p: Point): boolean {
  * relative to its panel). Only frames that change are returned.
  *
  * - No anchor (`panelId === null`), or an anchor missing from either map (a panel a preset removed): never moves.
- * - Otherwise the box and the tail are mapped proportionally from the panel's old rect to its new one, the box is
- *   clamped to the page, and the tail is translated by the same clamp correction (so it keeps its offset from the box).
+ * - Otherwise the box and the tail are mapped proportionally from the panel's old rect to its new one (the box size is
+ *   floored at MIN_FRAME), the box is clamped to the page, and the tail is translated by the same clamp correction (so it keeps its offset from the box).
  * - `opts.splitFrom` names a split: the panel keeps its place but its area is shared with `newPanelId`. Its frames
  *   don't move; the ones centred over the new panel are re-anchored to it.
  */
@@ -67,7 +67,10 @@ export function reanchorFrames(
     if (!from || !to || sameRect(from, to)) continue;
     if (from.w <= 0 || from.h <= 0 || to.w <= 0 || to.h <= 0) continue;
     const corner = mapPoint(f.box, from, to);
-    const mapped: Box = { x: corner.x, y: corner.y, w: (f.box.w * to.w) / from.w, h: (f.box.h * to.h) / from.h };
+    // A shrinking panel never shrinks a bubble below MIN_FRAME (one already smaller than that keeps its size).
+    const w = Math.max(Math.min(f.box.w, MIN_FRAME), (f.box.w * to.w) / from.w);
+    const h = Math.max(Math.min(f.box.h, MIN_FRAME), (f.box.h * to.h) / from.h);
+    const mapped: Box = { x: corner.x, y: corner.y, w, h };
     const box = clampBox(mapped);
     const tail = f.tail === null ? null : mapPoint(f.tail, from, to);
     const moved = tail === null ? null : { x: clamp01(tail.x + (box.x - mapped.x)), y: clamp01(tail.y + (box.y - mapped.y)) };

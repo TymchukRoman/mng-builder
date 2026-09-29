@@ -2,7 +2,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
 import { computeRects, DEFAULT_PAGE_FORMAT, DEFAULT_TRANSFORM, mergePanels, resizeSplit, splitPanel, type LayoutNode, type PageDetail, type Panel, type TextFrame } from '@manga/shared';
 import { queryCache } from '../src/editor/cacheAdapter';
-import { IdMap } from '../src/editor/history';
+import { History, IdMap } from '../src/editor/history';
 import { createOps, type OpsApi } from '../src/editor/ops';
 import { qk } from '../src/queryKeys';
 import { makeDetail, makeFrame, makePanel } from './fixtures';
@@ -48,10 +48,11 @@ function setup(routes: Record<string, Handler | Handler[]>, initial: PageDetail 
   qc.setQueryData(qk.page('pg_1'), initial);
   const ids = new IdMap();
   const { api, calls } = fakeApi(routes);
-  const ops = createOps({ api, ids, cache: queryCache(qc), format: () => DEFAULT_PAGE_FORMAT });
+  const frameErrors: unknown[] = [];
+  const ops = createOps({ api, ids, cache: queryCache(qc), format: () => DEFAULT_PAGE_FORMAT, onFrameError: (e) => frameErrors.push(e) });
   const page = (): PageDetail => qc.getQueryData<PageDetail>(qk.page('pg_1')) as PageDetail;
   const ratio = (): number => (page().page.layout as SplitNode).ratio;
-  return { ids, calls, ops, page, ratio, qc };
+  return { ids, calls, ops, page, ratio, qc, frameErrors };
 }
 
 describe('editor ops', () => {
@@ -329,14 +330,26 @@ describe('editor ops', () => {
           return state;
         },
       };
+      const patchRoute = (id: string): Handler => (b) => {
+        if (patchFails) throw new Error('frame 500');
+        const merged = { ...state.frames.find((x) => x.id === id)!, ...(b as Partial<TextFrame>) };
+        state = { ...state, frames: state.frames.map((x) => (x.id === id ? merged : x)) };
+        return merged;
+      };
       for (const f of initial.frames) {
-        routes[`PATCH /api/frames/${f.id}`] = (b) => {
-          if (patchFails) throw new Error('frame 500');
-          const merged = { ...state.frames.find((x) => x.id === f.id)!, ...(b as Partial<TextFrame>) };
-          state = { ...state, frames: state.frames.map((x) => (x.id === f.id ? merged : x)) };
-          return merged;
+        routes[`PATCH /api/frames/${f.id}`] = patchRoute(f.id);
+        routes[`DELETE /api/frames/${f.id}`] = () => {
+          state = { ...state, frames: state.frames.filter((x) => x.id !== f.id) };
+          return { ok: true };
         };
       }
+      // A frame re-created by an undone delete comes back as `tf_back`.
+      routes['PATCH /api/frames/tf_back'] = patchRoute('tf_back');
+      routes['POST /api/pages/pg_1/frames'] = (b) => {
+        const created = makeFrame('tf_back', 'pg_1', b as Partial<TextFrame>);
+        state = { ...state, frames: [...state.frames, created] };
+        return created;
+      };
       return { routes, get: () => state };
     }
 
@@ -381,13 +394,91 @@ describe('editor ops', () => {
       expect(page().frames.find((f) => f.id === 'tf_a')).toEqual(moved);
     });
 
-    it('a resize whose frame PATCH fails rejects, keeps the layout and shows the frames as the server has them', async () => {
+    it('a resize whose frame PATCH fails is still recorded and undoable; the failure is reported and the frames show the server state', async () => {
       const initial = threeFrames();
       const s = server(initial, true);
-      const { ops, page } = setup(s.routes, initial);
-      await expect(ops.resize('pg_1', [], 0.5, 0.7).apply()).rejects.toThrow('frame 500');
+      const { ops, page, frameErrors } = setup(s.routes, initial);
+      const history = new History();
+      await history.run(ops.resize('pg_1', [], 0.5, 0.7));
+      expect(frameErrors.map((e) => (e as Error).message)).toEqual(['frame 500']); // one report per command (the first failure)
+      expect(history.snapshot().canUndo).toBe(true);
       expect((page().page.layout as SplitNode).ratio).toBe(0.7);
       expect(page().frames.map((f) => f.box)).toEqual(initial.frames.map((f) => f.box));
+      await history.undo();
+      expect((page().page.layout as SplitNode).ratio).toBe(0.5);
+      expect((s.get().page.layout as SplitNode).ratio).toBe(0.5);
+      expect(shape(page())).toEqual(shape(initial));
+      expect(frameErrors).toHaveLength(1);
+    });
+
+    it('a split whose frame PATCH fails is still recorded and undoable', async () => {
+      const initial = makeDetail('pg_1', [anchored('tf_low', 'pn_a', { x: 0.2, y: 0.7, w: 0.1, h: 0.05 })]);
+      const s = server(initial, true);
+      const { ops, page, frameErrors } = setup(s.routes, initial);
+      const history = new History();
+      await history.run(ops.split('pg_1', 'pn_a', 'h'));
+      expect(frameErrors).toHaveLength(1);
+      expect(history.snapshot().canUndo).toBe(true);
+      expect(page().panels).toHaveLength(3);
+      await history.undo();
+      expect(page().panels.map((p) => p.id)).toEqual(['pn_a', 'pn_b']);
+      expect(page().page.layout).toEqual(initial.page.layout);
+    });
+
+    it('undoing a resize restores a frame that was deleted and re-created since, through the id map', async () => {
+      const initial = threeFrames();
+      const s = server(initial);
+      const { ops, page } = setup(s.routes, initial);
+      const resize = ops.resize('pg_1', [], 0.5, 0.7);
+      await resize.apply();
+      const del = ops.deleteFrame(page().frames.find((f) => f.id === 'tf_a')!);
+      await del.apply();
+      await del.revert(); // tf_a comes back as tf_back, at its moved position
+      expect(page().frames.map((f) => f.id)).toContain('tf_back');
+      await resize.revert();
+      const back = s.get().frames.find((f) => f.id === 'tf_back')!;
+      expect(back.box).toEqual(box);
+      expect(back.tail).toEqual(tail);
+      expect(page().frames.find((f) => f.id === 'tf_back')).toEqual(back);
+      expect(s.get().page.layout).toEqual(initial.page.layout);
+    });
+
+    it('undo restores the stored box and tail of a frame the resize clamped, not a re-mapped one', async () => {
+      // Left edge of pn_a: growing pn_a maps the box to a negative x, which the clamp pulls back to 0.
+      const edgeBox = { x: 0, y: 0.5, w: 0.1, h: 0.1 };
+      const edgeTail = { x: 0.05, y: 0.65 };
+      const initial = makeDetail('pg_1', [anchored('tf_edge', 'pn_a', edgeBox, edgeTail)]);
+      const s = server(initial);
+      const { ops, page } = setup(s.routes, initial);
+      const cmd = ops.resize('pg_1', [], 0.5, 0.7);
+      await cmd.apply();
+      const clamped = page().frames[0]!;
+      expect(clamped.box.x).toBe(0);
+      expect(clamped.box.w).not.toBe(edgeBox.w);
+      await cmd.revert();
+      for (const state of [page(), s.get()]) {
+        expect(state.frames[0]?.box).toEqual(edgeBox);
+        expect(state.frames[0]?.tail).toEqual(edgeTail);
+      }
+    });
+
+    it('undo writes the restored frames together with the reverted layout, before the server answers', async () => {
+      const initial = threeFrames();
+      const s = server(initial);
+      const t = setup(s.routes, initial);
+      const cmd = t.ops.resize('pg_1', [], 0.5, 0.7);
+      await cmd.apply();
+      // Hold the revert's resize POST: the cache must already show the old layout and the old frame boxes.
+      let open!: () => void;
+      const gate = new Promise<void>((r) => { open = r; });
+      const inner = s.routes['POST /api/pages/pg_1/layout/resize']!;
+      s.routes['POST /api/pages/pg_1/layout/resize'] = async (b) => { await gate; return inner(b); };
+      const reverting = cmd.revert();
+      await vi.waitFor(() => expect(t.ratio()).toBe(0.5));
+      expect(t.page().frames.map((f) => f.box)).toEqual(initial.frames.map((f) => f.box));
+      open();
+      await reverting;
+      expect(shape(t.page())).toEqual(shape(initial));
     });
 
     it('a resize without anchored frames sends no frame PATCH', async () => {
