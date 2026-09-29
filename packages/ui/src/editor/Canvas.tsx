@@ -23,6 +23,12 @@ export function Canvas({ detail, manga, widthPx, selection, onSelect, onChange, 
     <div
       ref={ref}
       className="canvas"
+      // Page gestures preventDefault their pointerdown, which also stops the browser moving focus. Blur the field that
+      // still has it (say the inspector's text box), so the editor shortcuts (arrows, Del) reach the canvas selection.
+      onPointerDownCapture={(e) => {
+        const a = document.activeElement;
+        if (a instanceof HTMLElement && a !== document.body && !e.currentTarget.contains(a)) a.blur();
+      }}
       onPointerDown={(e) => {
         const t = e.target as HTMLElement;
         if (t === e.currentTarget || t.classList.contains('canvas__inner')) onSelect(PAGE_SELECTION);
