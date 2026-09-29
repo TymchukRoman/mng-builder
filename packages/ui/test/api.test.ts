@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ApiClient, ApiError, imageUrl } from '../src/api';
+import { ApiClient, ApiError, imageUrl, seg } from '../src/api';
 
 type Call = { url: string; init: RequestInit | undefined };
 
@@ -74,5 +74,27 @@ describe('ApiClient', () => {
 
   it('builds image URLs', () => {
     expect(imageUrl('im_abc')).toBe('/files/images/im_abc.png');
+  });
+  it('encodes image ids in image URLs', () => {
+    expect(imageUrl('x/../../api/shutdown?')).toBe('/files/images/x%2F..%2F..%2Fapi%2Fshutdown%3F.png');
+  });
+});
+
+describe('seg (I1: every id placed in an API path)', () => {
+  it('passes a real id through unchanged', () => {
+    expect(seg('mg_k3j9x2abq7')).toBe('mg_k3j9x2abq7');
+  });
+  it('encodes slashes, query and fragment marks and percent signs, so an id stays one segment', () => {
+    expect(seg('x/../../shutdown?')).toBe('x%2F..%2F..%2Fshutdown%3F');
+    expect(seg('a#b')).toBe('a%23b');
+    expect(seg('%2F')).toBe('%252F');
+  });
+  it('refuses the dot segments and an empty id, which the URL parser would resolve even when encoded', () => {
+    for (const bad of ['.', '..', '', undefined, null]) expect(() => seg(bad), String(bad)).toThrow(ApiError);
+  });
+  it('a crafted id cannot leave its path position', () => {
+    const url = new URL(`/api/mangas/${seg('x/../../shutdown?')}/cover`, 'http://127.0.0.1');
+    expect(url.pathname).toBe('/api/mangas/x%2F..%2F..%2Fshutdown%3F/cover');
+    expect(url.search).toBe('');
   });
 });

@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useQueryClient, type QueryClient, type QueryKey } from '@tanstack/react-query';
 import type { Job, ServerEvent } from '@manga/shared';
-import { api } from './api';
+import { api, seg } from './api';
 import { createStore, useStore } from './lib/store';
 import { cacheLookup, keysForEntity, qk, type EntityEvent } from './queryKeys';
 import { TERMINAL, kindLabel } from './jobs/jobView';
@@ -77,7 +77,7 @@ export class JobWaiters {
 }
 
 export const jobWaiters = new JobWaiters();
-const fetchJob: FetchJob = (id) => api.get<Job>(`/api/jobs/${id}`);
+const fetchJob: FetchJob = (id) => api.get<Job>(`/api/jobs/${seg(id)}`);
 
 export function waitForJob(id: string): Promise<Job> {
   return jobWaiters.wait(id, fetchJob);

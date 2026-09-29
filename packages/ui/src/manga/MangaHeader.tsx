@@ -2,7 +2,7 @@ import type { JSX } from 'react';
 import { useNavigate } from 'react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { Manga } from '@manga/shared';
-import { api } from '../api';
+import { api, seg } from '../api';
 import { PagePlaceholder } from '../page/PagePlaceholder';
 import { PageThumb } from '../page/PageThumb';
 import { qk } from '../queryKeys';
@@ -20,7 +20,7 @@ export function MangaHeader({ manga, onOpenSettings }: { manga: Manga; onOpenSet
   const qc = useQueryClient();
   const patch = usePatchManga(manga.id);
   const remove = useMutation({
-    mutationFn: () => api.delete(`/api/mangas/${manga.id}`),
+    mutationFn: () => api.delete(`/api/mangas/${seg(manga.id)}`),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: qk.mangas() }); navigate('/'); },
   });
   return (

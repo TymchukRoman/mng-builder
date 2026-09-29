@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { Character, JobRef } from '@manga/shared';
-import { api } from '../api';
+import { api, seg } from '../api';
 import { activeJobs, jobProgress, jobStatusLabel, jobTargetsCharacter } from '../jobs/jobView';
 import { useCharacterImages, useJobs } from '../queries';
 import { qk } from '../queryKeys';
@@ -18,7 +18,7 @@ export function RefSlots({ character }: { character: Character }): JSX.Element {
   const state = canGenerateSheet(character);
   const sheetJob = activeJobs(jobs.data).find((j) => j.kind === 'character.refs' && jobTargetsCharacter(j, character.id));
   const sheet = useMutation({
-    mutationFn: () => api.post<JobRef>(`/api/characters/${character.id}/sheet`),
+    mutationFn: () => api.post<JobRef>(`/api/characters/${seg(character.id)}/sheet`),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: qk.jobs() }); },
   });
   const prog = sheetJob ? jobProgress(sheetJob) : null;

@@ -74,6 +74,17 @@ export class ApiClient {
 
 export const api = new ApiClient('');
 
+/**
+ * One API path segment (I1). Every id placed in an API path goes through this, so a crafted id (a route param, say)
+ * can never add path segments, a query or a fragment. The URL parser resolves `.` and `..` segments even when they are
+ * percent-encoded, so those (and an empty id) are refused with an ApiError before any request is sent.
+ */
+export function seg(id: string | null | undefined): string {
+  if (id === undefined || id === null || id === '' || id === '.' || id === '..') throw new ApiError(0, 'validation', `Invalid id "${id ?? ''}"`);
+  return encodeURIComponent(id);
+}
+
+/** The `.png` suffix keeps the segment from ever being a dot segment, so this only encodes. */
 export function imageUrl(imageId: string): string {
-  return `/files/images/${imageId}.png`;
+  return `/files/images/${encodeURIComponent(imageId)}.png`;
 }

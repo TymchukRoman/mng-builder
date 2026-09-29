@@ -1,7 +1,7 @@
 import { useRef, useState, type JSX } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { Character, JobRef } from '@manga/shared';
-import { api } from '../api';
+import { api, seg } from '../api';
 import { waitForJob } from '../events';
 import { jobStatusLabel } from '../jobs/jobView';
 import { useJobs } from '../queries';
@@ -24,7 +24,7 @@ export function AppearanceField({ character, onSave }: { character: Character; o
 
   const suggest = useMutation({
     mutationFn: async (text: string) => {
-      const { jobId: id } = await api.post<JobRef>(`/api/characters/${character.id}/suggest-appearance`, { description: text });
+      const { jobId: id } = await api.post<JobRef>(`/api/characters/${seg(character.id)}/suggest-appearance`, { description: text });
       setJobId(id);
       setOpen(false);
       void qc.invalidateQueries({ queryKey: qk.jobs() });

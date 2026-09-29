@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { Manga } from '@manga/shared';
-import { api } from '../api';
+import { api, seg } from '../api';
 import { qk } from '../queryKeys';
 import type { UpdateMangaBody } from '../types';
 import { applyMangaPatch } from './mangaModel';
@@ -14,7 +14,7 @@ import { applyMangaPatch } from './mangaModel';
 export function usePatchManga(mangaId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: UpdateMangaBody) => api.patch<Manga>(`/api/mangas/${mangaId}`, body),
+    mutationFn: (body: UpdateMangaBody) => api.patch<Manga>(`/api/mangas/${seg(mangaId)}`, body),
     onMutate: async (body) => {
       await qc.cancelQueries({ queryKey: qk.manga(mangaId) });
       const previous = qc.getQueryData<Manga>(qk.manga(mangaId));

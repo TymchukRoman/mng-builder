@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { Character, JobRefs } from '@manga/shared';
-import { api, imageUrl } from '../api';
+import { api, imageUrl, seg } from '../api';
 import { activeJobs, isPortraitJob, jobProgress, jobStatusLabel, jobTargetsCharacter } from '../jobs/jobView';
 import { cx } from '../lib/cx';
 import { useCharacterImages, useJobs } from '../queries';
@@ -24,12 +24,12 @@ export function PortraitVariants({ character }: { character: Character }): JSX.E
     void qc.invalidateQueries({ queryKey: qk.characters(character.mangaId) });
   };
   const generate = useMutation({
-    mutationFn: () => api.post<JobRefs>(`/api/characters/${character.id}/portraits`, { n: PORTRAIT_BATCH }),
+    mutationFn: () => api.post<JobRefs>(`/api/characters/${seg(character.id)}/portraits`, { n: PORTRAIT_BATCH }),
     // Show the queued tiles now instead of waiting for the first job event.
     onSuccess: () => { void qc.invalidateQueries({ queryKey: qk.jobs() }); },
   });
-  const pick = useMutation({ mutationFn: (imageId: string) => api.post<Character>(`/api/characters/${character.id}/refs/portrait`, { imageId }), onSuccess: refresh });
-  const remove = useMutation({ mutationFn: (imageId: string) => api.delete(`/api/images/${imageId}`), onSuccess: refresh });
+  const pick = useMutation({ mutationFn: (imageId: string) => api.post<Character>(`/api/characters/${seg(character.id)}/refs/portrait`, { imageId }), onSuccess: refresh });
+  const remove = useMutation({ mutationFn: (imageId: string) => api.delete(`/api/images/${seg(imageId)}`), onSuccess: refresh });
 
   return (
     <section className="drawer-section">

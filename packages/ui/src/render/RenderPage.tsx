@@ -1,5 +1,6 @@
 import { useEffect, useRef, type JSX } from 'react';
 import { useParams, useSearchParams } from 'react-router';
+import { isId } from '../lib/ids';
 import { PageView } from '../page/PageView';
 import { renderPageSize } from '../page/pageModel';
 import { useManga, usePageDetail } from '../queries';
@@ -26,7 +27,8 @@ function frames(n: number): Promise<void> {
 export function RenderPage(): JSX.Element {
   const { pageId } = useParams();
   const [search] = useSearchParams();
-  const detail = usePageDetail(pageId);
+  const valid = isId(pageId, 'pg'); // I1: a crafted id never reaches a request; it fails like a missing page
+  const detail = usePageDetail(valid ? pageId : undefined);
   const manga = useManga(detail.data?.page.mangaId);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -36,9 +38,10 @@ export function RenderPage(): JSX.Element {
   }, []);
 
   useEffect(() => {
+    if (!valid) { window.__MANGA_RENDER_ERROR__ = `page ${pageId ?? ''} not found`; return; }
     const err = detail.error ?? manga.error;
     if (err) window.__MANGA_RENDER_ERROR__ = errorText(err);
-  }, [detail.error, manga.error]);
+  }, [valid, pageId, detail.error, manga.error]);
 
   useEffect(() => {
     if (!detail.data || !manga.data) return;

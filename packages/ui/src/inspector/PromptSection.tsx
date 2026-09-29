@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { JobRef, Panel } from '@manga/shared';
-import { api } from '../api';
+import { api, seg } from '../api';
 import { waitForJob } from '../events';
 import { jobStatusLabel } from '../jobs/jobView';
 import { useJobs } from '../queries';
@@ -19,7 +19,7 @@ export function PromptSection({ pageId, panel, patch }: { pageId: string; panel:
   const jobs = useJobs();
   const write = useMutation({
     mutationFn: async () => {
-      const { jobId } = await api.post<JobRef>(`/api/panels/${panel.id}/prompt`);
+      const { jobId } = await api.post<JobRef>(`/api/panels/${seg(panel.id)}/prompt`);
       void qc.invalidateQueries({ queryKey: qk.jobs() });
       // The job writes panel.prompt.scene itself (its result is `{scene}`); a failure is toasted by the socket handler.
       return waitForJob(jobId);

@@ -2,7 +2,7 @@ import type { JSX } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { Chapter, Manga } from '@manga/shared';
-import { api } from '../api';
+import { api, seg } from '../api';
 import { PagePlaceholder } from '../page/PagePlaceholder';
 import { PageThumb } from '../page/PageThumb';
 import { usePages } from '../queries';
@@ -18,7 +18,7 @@ export function ChapterRow({ manga, chapter }: { manga: Manga; chapter: Chapter 
   const navigate = useNavigate();
   const qc = useQueryClient();
   const remove = useMutation({
-    mutationFn: () => api.delete(`/api/chapters/${chapter.id}`),
+    mutationFn: () => api.delete(`/api/chapters/${seg(chapter.id)}`),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: qk.chapters(manga.id) }); },
   });
   const count = pages.data?.length;

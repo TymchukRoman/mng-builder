@@ -1,7 +1,7 @@
 import { useState, type DragEvent, type JSX } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { Manga, Page, PageDetail } from '@manga/shared';
-import { api } from '../api';
+import { api, seg } from '../api';
 import { cx } from '../lib/cx';
 import { PageThumb } from '../page/PageThumb';
 import { qk } from '../queryKeys';
@@ -31,7 +31,7 @@ export function PageList({ chapterId, manga, pageIds, currentId, onSelectPage, o
   const [drag, setDrag] = useState<{ id: string; over: number | null } | null>(null);
 
   const add = useMutation({
-    mutationFn: () => api.post<PageDetail>(`/api/chapters/${chapterId}/pages`, insertBody(pageIds, currentId)),
+    mutationFn: () => api.post<PageDetail>(`/api/chapters/${seg(chapterId)}/pages`, insertBody(pageIds, currentId)),
     onSuccess: async (d) => {
       qc.setQueryData(qk.page(d.page.id), d);
       await qc.invalidateQueries({ queryKey: qk.pages(chapterId) });
@@ -40,7 +40,7 @@ export function PageList({ chapterId, manga, pageIds, currentId, onSelectPage, o
   });
   // Optimistic: the list shows the new order at once and rolls back when the server refuses it.
   const reorder = useMutation({
-    mutationFn: (ids: string[]) => api.post<Page[]>(`/api/chapters/${chapterId}/pages/reorder`, { ids }),
+    mutationFn: (ids: string[]) => api.post<Page[]>(`/api/chapters/${seg(chapterId)}/pages/reorder`, { ids }),
     onMutate: async (ids) => {
       await qc.cancelQueries({ queryKey: qk.pages(chapterId), exact: true });
       const prev = qc.getQueryData<Page[]>(qk.pages(chapterId));

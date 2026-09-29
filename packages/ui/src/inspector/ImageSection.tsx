@@ -1,7 +1,7 @@
 import { useRef, type JSX } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { ColorMode, Image, JobRef, PageDetail, Panel } from '@manga/shared';
-import { api } from '../api';
+import { api, seg } from '../api';
 import type { EditorCommand } from '../editor/commands';
 import type { Ops } from '../editor/ops';
 import { panelSelection, type Selection } from '../editor/selection';
@@ -35,10 +35,10 @@ export function ImageSection({ detail, panel, colorMode, selection, onSelect, ru
   const showJob = (): void => { void qc.invalidateQueries({ queryKey: qk.jobs() }); };
 
   // Refused calls are toasted by the query client's mutation cache. Generating with `{}` uses the panel's own recipe, seed and lock.
-  const generate = useMutation({ mutationFn: () => api.post<JobRef>(`/api/panels/${panel.id}/generate`, {}), onSuccess: showJob });
-  const review = useMutation({ mutationFn: () => api.post<JobRef>(`/api/panels/${panel.id}/review`), onSuccess: showJob });
-  const upload = useMutation({ mutationFn: (f: File) => api.upload<Image>(`/api/panels/${panel.id}/upload`, f, f.name), onSuccess: refresh });
-  const remove = useMutation({ mutationFn: (imageId: string) => api.delete(`/api/images/${imageId}`), onSuccess: refresh });
+  const generate = useMutation({ mutationFn: () => api.post<JobRef>(`/api/panels/${seg(panel.id)}/generate`, {}), onSuccess: showJob });
+  const review = useMutation({ mutationFn: () => api.post<JobRef>(`/api/panels/${seg(panel.id)}/review`), onSuccess: showJob });
+  const upload = useMutation({ mutationFn: (f: File) => api.upload<Image>(`/api/panels/${seg(panel.id)}/upload`, f, f.name), onSuccess: refresh });
+  const remove = useMutation({ mutationFn: (imageId: string) => api.delete(`/api/images/${seg(imageId)}`), onSuccess: refresh });
 
   return (
     <section className="insp-section">

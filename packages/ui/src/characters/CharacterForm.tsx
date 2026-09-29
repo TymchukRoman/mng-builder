@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { Character } from '@manga/shared';
-import { api } from '../api';
+import { api, seg } from '../api';
 import { randomSeed } from '../lib/seed';
 import { useRecipes } from '../queries';
 import { qk } from '../queryKeys';
@@ -20,7 +20,7 @@ export function CharacterForm({ character }: { character: Character }): JSX.Elem
   const qc = useQueryClient();
   const recipes = useRecipes();
   const patch = useMutation({
-    mutationFn: (body: UpdateCharacterBody) => api.patch<Character>(`/api/characters/${character.id}`, body),
+    mutationFn: (body: UpdateCharacterBody) => api.patch<Character>(`/api/characters/${seg(character.id)}`, body),
     onSuccess: (c) => { qc.setQueryData(qk.character(c.id), c); void qc.invalidateQueries({ queryKey: qk.characters(c.mangaId) }); },
   });
   const save = async (body: UpdateCharacterBody): Promise<void> => { await patch.mutateAsync(body); };

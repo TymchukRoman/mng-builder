@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { Manga } from '@manga/shared';
-import { api } from '../api';
+import { api, seg } from '../api';
 import { useCharacter } from '../queries';
 import { qk } from '../queryKeys';
 import { ConfirmIconButton } from '../ui/ConfirmIconButton';
@@ -19,7 +19,7 @@ export function CharacterDrawer({ manga, characterId, onClose, onCreated }: {
   const character = useCharacter(isNew ? null : characterId);
   const qc = useQueryClient();
   const remove = useMutation({
-    mutationFn: (id: string) => api.delete(`/api/characters/${id}`),
+    mutationFn: (id: string) => api.delete(`/api/characters/${seg(id)}`),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: qk.characters(manga.id) }); onClose(); },
   });
   const c = character.data;

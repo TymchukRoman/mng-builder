@@ -1,5 +1,5 @@
 import { resizeSplit, type ImageTransform, type LayoutNode, type PageDetail, type PageFormat, type Panel, type SplitDir, type SplitPath, type TextFrame } from '@manga/shared';
-import type { ApiClient } from '../api';
+import { type ApiClient, seg } from '../api';
 import type { CreateFrameBody, UpdateFrameBody, UpdatePanelBody } from '../types';
 import type { EditorCommand, FrameCreateCommand } from './commands';
 import type { IdMap } from './history';
@@ -46,7 +46,7 @@ function splitChildOf(layout: LayoutNode, panelId: string): string | null {
 }
 
 export function createOps({ api, ids, cache, format, onFrameError }: OpsDeps) {
-  const loadPage = async (pageId: string): Promise<PageDetail> => cache.getPage(pageId) ?? api.get<PageDetail>(`/api/pages/${pageId}`);
+  const loadPage = async (pageId: string): Promise<PageDetail> => cache.getPage(pageId) ?? api.get<PageDetail>(`/api/pages/${seg(pageId)}`);
 
   /**
    * Resizes the split. `frameMoves` says where the frames go with it; they are written (optimistically too) in the same cache
@@ -62,7 +62,7 @@ export function createOps({ api, ids, cache, format, onFrameError }: OpsDeps) {
     const moves = frameMoves(prev, layout);
     cache.setPage({ ...prev, page: { ...prev.page, layout }, frames: applyMoves(prev.frames, moves) });
     try {
-      const detail = await api.post<PageDetail>(`/api/pages/${pageId}/layout/resize`, { path, ratio });
+      const detail = await api.post<PageDetail>(`/api/pages/${seg(pageId)}/layout/resize`, { path, ratio });
       cache.setPage({ ...detail, frames: applyMoves(detail.frames, moves) });
       return { prev, detail, moves };
     } catch (err) {
@@ -86,7 +86,7 @@ export function createOps({ api, ids, cache, format, onFrameError }: OpsDeps) {
       if (Object.keys(patch).length === 0) return;
       const body: UpdateFrameBody = typeof patch.panelId === 'string' ? { ...patch, panelId: ids.resolve(patch.panelId) } : patch;
       try {
-        cache.setFrame(await api.patch<TextFrame>(`/api/frames/${id}`, body));
+        cache.setFrame(await api.patch<TextFrame>(`/api/frames/${seg(id)}`, body));
       } catch (err) {
         cache.setFrame(from);
         throw err;
@@ -114,7 +114,7 @@ export function createOps({ api, ids, cache, format, onFrameError }: OpsDeps) {
     const prev = cache.getPage(pageId)?.frames.find((f) => f.id === id);
     if (prev) cache.setFrame({ ...prev, ...body } as TextFrame);
     try {
-      cache.setFrame(await api.patch<TextFrame>(`/api/frames/${id}`, body));
+      cache.setFrame(await api.patch<TextFrame>(`/api/frames/${seg(id)}`, body));
     } catch (err) {
       if (prev) cache.setFrame(prev);
       throw err;
@@ -127,7 +127,7 @@ export function createOps({ api, ids, cache, format, onFrameError }: OpsDeps) {
     const prev = cache.getPage(pageId)?.panels.find((p) => p.id === id);
     if (prev) cache.setPanel({ ...prev, ...patch } as Panel);
     try {
-      cache.setPanel(await api.patch<Panel>(`/api/panels/${id}`, patch));
+      cache.setPanel(await api.patch<Panel>(`/api/panels/${seg(id)}`, patch));
     } catch (err) {
       if (prev) cache.setPanel(prev);
       throw err;
@@ -177,7 +177,7 @@ export function createOps({ api, ids, cache, format, onFrameError }: OpsDeps) {
         async apply() {
           const target = ids.resolve(panelId);
           const before = cache.getPage(pageId)?.page.layout;
-          const detail = await api.post<PageDetail>(`/api/pages/${pageId}/layout/split`, { panelId: target, dir });
+          const detail = await api.post<PageDetail>(`/api/pages/${seg(pageId)}/layout/split`, { panelId: target, dir });
           const id = splitChildOf(detail.page.layout, target);
           if (id === null) throw new Error('The split did not create a panel');
           if (created !== null) ids.set(created, id);
@@ -189,7 +189,7 @@ export function createOps({ api, ids, cache, format, onFrameError }: OpsDeps) {
         },
         async revert() {
           if (created === null) return;
-          cache.setPage(await api.post<PageDetail>(`/api/pages/${pageId}/layout/merge`, { panelIdA: ids.resolve(panelId), panelIdB: ids.resolve(created) }));
+          cache.setPage(await api.post<PageDetail>(`/api/pages/${seg(pageId)}/layout/merge`, { panelIdA: ids.resolve(panelId), panelIdB: ids.resolve(created) }));
         },
       };
     },
@@ -206,7 +206,7 @@ export function createOps({ api, ids, cache, format, onFrameError }: OpsDeps) {
           const body: CreateFrameBody = first
             ? frameBody(first, ids)
             : { ...input, ...(typeof input.panelId === 'string' ? { panelId: ids.resolve(input.panelId) } : {}) };
-          const frame = await api.post<TextFrame>(`/api/pages/${pageId}/frames`, body);
+          const frame = await api.post<TextFrame>(`/api/pages/${seg(pageId)}/frames`, body);
           if (current !== null) ids.set(current, frame.id);
           current = frame.id;
           first ??= frame;
@@ -215,7 +215,7 @@ export function createOps({ api, ids, cache, format, onFrameError }: OpsDeps) {
         async revert() {
           if (current === null) return;
           const id = ids.resolve(current);
-          await api.delete(`/api/frames/${id}`);
+          await api.delete(`/api/frames/${seg(id)}`);
           cache.removeFrame(pageId, id);
         },
       };
@@ -233,16 +233,16 @@ export function createOps({ api, ids, cache, format, onFrameError }: OpsDeps) {
         pageId: frame.pageId,
         async apply() {
           const id = ids.resolve(current);
-          await api.delete(`/api/frames/${id}`);
+          await api.delete(`/api/frames/${seg(id)}`);
           cache.removeFrame(frame.pageId, id);
         },
         async revert() {
-          const restored = await api.post<TextFrame>(`/api/pages/${frame.pageId}/frames`, frameBody(frame, ids));
+          const restored = await api.post<TextFrame>(`/api/pages/${seg(frame.pageId)}/frames`, frameBody(frame, ids));
           // The frame exists now: record its new id and cache it before the order fix, so a failing PATCH leaves both correct.
           ids.set(ids.resolve(current), restored.id);
           current = restored.id;
           cache.setFrame(restored);
-          if (restored.order !== frame.order) cache.setFrame(await api.patch<TextFrame>(`/api/frames/${restored.id}`, { order: frame.order }));
+          if (restored.order !== frame.order) cache.setFrame(await api.patch<TextFrame>(`/api/frames/${seg(restored.id)}`, { order: frame.order }));
         },
       };
     },
@@ -266,9 +266,9 @@ export function createOps({ api, ids, cache, format, onFrameError }: OpsDeps) {
 
     activeImage(pageId: string, panelId: string, before: string | null, after: string | null): EditorCommand {
       const set = async (imageId: string | null): Promise<void> => {
-        await api.patch<Panel>(`/api/panels/${ids.resolve(panelId)}`, { activeImageId: imageId });
+        await api.patch<Panel>(`/api/panels/${seg(ids.resolve(panelId))}`, { activeImageId: imageId });
         // detail.images only carries active images, so reload to get the new one's size.
-        cache.setPage(await api.get<PageDetail>(`/api/pages/${pageId}`));
+        cache.setPage(await api.get<PageDetail>(`/api/pages/${seg(pageId)}`));
       };
       return { label: 'Switch image', pageId, apply: () => set(after), revert: () => set(before) };
     },
@@ -280,7 +280,7 @@ export function createOps({ api, ids, cache, format, onFrameError }: OpsDeps) {
      */
     async applyPreset(pageId: string, preset: string, confirm: boolean): Promise<LayoutChange> {
       const prev = await loadPage(pageId);
-      const detail = await api.post<PageDetail>(`/api/pages/${pageId}/layout/preset`, { preset, confirm });
+      const detail = await api.post<PageDetail>(`/api/pages/${seg(pageId)}/layout/preset`, { preset, confirm });
       try {
         await followLayout(pageId, detail, prev.page.layout);
         return { detail, framesError: null };
@@ -296,7 +296,7 @@ export function createOps({ api, ids, cache, format, onFrameError }: OpsDeps) {
      */
     async merge(pageId: string, a: string, b: string): Promise<PageDetail> {
       await cache.cancel(pageId);
-      const detail = await api.post<PageDetail>(`/api/pages/${pageId}/layout/merge`, { panelIdA: ids.resolve(a), panelIdB: ids.resolve(b) });
+      const detail = await api.post<PageDetail>(`/api/pages/${seg(pageId)}/layout/merge`, { panelIdA: ids.resolve(a), panelIdB: ids.resolve(b) });
       cache.setPage(detail);
       return detail;
     },

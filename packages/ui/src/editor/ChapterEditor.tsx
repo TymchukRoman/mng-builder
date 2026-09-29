@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { useSearchParams } from 'react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { FrameKind, JobRef, Manga, Page, SplitDir } from '@manga/shared';
-import { api, ApiError } from '../api';
+import { api, ApiError, seg } from '../api';
 import { Inspector } from '../inspector/Inspector';
 import { JobBar } from '../jobs/JobBar';
 import { cx } from '../lib/cx';
@@ -110,7 +110,7 @@ export function ChapterEditor({ manga, mode, chapterId, pageIds, title, backTo, 
       await deletePageFlow(id, {
         flush: flushNudge,
         barrier: (fn) => history.barrier(fn),
-        remove: (pid) => api.delete(`/api/pages/${pid}`),
+        remove: (pid) => api.delete(`/api/pages/${seg(pid)}`),
         after: (pid) => {
           const l = latest.current;
           if (pid === l.pageId) l.selectPage(neighbourAfterDelete(l.pageIds, pid));
@@ -162,7 +162,7 @@ export function ChapterEditor({ manga, mode, chapterId, pageIds, title, backTo, 
   };
   // Generating with `{}` uses the panel's own recipe, seed and lock. Refusals are toasted by the mutation cache.
   const generate = useMutation({
-    mutationFn: (id: string) => api.post<JobRef>(`/api/panels/${id}/generate`, {}),
+    mutationFn: (id: string) => api.post<JobRef>(`/api/panels/${seg(id)}/generate`, {}),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: qk.jobs() }); },
   });
 

@@ -1,7 +1,7 @@
 import { useRef, useState, type JSX } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { Character, Image, RefSlot as Slot } from '@manga/shared';
-import { api, imageUrl } from '../api';
+import { api, imageUrl, seg } from '../api';
 import { cx } from '../lib/cx';
 import { qk } from '../queryKeys';
 import { IconButton } from '../ui/IconButton';
@@ -22,11 +22,11 @@ export function RefSlot({ character, slot, images }: { character: Character; slo
     void qc.invalidateQueries({ queryKey: qk.characters(character.mangaId) });
   };
   const upload = useMutation({
-    mutationFn: (file: File) => api.upload<Image>(`/api/characters/${character.id}/upload?slot=${slot}`, file, file.name),
+    mutationFn: (file: File) => api.upload<Image>(`/api/characters/${seg(character.id)}/upload?slot=${seg(slot)}`, file, file.name),
     onSuccess: refresh,
   });
   const pick = useMutation({
-    mutationFn: (imageId: string) => api.post<Character>(`/api/characters/${character.id}/refs/${slot}`, { imageId }),
+    mutationFn: (imageId: string) => api.post<Character>(`/api/characters/${seg(character.id)}/refs/${seg(slot)}`, { imageId }),
     onSuccess: () => { refresh(); setOpen(false); },
   });
 

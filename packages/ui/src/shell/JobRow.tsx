@@ -1,14 +1,14 @@
 import type { JSX } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import type { Job } from '@manga/shared';
-import { api } from '../api';
+import { api, seg } from '../api';
 import { isActive, jobProgress, jobStatusLabel } from '../jobs/jobView';
 import { IconButton } from '../ui/IconButton';
 import { Ban, CircleCheck, CircleX } from '../ui/icons';
 import { StatusLoader } from '../ui/StatusLoader';
 
 export function JobRow({ job }: { job: Job }): JSX.Element {
-  const cancel = useMutation({ mutationFn: () => api.post<Job>(`/api/jobs/${job.id}/cancel`) });
+  const cancel = useMutation({ mutationFn: () => api.post<Job>(`/api/jobs/${seg(job.id)}/cancel`) });
   const label = jobStatusLabel(job);
   const prog = jobProgress(job);
   if (isActive(job)) {

@@ -1,7 +1,7 @@
 import { useState, type JSX } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { Character, Manga } from '@manga/shared';
-import { api } from '../api';
+import { api, seg } from '../api';
 import { qk } from '../queryKeys';
 import type { CreateCharacterBody } from '../types';
 import { Field } from '../ui/Field';
@@ -18,7 +18,7 @@ export function NewCharacterForm({ manga, onCreated }: { manga: Manga; onCreated
   const [role, setRole] = useState<Character['role']>('supporting');
   const qc = useQueryClient();
   const create = useMutation({
-    mutationFn: (body: CreateCharacterBody) => api.post<Character>(`/api/mangas/${manga.id}/characters`, body),
+    mutationFn: (body: CreateCharacterBody) => api.post<Character>(`/api/mangas/${seg(manga.id)}/characters`, body),
     onSuccess: (c) => { void qc.invalidateQueries({ queryKey: qk.characters(manga.id) }); setName(''); onCreated(c.id); },
   });
   return (

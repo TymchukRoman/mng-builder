@@ -1,6 +1,7 @@
 import { useState, type JSX } from 'react';
 import { useParams, useSearchParams } from 'react-router';
 import { CharactersTab } from '../characters/CharactersTab';
+import { isId } from '../lib/ids';
 import { useManga } from '../queries';
 import { BookOpen, Users } from '../ui/icons';
 import { StatusLoader } from '../ui/StatusLoader';
@@ -15,12 +16,14 @@ type TabId = 'chapters' | 'characters';
 
 // The header names the manga (its title is the page heading), so the top bar adds none (F16).
 export function MangaPage(): JSX.Element {
-  const { mangaId = '' } = useParams();
-  const manga = useManga(mangaId);
+  const { mangaId } = useParams();
+  const valid = isId(mangaId, 'mg'); // I1: a crafted id never reaches a request
+  const manga = useManga(valid ? mangaId : undefined);
   const [search, setSearch] = useSearchParams();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const tab: TabId = search.get('tab') === 'characters' ? 'characters' : 'chapters';
 
+  if (!valid) return <section className="screen"><p className="error-text">Not found</p></section>;
   if (manga.isPending) return <section className="screen"><StatusLoader label="Loading manga" /></section>;
   if (!manga.data) return <section className="screen"><p className="error-text">{errorText(manga.error)}</p></section>;
   const m = manga.data;

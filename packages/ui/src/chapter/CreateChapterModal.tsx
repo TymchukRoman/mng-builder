@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState, type JSX } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { Chapter, Manga } from '@manga/shared';
-import { api } from '../api';
+import { api, seg } from '../api';
 import { qk } from '../queryKeys';
 import type { CreateChapterBody } from '../types';
 import { Field } from '../ui/Field';
@@ -23,7 +23,7 @@ export function CreateChapterModal({ manga, open, onClose, onCreated }: { manga:
   const close = (): void => { reset(); onClose(); };
   const create = useMutation({
     mutationFn: (body: CreateChapterBody) => createChapterFlow({
-      post: () => api.post<Chapter>(`/api/mangas/${manga.id}/chapters`, body),
+      post: () => api.post<Chapter>(`/api/mangas/${seg(manga.id)}/chapters`, body),
       start: startEpisode.current,
       onStartError: (err) => pushToast('error', startFailureMessage(err)),
     }),
