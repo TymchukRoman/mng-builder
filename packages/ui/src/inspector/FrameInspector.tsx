@@ -1,5 +1,5 @@
 import type { JSX } from 'react';
-import { BUNDLED_FONTS, DEFAULT_FONT_SIZE, FONT_FOR_KIND, FrameKindSchema, type Character, type FrameKind, type Manga, type PageDetail, type TextFrame } from '@manga/shared';
+import { DEFAULT_FONT_SIZE, FONT_FOR_KIND, FrameKindSchema, type Character, type FrameKind, type Manga, type PageDetail, type TextFrame } from '@manga/shared';
 import type { EditorCommand } from '../editor/commands';
 import { canRotate, hasTail } from '../editor/frameDrag';
 import { FRAME_KIND_ICON, FRAME_KIND_LABEL } from '../editor/frameKinds';
@@ -13,7 +13,7 @@ import { IconButton } from '../ui/IconButton';
 import { AlignCenter, AlignLeft, AlignRight, Maximize, X } from '../ui/icons';
 import { NumberField } from '../ui/NumberField';
 import { Segmented } from '../ui/Segmented';
-import { panelNumbers } from './inspectorModel';
+import { fontChoices, panelNumbers } from './inspectorModel';
 
 /** Every edit is an `ops.updateFrame` command, so undo and redo cover it; the text is batched (one command per burst of typing). */
 export function FrameInspector({ manga, detail, frame, characters, run, ops, onSelect, mode }: {
@@ -66,7 +66,7 @@ export function FrameInspector({ manga, detail, frame, characters, run, ops, onS
         <h3>Type</h3>
         <Field label="Font">
           <select className="select" value={frame.font} onChange={(e) => update({ font: frame.font }, { font: e.target.value }, 'Change font')}>
-            {BUNDLED_FONTS.map((f) => <option key={f} value={f} style={{ fontFamily: `"${f}", sans-serif` }}>{f}</option>)}
+            {fontChoices(frame.font).map((f) => <option key={f} value={f} style={{ fontFamily: `"${f}", sans-serif` }}>{f}</option>)}
           </select>
         </Field>
         <div className="grid-2">

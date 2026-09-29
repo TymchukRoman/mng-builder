@@ -1,16 +1,36 @@
-import type { JSX } from 'react';
+import { useEffect, useLayoutEffect, useRef, type JSX } from 'react';
 import { AngleSchema, DialogueKindSchema, ShotSchema, StagePositionSchema, type Character, type Panel, type PanelScript } from '@manga/shared';
 import { useAutosaveDraft } from '../lib/useAutosaveDraft';
 import { Field } from '../ui/Field';
 import { IconButton } from '../ui/IconButton';
 import { Minus, Plus } from '../ui/icons';
+import { dropBlankLines, scriptSaveable, scriptToSave } from './inspectorModel';
 
+/**
+ * A script with a blank dialogue line cannot be saved (the server refuses it), so while the form is open the save is held
+ * (and the draft kept). Once focus leaves the form, or the form closes, the draft is saved without its blank lines.
+ */
 export function ScriptForm({ panel, characters, onSave }: { panel: Panel; characters: Character[]; onSave(script: PanelScript): Promise<void> | void }): JSX.Element {
-  const { draft, setDraft, flush } = useAutosaveDraft(panel.script, onSave, 300);
+  const { draft, setDraft, flush } = useAutosaveDraft(panel.script, (next) => {
+    const script = scriptToSave(next, false);
+    return script ? onSave(script) : false;
+  }, 300);
+  const latest = useRef({ draft, onSave });
+  useLayoutEffect(() => { latest.current = { draft, onSave }; });
+  useEffect(() => () => {
+    const { draft: last, onSave: save } = latest.current;
+    if (!scriptSaveable(last)) void save(dropBlankLines(last));
+  }, []);
   const set = (p: Partial<PanelScript>): void => setDraft({ ...draft, ...p });
   const first = characters[0];
   return (
-    <section className="insp-section" onBlur={flush}>
+    <section className="insp-section" onBlur={(e) => {
+      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+        const script = scriptToSave(draft, true);
+        if (script && script !== draft) setDraft(script);
+      }
+      flush();
+    }}>
       <h3>Script</h3>
       <Field label="Action"><textarea className="textarea" rows={2} value={draft.action} onChange={(e) => set({ action: e.target.value })} /></Field>
       <div className="grid-2">

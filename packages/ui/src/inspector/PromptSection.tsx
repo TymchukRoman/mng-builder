@@ -27,13 +27,15 @@ export function PromptSection({ pageId, panel, patch }: { pageId: string; panel:
     onSettled: () => { void qc.invalidateQueries({ queryKey: qk.page(pageId) }); },
   });
   const job = panelJobs(jobs.data, panel.id).prompt;
+  // A pending job also counts, so the loader survives closing and reopening the inspector.
+  const busy = write.isPending || job !== undefined;
   return (
     <section className="insp-section">
       <div className="section-head">
         <h3>Prompt</h3>
-        <IconButton icon={WandSparkles} label="Write the prompt with AI" busy={write.isPending} onClick={() => write.mutate()} />
+        <IconButton icon={WandSparkles} label="Write the prompt with AI" busy={busy} onClick={() => write.mutate()} />
       </div>
-      {write.isPending && <StatusLoader label={job ? jobStatusLabel(job) : 'Writing prompt'} />}
+      {busy && <StatusLoader label={job ? jobStatusLabel(job) : 'Writing prompt'} />}
       <Field label="Scene">
         <AutoText multiline rows={4} label="Scene prompt" value={panel.prompt.scene} onSave={(scene) => patch({ prompt: { scene, negative: panel.prompt.negative } })} />
       </Field>

@@ -5,7 +5,6 @@ import type { Ops } from '../editor/ops';
 import type { Selection } from '../editor/selection';
 import { GenerationSection } from './GenerationSection';
 import { ImageSection } from './ImageSection';
-import { scriptSaveable } from './inspectorModel';
 import { PromptSection } from './PromptSection';
 import { ScriptForm } from './ScriptForm';
 import { usePanelPatch } from './usePanelPatch';
@@ -19,7 +18,7 @@ export function PanelInspector({ manga, detail, panel, characters, selection, on
     <div className="inspector-body">
       <h2 className="inspector-title">Panel {number ?? ''}</h2>
       <ImageSection detail={detail} panel={panel} colorMode={manga.colorMode} selection={selection} onSelect={onSelect} run={run} ops={ops} />
-      <ScriptForm panel={panel} characters={characters} onSave={(script) => (scriptSaveable(script) ? patch({ script }) : undefined)} />
+      <ScriptForm panel={panel} characters={characters} onSave={(script) => patch({ script })} />
       <PromptSection pageId={detail.page.id} panel={panel} patch={patch} />
       <GenerationSection panel={panel} characters={characters} patch={patch} />
     </div>

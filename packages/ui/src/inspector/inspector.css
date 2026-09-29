@@ -27,3 +27,4 @@
 .frame-list__item { display: flex; align-items: center; gap: var(--sp-2); width: 100%; padding: var(--sp-1) var(--sp-2); background: none; border: 0; border-radius: var(--r-sm); color: var(--text-2); cursor: pointer; text-align: left; }
 .frame-list__item:hover { background: var(--hover-wash); color: var(--text-1); }
 .frame-list__item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page-stats { display: inline-flex; color: var(--text-2); }

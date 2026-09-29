@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { EMPTY_SCRIPT, FrameKindSchema, type LayoutNode, type RecipeInfo } from '@manga/shared';
+import { BUNDLED_FONTS, EMPTY_SCRIPT, FrameKindSchema, type LayoutNode, type RecipeInfo } from '@manga/shared';
 import { FRAME_KIND_ICON, FRAME_KIND_LABEL } from '../src/editor/frameKinds';
-import { panelJobs, panelNumbers, recipeChoices, reviewSummary, scriptSaveable, toggleId, visibleVariants } from '../src/inspector/inspectorModel';
+import { dropBlankLines, fontChoices, panelJobs, panelNumbers, recipeChoices, reviewSummary, scriptSaveable, scriptToSave, seedPatch, toggleId, visibleVariants } from '../src/inspector/inspectorModel';
 import { makeImage, makeJob } from './fixtures';
 
 const recipe = (id: string): RecipeInfo => ({
@@ -60,6 +60,37 @@ describe('inspector model', () => {
     expect(recipeChoices([recipe('anime')], null)).toEqual([{ id: 'anime', label: 'ANIME' }]);
     expect(recipeChoices([recipe('anime')], 'anime').map((r) => r.id)).toEqual(['anime']);
     expect(recipeChoices([recipe('anime')], 'gone').map((r) => r.id)).toEqual(['anime', 'gone']);
+  });
+
+  it('drops the lines the server would refuse, and only those', () => {
+    const script = {
+      ...EMPTY_SCRIPT, action: 'Runs',
+      characters: [{ characterId: '', pose: '', expression: '', position: 'center' as const }, { characterId: 'ch_1', pose: '', expression: '', position: 'left' as const }],
+      dialogue: [{ speakerId: null, kind: 'speech' as const, text: ' ' }, { speakerId: 'ch_1', kind: 'shout' as const, text: 'Go' }],
+    };
+    const dropped = dropBlankLines(script);
+    expect(dropped.action).toBe('Runs');
+    expect(dropped.characters.map((c) => c.characterId)).toEqual(['ch_1']);
+    expect(dropped.dialogue.map((d) => d.text)).toEqual(['Go']);
+    expect(scriptSaveable(dropped)).toBe(true);
+  });
+
+  it('holds an invalid script while the form is open and saves it without the blank lines once it is left', () => {
+    const blank = { ...EMPTY_SCRIPT, action: 'Runs', dialogue: [{ speakerId: null, kind: 'speech' as const, text: '' }] };
+    expect(scriptToSave(blank, false)).toBeNull();
+    expect(scriptToSave(blank, true)).toEqual({ ...EMPTY_SCRIPT, action: 'Runs' });
+    const ok = { ...EMPTY_SCRIPT, action: 'Runs' };
+    expect(scriptToSave(ok, false)).toBe(ok);
+    expect(scriptToSave(ok, true)).toBe(ok);
+  });
+
+  it('locks the seed when it is chosen by hand, because generate only uses a locked seed', () => {
+    expect(seedPatch(42)).toEqual({ seed: 42, seedLock: true });
+  });
+
+  it('keeps a stored font that is not bundled selectable', () => {
+    expect(fontChoices('Unbounded')).toEqual([...BUNDLED_FONTS]);
+    expect(fontChoices('Papyrus')).toEqual([...BUNDLED_FONTS, 'Papyrus']);
   });
 
   it('has an icon and a label for every frame kind', () => {

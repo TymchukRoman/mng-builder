@@ -10,7 +10,7 @@ import { Field } from '../ui/Field';
 import { IconButton } from '../ui/IconButton';
 import { Dices, Lock, LockOpen, UserRound } from '../ui/icons';
 import { NumberField } from '../ui/NumberField';
-import { recipeChoices, toggleId } from './inspectorModel';
+import { recipeChoices, seedPatch, toggleId } from './inspectorModel';
 
 export function GenerationSection({ panel, characters, patch }: { panel: Panel; characters: Character[]; patch(body: UpdatePanelBody): Promise<void> }): JSX.Element {
   const recipes = recipeChoices(generationRecipes(useRecipes().data), panel.recipe);
@@ -23,15 +23,17 @@ export function GenerationSection({ panel, characters, patch }: { panel: Panel; 
           {recipes.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
         </select>
       </Field>
-      <Field label="Seed">
+      {/* Not a <Field> (a label around buttons): the seed input alone answers to the label "Seed". */}
+      <div className="field">
+        <span className="field__label">Seed</span>
         <div className="row">
-          <NumberField label="Seed" value={panel.seed} min={0} integer onSave={(seed) => void patch({ seed })} />
+          <NumberField label="Seed" value={panel.seed} min={0} integer onSave={(seed) => void patch(seedPatch(seed))} />
           <IconButton icon={panel.seedLock ? Lock : LockOpen} active={panel.seedLock}
             label={panel.seedLock ? 'Unlock seed' : 'Lock seed'}
             onClick={() => void patch({ seedLock: !panel.seedLock })} />
-          <IconButton icon={Dices} label="Random seed" onClick={() => void patch({ seed: randomSeed() })} />
+          <IconButton icon={Dices} label="Random seed" onClick={() => void patch(seedPatch(randomSeed()))} />
         </div>
-      </Field>
+      </div>
       <div className="field" role="group" aria-label="Reference characters">
         <span className="field__label">Reference characters</span>
         <div className="ref-chips">
