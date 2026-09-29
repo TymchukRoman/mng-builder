@@ -1,6 +1,7 @@
 import type { JSX } from 'react';
 import { createBrowserRouter } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
+import { MangaListPage } from './mangas/MangaListPage';
 import { RenderPage } from './render/RenderPage';
 import { Shell } from './shell/Shell';
 
@@ -11,7 +12,7 @@ const router = createBrowserRouter([
     path: '/',
     element: <Shell />,
     children: [
-      { index: true, element: <section className="screen" aria-label="Start" /> },
+      { index: true, element: <MangaListPage /> },
     ],
   },
 ]);
