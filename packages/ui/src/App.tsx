@@ -4,6 +4,7 @@ import { RouterProvider } from 'react-router/dom';
 import { MangaPage } from './manga/MangaPage';
 import { MangaListPage } from './mangas/MangaListPage';
 import { RenderPage } from './render/RenderPage';
+import { SettingsPage } from './settings/SettingsPage';
 import { Shell } from './shell/Shell';
 
 const router = createBrowserRouter([
@@ -15,6 +16,7 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <MangaListPage /> },
       { path: 'm/:mangaId', element: <MangaPage /> },
+      { path: 'settings', element: <SettingsPage /> },
     ],
   },
 ]);
