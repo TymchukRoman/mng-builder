@@ -10,7 +10,7 @@ import type { HistorySnapshot } from './history';
 import { mergeState, presetState, splitState } from './layoutTree';
 import { PresetPicker } from './PresetPicker';
 import type { Selection } from './selection';
-import { stepZoom, zoomLabel, type Zoom } from './zoom';
+import { stepZoom, zoomButtonLabel, zoomLabel, type Zoom } from './zoom';
 
 export interface EditorToolbarProps {
   mode: 'chapter' | 'cover';
@@ -72,7 +72,7 @@ export function EditorToolbar(p: EditorToolbarProps): JSX.Element {
         disabled={!panelSelected} busy={p.generating} onClick={p.onGenerate} />
       <span className="spacer" />
       <IconButton icon={ZoomOut} label="Zoom out" onClick={() => p.onZoom(stepZoom(p.zoom, -1))} />
-      <button type="button" className="toolbar__zoom" aria-label="Fit page to screen" data-tip="Fit page to screen" onClick={() => p.onZoom({ mode: 'fit' })}>
+      <button type="button" className="toolbar__zoom" aria-label={zoomButtonLabel(p.zoom)} data-tip={zoomButtonLabel(p.zoom)} onClick={() => p.onZoom({ mode: 'fit' })}>
         {zoomLabel(p.zoom)}
       </button>
       <IconButton icon={ZoomIn} label="Zoom in" onClick={() => p.onZoom(stepZoom(p.zoom, 1))} />

@@ -23,3 +23,8 @@ export function stepZoom(z: Zoom, dir: 1 | -1): Zoom {
 export function zoomLabel(z: Zoom): string {
   return z.mode === 'fit' ? 'Fit' : `${Math.round(z.factor * 100)}%`;
 }
+
+/** The zoom button's name and tooltip. It contains the text the button shows ("Fit", "150%"), as WCAG 2.5.3 asks (M9). */
+export function zoomButtonLabel(z: Zoom): string {
+  return z.mode === 'fit' ? 'Fit page to screen' : `Zoom ${zoomLabel(z)}: fit page to screen`;
+}

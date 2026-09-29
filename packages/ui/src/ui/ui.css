@@ -67,7 +67,7 @@
 .field { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; }
 .field--inline { flex-direction: row; align-items: center; justify-content: space-between; gap: var(--sp-3); }
 .field__label { font-size: var(--fs-sm); color: var(--text-2); }
-.field__hint { font-size: var(--fs-xs); color: var(--text-3); }
+.field__hint { font-size: var(--fs-xs); color: var(--text-2); }
 
 .toasts { position: fixed; right: var(--sp-4); bottom: calc(var(--jobbar-h) + var(--sp-3)); z-index: 1100; display: flex; flex-direction: column; gap: var(--sp-2); }
 .toast { display: flex; align-items: flex-start; gap: var(--sp-2); width: 340px; padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-3); background: var(--surface); border: 1px solid var(--border-2); border-left: 3px solid var(--accent); border-radius: var(--r-md); box-shadow: var(--shadow-pop); animation: mb-fade var(--dur-1) var(--ease); }

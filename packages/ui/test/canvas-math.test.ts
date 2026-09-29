@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_PAGE_FORMAT } from '@manga/shared';
 import { dropIndex, isNoopMove, moveId } from '../src/editor/reorder';
-import { fitWidth, stepZoom, zoomFactor, zoomLabel } from '../src/editor/zoom';
+import { fitWidth, stepZoom, zoomButtonLabel, zoomFactor, zoomLabel } from '../src/editor/zoom';
 
 describe('reorder', () => {
   const ids = ['a', 'b', 'c', 'd'];
@@ -55,5 +55,8 @@ describe('zoom', () => {
     expect(zoomFactor({ mode: 'fit' })).toBe(1);
     expect(zoomLabel({ mode: 'fit' })).toBe('Fit');
     expect(zoomLabel({ mode: 'fixed', factor: 1.5 })).toBe('150%');
+    // M9 (WCAG 2.5.3): the zoom button's accessible name contains the text it shows.
+    expect(zoomButtonLabel({ mode: 'fit' })).toBe('Fit page to screen');
+    expect(zoomButtonLabel({ mode: 'fixed', factor: 1.5 })).toBe('Zoom 150%: fit page to screen');
   });
 });
