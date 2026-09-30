@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Job } from '@manga/shared';
+import { GPU_BUSY_REASON, GPU_MANUAL_PAUSE_REASON, type Job } from '@manga/shared';
 import { QuotaExceededError } from '../src/engines/errors.js';
 import { EventBus } from '../src/events/bus.js';
-import { PermanentError, TransientError } from '../src/jobs/errors.js';
+import { GpuBusyError, PermanentError, TransientError } from '../src/jobs/errors.js';
 import { GpuArbiter } from '../src/jobs/gpu.js';
-import { DEFAULT_BACKOFF_MS, JobQueue, type JobContext, type JobQueueOptions } from '../src/jobs/queue.js';
+import { DEFAULT_BACKOFF_MS, JobQueue, MAX_STALL_REQUEUES, type JobContext, type JobQueueOptions } from '../src/jobs/queue.js';
 import { makeStore, type TestStore } from './helpers/store.js';
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -388,5 +388,100 @@ describe('JobQueue', () => {
     expect(t.store.jobs.require(job.id).progress?.label).toBe('fresh from attempt 2');
     gate.resolve();
     expect((await q.waitFor(job.id)).status).toBe('succeeded');
+  });
+});
+
+describe('JobQueue — GPU busy (W1 R2)', () => {
+  it('pauses the lane and puts the job back without spending an attempt; a resume runs it', async () => {
+    const q = makeQueue();
+    let calls = 0;
+    q.register('image.generate', async () => {
+      calls++;
+      if (calls === 1) throw new GpuBusyError('GPU busy: only 1.0 GB of GPU memory free');
+      return { ok: true };
+    });
+    const seen: string[] = [];
+    q.onLanesChanged(() => seen.push(q.pauseOf('gpu')?.reason ?? 'running'));
+    const job = gpuJob(q);
+    q.start();
+    await vi.waitFor(() => expect(q.pauseOf('gpu')?.reason).toBe(GPU_BUSY_REASON));
+    await sleep(30); // the paused lane claims nothing
+    // F23: the error is cleared (nothing is retried; the job waits for the lane, which the lane chip shows).
+    expect(t.store.jobs.require(job.id)).toMatchObject({ status: 'queued', attempts: 0, error: null });
+    expect(calls).toBe(1);
+    q.resumeLane('gpu');
+    expect(await q.waitFor(job.id)).toMatchObject({ status: 'succeeded', attempts: 1 });
+    expect(seen).toEqual([GPU_BUSY_REASON, 'running']);
+  });
+
+  it('never replaces a manual pause with the busy reason', async () => {
+    const q = makeQueue();
+    q.register('image.generate', async () => {
+      q.pauseLane('gpu', null, GPU_MANUAL_PAUSE_REASON); // the user paused while the job ran
+      throw new GpuBusyError('GPU stalled');
+    });
+    const job = gpuJob(q);
+    q.start();
+    await vi.waitFor(() => expect(t.store.jobs.require(job.id).status).toBe('queued'));
+    expect(q.pauseOf('gpu')?.reason).toBe(GPU_MANUAL_PAUSE_REASON);
+  });
+
+  it('a resume of a lane that is not paused notifies nobody', () => {
+    const q = makeQueue();
+    const seen: number[] = [];
+    const off = q.onLanesChanged(() => seen.push(1));
+    q.resumeLane('gpu');
+    q.pauseLane('claude', null, 'quota');
+    off();
+    q.resumeLane('claude');
+    expect(seen).toEqual([1]);
+    expect(q.pauseOf('claude')).toBeNull();
+  });
+
+  it('a timed pause that expires notifies the listeners', async () => {
+    const q = makeQueue();
+    const seen: string[] = [];
+    q.onLanesChanged(() => seen.push(q.pausedLanes().map((p) => p.lane).join(',') || 'none'));
+    q.pauseLane('claude', new Date(Date.now() + 20), 'quota');
+    q.start();
+    await vi.waitFor(() => expect(seen).toEqual(['claude', 'none']));
+  });
+
+  it('caps the busy requeues of a stalled job at 2; the next stall spends attempts and the job ends failed (F1)', async () => {
+    expect(MAX_STALL_REQUEUES).toBe(2);
+    const q = makeQueue();
+    let calls = 0;
+    q.register('image.generate', async () => {
+      calls++;
+      throw new GpuBusyError('GPU stalled: no progress for 3 min', { stalled: true });
+    });
+    let pauses = 0;
+    q.onLanesChanged(() => {
+      if (q.pauseOf('gpu')?.reason !== GPU_BUSY_REASON) return;
+      pauses++;
+      setImmediate(() => q.resumeLane('gpu')); // what the GPU monitor does once ComfyUI has room again
+    });
+    const job = gpuJob(q);
+    q.start();
+    const done = await q.waitFor(job.id);
+    expect(done).toMatchObject({ status: 'failed', attempts: 3, error: 'GPU stalled: no progress for 3 min' });
+    expect(pauses).toBe(2);
+    expect(calls).toBe(5); // 2 busy requeues, then 3 spent attempts
+    expect(q.pauseOf('gpu')).toBeNull();
+  });
+
+  it('never caps a refusal before submitting: it put nothing on the GPU', async () => {
+    const q = makeQueue();
+    let calls = 0;
+    q.register('image.generate', async () => {
+      calls++;
+      if (calls <= 4) throw new GpuBusyError('GPU busy: only 1.0 GB of GPU memory free');
+      return 'ran';
+    });
+    q.onLanesChanged(() => { if (q.pauseOf('gpu')) setImmediate(() => q.resumeLane('gpu')); });
+    const job = gpuJob(q);
+    q.start();
+    expect(await q.waitFor(job.id)).toMatchObject({ status: 'succeeded', attempts: 1, result: 'ran' });
+    expect(calls).toBe(5);
   });
 });

@@ -1,7 +1,7 @@
-import type { Job, JobKind, JobProgress, JobStatus, Lane, ServiceStatus } from '@manga/shared';
+import { GPU_BUSY_REASON, type Job, type JobKind, type JobProgress, type JobStatus, type Lane, type ServiceStatus } from '@manga/shared';
 import type { EventBus } from '../events/bus.js';
 import type { Store } from '../store/index.js';
-import { PermanentError, TransientError } from './errors.js';
+import { GpuBusyError, PermanentError, TransientError } from './errors.js';
 import type { GpuArbiter } from './gpu.js';
 
 export interface JobContext {
@@ -21,6 +21,8 @@ export interface JobQueueOptions {
  */
 export const DEFAULT_LANE_LIMITS: Readonly<Record<Lane, number>> = { gpu: 1, claude: 2, cpu: 2 };
 export const DEFAULT_BACKOFF_MS: readonly number[] = [5_000, 30_000, 120_000];
+/** W1 F1: how often one job may be put back after a stall caused by a busy GPU; the next stall spends an attempt. */
+export const MAX_STALL_REQUEUES = 2;
 const LANES: readonly Lane[] = ['gpu', 'claude', 'cpu'];
 const TERMINAL: ReadonlySet<JobStatus> = new Set(['succeeded', 'failed', 'cancelled']);
 
@@ -46,6 +48,9 @@ export class JobQueue {
   private readonly running = new Map<string, Running>();
   private readonly paused = new Map<Lane, { until: Date | null; reason: string }>();
   private readonly waiters = new Map<string, Array<(job: Job) => void>>();
+  private readonly laneListeners = new Set<() => void>();
+  /** W1 F1: busy requeues after a stall, per job id (in memory: a restart starts the count again). */
+  private readonly stallRequeues = new Map<string, number>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private started = false;
   private stopping = false;
@@ -86,6 +91,7 @@ export class JobQueue {
     if (isTerminal(job.status)) return job;
     const run = this.running.get(id);
     if (run) run.cancelled = true;
+    this.stallRequeues.delete(id);
     const cancelled = this.store.jobs.update(id, { status: 'cancelled', finishedAt: this.now().toISOString() });
     run?.controller.abort(new Error('cancelled'));
     this.publish(cancelled);
@@ -109,14 +115,28 @@ export class JobQueue {
     return moved;
   }
 
-  /** until null = until resumeLane. */
+  /** until null = until resumeLane. Notifies the lane listeners (the `status` event, the GPU monitor). */
   pauseLane(lane: Lane, until: Date | null, reason: string): void {
     this.paused.set(lane, { until, reason });
+    this.lanesChanged();
   }
 
   resumeLane(lane: Lane): void {
-    this.paused.delete(lane);
+    const had = this.paused.delete(lane);
     this.kick();
+    if (had) this.lanesChanged();
+  }
+
+  /** The lane's pause, or null (an expired timed pause is dropped first). */
+  pauseOf(lane: Lane): { until: Date | null; reason: string } | null {
+    this.expirePauses();
+    return this.paused.get(lane) ?? null;
+  }
+
+  /** Called after every pause, resume or expiry of a lane. Returns the unsubscribe function. */
+  onLanesChanged(listener: () => void): () => void {
+    this.laneListeners.add(listener);
+    return () => { this.laneListeners.delete(listener); };
   }
 
   pausedLanes(): ServiceStatus['queue']['pausedLanes'] {
@@ -174,8 +194,23 @@ export class JobQueue {
 
   private expirePauses(): void {
     const now = this.now().getTime();
+    let changed = false;
     for (const [lane, pause] of this.paused) {
-      if (pause.until !== null && pause.until.getTime() <= now) this.paused.delete(lane);
+      if (pause.until !== null && pause.until.getTime() <= now) {
+        this.paused.delete(lane);
+        changed = true;
+      }
+    }
+    if (changed) this.lanesChanged();
+  }
+
+  private lanesChanged(): void {
+    for (const listener of [...this.laneListeners]) {
+      try {
+        listener();
+      } catch (error) {
+        console.error('[manga] job queue: lane listener failed:', error);
+      }
     }
   }
 
@@ -264,6 +299,18 @@ export class JobQueue {
       return;
     }
     const message = messageOf(outcome.error);
+    if (outcome.error instanceof GpuBusyError && this.mayRequeueBusy(id, outcome.error)) {
+      // W1 R2: another app holds the GPU. Put the job back at once without spending an attempt (it waits for the lane,
+      // not for a backoff), then pause the lane; a pause already there (e.g. the user's) stays as it is. F23: the error
+      // is cleared, since nothing is retried: the lane chip tells why the job waits. The job is written first, so the
+      // `status` event of the pause counts it as queued.
+      const requeued = this.store.jobs.update(id, {
+        status: 'queued', error: null, startedAt: null, nextRunAt: nowIso, attempts: Math.max(0, current.attempts - 1),
+      });
+      if (!this.paused.has(current.lane)) this.pauseLane(current.lane, null, GPU_BUSY_REASON);
+      this.publish(requeued);
+      return;
+    }
     if (outcome.error instanceof TransientError && current.attempts < current.maxAttempts) {
       const delay = this.backoffMs[Math.min(current.attempts - 1, this.backoffMs.length - 1)] ?? 0;
       this.publish(this.store.jobs.update(id, {
@@ -274,7 +321,20 @@ export class JobQueue {
     this.complete(this.store.jobs.update(id, { status: 'failed', error: message, finishedAt: nowIso }));
   }
 
+  /**
+   * W1 F1: a refusal before submitting always requeues (it put nothing on the GPU). A stall requeues at most
+   * MAX_STALL_REQUEUES times per job; after that it is handled as the plain TransientError it extends.
+   */
+  private mayRequeueBusy(id: string, error: GpuBusyError): boolean {
+    if (!error.stalled) return true;
+    const count = this.stallRequeues.get(id) ?? 0;
+    if (count >= MAX_STALL_REQUEUES) return false;
+    this.stallRequeues.set(id, count + 1);
+    return true;
+  }
+
   private complete(job: Job): void {
+    this.stallRequeues.delete(job.id);
     this.publish(job);
     this.settle(job);
   }
