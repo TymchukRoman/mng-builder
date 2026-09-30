@@ -24,6 +24,8 @@ export interface FakeComfy {
   /** GET /system_stats → devices[0].torch_vram_total, mutable so tests can exercise ComfyClient.prepareFor's
    *  wait loop. Default 0 (nothing resident). */
   torchVramTotal: number;
+  /** GET /system_stats → devices[0].vram_free. Default 15e9 (an idle 16 GB card). */
+  vramFree: number;
   /** Delay before POST /free drops torchVramTotal to 0, mimicking ComfyUI's async unload (its prompt worker
    *  applies the flag on its next wake-up, not immediately on the POST). Default 0 (drops right away). */
   freeDelayMs: number;
@@ -43,6 +45,16 @@ export interface FakeComfy {
    *  the poll loop's `pollMs` (flaky under CPU load, where each poll's real HTTP round trip can take much longer
    *  than `pollMs`). Default 0 (no hold). */
   completeAfterQueuePolls: number;
+  /** The next run sends this many progress steps of its first sampler, then goes silent (no more messages, no
+   *  history), like a sampler crawling in VRAM spilled to system RAM, until POST /interrupt names it: it then ends
+   *  as `execution_interrupted`. Default null. */
+  stallNext: number | null;
+  /** Delay before each sampler's first progress step, like a slow model load. Default 0. */
+  loadDelayMs: number;
+  /** Delay between progress steps. Default 2. */
+  stepDelayMs: number;
+  /** Progress steps per sampler. Default 3. */
+  steps: number;
   /** Like a real ComfyUI folder: when set, uploads are also written to <dataDir>/input/<subfolder>/<name> and each
    *  SaveImage output to <dataDir>/output/<subfolder>/<filename>, so tests can check ComfyClient cleans them up.
    *  Default null (nothing on disk). */
@@ -124,6 +136,7 @@ class FakeComfyServer implements FakeComfy {
   readonly calls: FakeComfyCall[] = [];
   up = true;
   torchVramTotal = 0;
+  vramFree = 15e9;
   freeDelayMs = 0;
   rejectNext: FakeComfyRejection | null = null;
   failNext: string | null = null;
@@ -131,7 +144,13 @@ class FakeComfyServer implements FakeComfy {
   dropNext = false;
   completionDelayMs = 0;
   completeAfterQueuePolls = 0;
+  stallNext: number | null = null;
+  loadDelayMs = 0;
+  stepDelayMs = 2;
+  steps = 3;
   dataDir: string | null = null;
+  /** Stalled runs waiting for a POST /interrupt, by prompt id. */
+  private readonly stalled = new Map<string, () => void>();
   private readonly history = new Map<string, HistoryEntry>();
   /** Accepted prompts that have no history entry yet (GET /queue lists them as running). */
   private readonly active = new Set<string>();
@@ -192,6 +211,8 @@ class FakeComfyServer implements FakeComfy {
     this.pendingTimeouts.length = 0;
     for (const waiter of this.queueWaiters) waiter.resolve();
     this.queueWaiters.length = 0;
+    for (const resume of this.stalled.values()) resume();
+    this.stalled.clear();
     for (const set of this.clients.values()) for (const ws of set) ws.terminate();
     this.wss.close();
     this.server.closeAllConnections();
@@ -216,7 +237,7 @@ class FakeComfyServer implements FakeComfy {
     if (route === 'GET /system_stats') {
       return send(res, 200, {
         system: { os: 'fake', comfyui_version: 'fake' },
-        devices: [{ name: 'FakeGPU', type: 'cuda', index: 0, vram_total: 16e9, vram_free: 15e9, torch_vram_total: this.torchVramTotal }],
+        devices: [{ name: 'FakeGPU', type: 'cuda', index: 0, vram_total: 16e9, vram_free: this.vramFree, torch_vram_total: this.torchVramTotal }],
       });
     }
     if (route === 'GET /object_info') {
@@ -253,7 +274,17 @@ class FakeComfyServer implements FakeComfy {
       }
       return send(res, 200, { queue_running: [...this.active].map((id, i) => [i, id, {}, {}, []]), queue_pending: [] });
     }
-    if (route === 'POST /interrupt' || route === 'POST /queue') return send(res, 200);
+    if (route === 'POST /interrupt') {
+      // Like ComfyUI: with a prompt id, only that prompt is interrupted; without one, whatever runs.
+      const target = (body as { prompt_id?: unknown } | null)?.prompt_id;
+      for (const [id, resume] of [...this.stalled]) {
+        if (typeof target === 'string' && target !== id) continue;
+        this.stalled.delete(id);
+        resume();
+      }
+      return send(res, 200);
+    }
+    if (route === 'POST /queue') return send(res, 200);
     return send(res, 404, { error: `fake comfy has no route ${route}` });
   }
 
@@ -321,16 +352,33 @@ class FakeComfyServer implements FakeComfy {
     }
   }
 
+  /** `stallNext`: silent until POST /interrupt names this prompt, then ends as `execution_interrupted`. */
+  private async stall(id: string, nodeId: string, classType: string, clientId: string): Promise<void> {
+    await new Promise<void>((resolve) => { this.stalled.set(id, resolve); });
+    if (this.closed) return;
+    const interrupted = { prompt_id: id, node_id: nodeId, node_type: classType, executed: [] };
+    this.history.set(id, {
+      prompt: [], outputs: {},
+      status: { status_str: 'error', completed: false, messages: [['execution_start', { prompt_id: id }], ['execution_interrupted', interrupted]] },
+    });
+    this.emit(clientId, 'execution_interrupted', interrupted);
+  }
+
   private async execute(id: string, graph: ComfyGraph, clientId: string): Promise<void> {
     const nodes = Object.entries(graph);
+    const stallAfter = this.stallNext;
+    this.stallNext = null;
     this.emit(clientId, 'execution_start', { prompt_id: id });
     for (const [nodeId, node] of nodes) {
       if (this.closed) return;
       this.emit(clientId, 'executing', { node: nodeId, display_node: nodeId, prompt_id: id });
       if (WORKERS.has(node.class_type)) {
-        for (let step = 1; step <= 3; step++) {
-          this.emit(clientId, 'progress', { value: step, max: 3, prompt_id: id, node: nodeId });
-          await this.delayMs(2);
+        if (this.loadDelayMs > 0) await this.delayMs(this.loadDelayMs);
+        for (let step = 1; step <= this.steps; step++) {
+          if (this.closed) return;
+          if (stallAfter !== null && step > stallAfter) return this.stall(id, nodeId, node.class_type, clientId);
+          this.emit(clientId, 'progress', { value: step, max: this.steps, prompt_id: id, node: nodeId });
+          await this.delayMs(this.stepDelayMs);
           if (this.closed) return;
         }
       }

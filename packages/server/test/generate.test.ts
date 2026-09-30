@@ -108,7 +108,11 @@ describe('generateImage', () => {
     const promptIndices = fake.calls.map((c, i) => i).filter((i) => fake.calls[i]!.path === '/prompt');
     const thirdPromptIndex = promptIndices[2]!;
     expect(thirdPromptIndex).toBeGreaterThan(freeIndex);
-    const statsBetween = fake.calls.filter((c, i) => i > freeIndex && i < thirdPromptIndex && c.path === '/system_stats');
+    // Bounded by the ref upload (right after prepareFor), not the prompt: run() itself reads /system_stats (free VRAM)
+    // before submitting, which must not count as prepareFor's wait.
+    const uploadIndex = fake.calls.findIndex((c, i) => i > freeIndex && c.path === '/upload/image');
+    expect(uploadIndex).toBeGreaterThan(freeIndex);
+    const statsBetween = fake.calls.filter((c, i) => i > freeIndex && i < uploadIndex && c.path === '/system_stats');
     expect(statsBetween.length).toBeGreaterThan(0);
   });
 

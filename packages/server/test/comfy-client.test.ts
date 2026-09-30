@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ComfyClient, ComfyRejectedError, stageLabel } from '../src/imaging/comfy.js';
+import { ComfyClient, ComfyRejectedError, FIRST_PROGRESS_TIMEOUT_MS, STALL_TIMEOUT_MS, stageLabel } from '../src/imaging/comfy.js';
 import type { ComfyGraph } from '../src/imaging/comfy-graph.js';
 import { ComfyLauncher } from '../src/imaging/launcher.js';
 import { pngSize } from '../src/imaging/png-size.js';
@@ -185,6 +185,67 @@ describe('ComfyClient.run', () => {
     } else {
       expect(fake.calls.some((c) => c.path === '/prompt')).toBe(false);
     }
+  });
+});
+
+describe('ComfyClient.run stall watchdog', () => {
+  const watched = (over: { firstProgressTimeoutMs?: number; stallTimeoutMs?: number } = {}): ComfyClient =>
+    new ComfyClient({ url: fake.url, launcher: null, pollMs: 10, firstProgressTimeoutMs: 5_000, stallTimeoutMs: 250, ...over });
+
+  it('defaults to 10 min before the first step and 3 min between later signals', () => {
+    expect(FIRST_PROGRESS_TIMEOUT_MS).toBe(10 * 60_000);
+    expect(STALL_TIMEOUT_MS).toBe(3 * 60_000);
+  });
+
+  it('interrupts a prompt that goes silent mid-sampling, frees the models and fails transiently', async () => {
+    fake.stallNext = 1; // one sampling step, then nothing (VRAM spilled to system RAM)
+    const rec = recorder();
+    const err = await watched().run(miniGraph(), { onProgress: rec.onProgress }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TransientError);
+    expect((err as Error).message).toMatch(/^GPU stalled: no progress for 250 ms \(GPU memory is probably full; close games or other GPU apps\)$/);
+    const id = fake.promptIds[0]!;
+    expect(fake.calls).toContainEqual({ method: 'POST', path: '/interrupt', body: { prompt_id: id } });
+    expect(fake.calls).toContainEqual({ method: 'POST', path: '/queue', body: { delete: [id] } });
+    const interruptAt = fake.calls.findIndex((c) => c.path === '/interrupt');
+    const freeAt = fake.calls.findIndex((c) => c.path === '/free');
+    expect(freeAt).toBeGreaterThan(interruptAt);
+    expect(fake.calls[freeAt]!.body).toEqual({ unload_models: true, free_memory: true });
+    expect(rec.steps.map((s) => s.label)).toContain((err as Error).message);
+  });
+
+  it('gives up on a prompt that never reaches its first step within the first-progress limit', async () => {
+    fake.stallNext = 0; // loads, then never samples
+    const err = await watched({ firstProgressTimeoutMs: 300, stallTimeoutMs: 60_000 }).run(miniGraph()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TransientError);
+    expect((err as Error).message).toMatch(/^GPU stalled: no progress for 300 ms after queueing/);
+    expect(fake.calls.some((c) => c.path === '/free')).toBe(true);
+  });
+
+  it('does not kill a run with a long model load and steady progress afterwards', async () => {
+    fake.loadDelayMs = 700; // longer than the stall limit, well inside the first-progress limit
+    fake.steps = 8;
+    fake.stepDelayMs = 60; // 8 steps take ~480 ms in all, each gap well inside the 250 ms stall limit
+    const result = await watched().run(miniGraph());
+    expect(result.images).toHaveLength(1);
+    expect(fake.calls.some((c) => c.path === '/interrupt' || c.path === '/free')).toBe(false);
+  });
+
+  it('warns in the progress label when little VRAM is left for ComfyUI, and still runs', async () => {
+    fake.vramFree = 1.2e9;
+    const rec = recorder();
+    const result = await client.run(miniGraph(), { onProgress: rec.onProgress });
+    expect(result.images).toHaveLength(1);
+    expect(rec.steps[0]).toEqual({ label: 'GPU memory low (1.2 GB free) — another app may be using the GPU' });
+    expect(rec.steps).toContainEqual({ label: 'Sampling · GPU memory low', value: 3, max: 3 });
+  });
+
+  it('does not count VRAM that ComfyUI itself holds (its own resident model) as taken', async () => {
+    fake.vramFree = 1e9;
+    fake.torchVramTotal = 12e9;
+    const rec = recorder();
+    await client.run(miniGraph(), { onProgress: rec.onProgress });
+    expect(rec.steps.some((s) => s.label.includes('GPU memory low'))).toBe(false);
+    expect(rec.steps[0]).toEqual({ label: 'Queued' });
   });
 });
 

@@ -65,6 +65,12 @@ Each panel picks its image recipe from how many characters it has (Settings → 
 
 A library keeps the settings it was created with. If yours predates this default, switch **Several characters** to `klein-ref` in Settings → Routing (or `PATCH /api/settings` with `{"routing": {"multiChar": "klein-ref"}}`).
 
+### Troubleshooting: slow or stalled images
+
+Close games and other GPU-heavy apps before a long render. When another app holds most of the VRAM, ComfyUI spills into system RAM and a single image can take tens of minutes. Before each image the job checks the GPU, and the job bar says "GPU memory low (x.x GB free)" when less than 3 GB is left for ComfyUI. The job still runs.
+
+A run with no progress for 3 minutes (10 minutes before the first sampling step, while models load) is stopped with "GPU stalled". The models are unloaded, and the job retries later with the usual backoff, so the images queued behind it keep going. `manga status` shows the free VRAM.
+
 ## Library folder
 
 ```

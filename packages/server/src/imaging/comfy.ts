@@ -68,6 +68,29 @@ export function executionError(entry: HistoryEntry): string {
   return `ComfyUI failed in ${String(error['node_type'] ?? '?')} (node ${String(error['node_id'] ?? '?')}): ${String(error['exception_message'] ?? '').trim()}`;
 }
 
+/**
+ * Stall watchdog: the longest wait from submitting a prompt to its first sampling step (`progress` message). Model
+ * loading can legitimately take minutes before that step, so this limit is generous.
+ */
+export const FIRST_PROGRESS_TIMEOUT_MS = 10 * 60_000;
+/** Stall watchdog: once sampling started, the longest allowed gap between two progress signals of the prompt. Live
+ *  case: with a game holding most of the VRAM, ComfyUI spilled to system RAM and sat at "Sampling 3/8" for 21 min. */
+export const STALL_TIMEOUT_MS = 3 * 60_000;
+/** Below this much VRAM left for ComfyUI (free plus what it holds itself) a run warns that another app may be using
+ *  the GPU. Generic: every image model family needs more than this. */
+export const LOW_VRAM_BYTES = 3e9;
+/** Socket messages that show the prompt is moving. */
+const PROGRESS_SIGNALS: ReadonlySet<string> = new Set(['progress', 'executing', 'executed', 'execution_cached']);
+const STALL_ADVICE = 'GPU memory is probably full; close games or other GPU apps';
+
+function span(ms: number): string {
+  if (ms >= 60_000) return `${Math.round(ms / 60_000)} min`;
+  if (ms >= 1_000) return `${Math.round(ms / 1_000)} s`;
+  return `${ms} ms`;
+}
+
+interface DeviceStats { vram_free?: number; torch_vram_total?: number; torch_vram_free?: number }
+
 /** torch_vram_total below this counts as "nothing resident" (the VRAM waits). */
 const VRAM_EMPTY_BYTES = 512 * 1024 * 1024;
 /** Families whose model is small enough to sit beside any other: preparing for them frees nothing (M3a). */
@@ -92,17 +115,26 @@ export class ComfyClient {
   private readonly dataDir: string | null;
   /** Hard bound on the wait for ComfyUI to drop its VRAM after /free (M3b). */
   private readonly vramWaitMs: number;
+  private readonly firstProgressTimeoutMs: number;
+  private readonly stallTimeoutMs: number;
+  private readonly lowVramBytes: number;
   private starting: Promise<void> | null = null;
   /** Model family last prepared for (via prepareFor) or resident from a run; null once free() has cleared it;
    *  UNKNOWN_FAMILY until this process prepared anything. */
   private lastFamily: string | null | typeof UNKNOWN_FAMILY = UNKNOWN_FAMILY;
 
-  constructor(opts: { url: string; launcher?: ComfyLauncher | null; pollMs?: number; dataDir?: string | null; vramWaitMs?: number }) {
+  constructor(opts: {
+    url: string; launcher?: ComfyLauncher | null; pollMs?: number; dataDir?: string | null; vramWaitMs?: number;
+    firstProgressTimeoutMs?: number; stallTimeoutMs?: number; lowVramBytes?: number;
+  }) {
     this.url = opts.url.replace(/\/+$/, '');
     this.launcher = opts.launcher ?? null;
     this.pollMs = opts.pollMs ?? 400;
     this.dataDir = opts.dataDir ?? null;
     this.vramWaitMs = opts.vramWaitMs ?? 15_000;
+    this.firstProgressTimeoutMs = opts.firstProgressTimeoutMs ?? FIRST_PROGRESS_TIMEOUT_MS;
+    this.stallTimeoutMs = opts.stallTimeoutMs ?? STALL_TIMEOUT_MS;
+    this.lowVramBytes = opts.lowVramBytes ?? LOW_VRAM_BYTES;
   }
 
   async health(): Promise<ServiceState> {
@@ -160,6 +192,8 @@ export class ComfyClient {
     const promptId = randomUUID();
     const started = Date.now();
     let last = '';
+    /** Appended to every stage label once the low-VRAM warning was shown, so it stays visible while sampling. */
+    let note = '';
     const say = (label: string, value?: number, max?: number): void => {
       if (value === undefined && label === last) return;
       last = label;
@@ -170,6 +204,10 @@ export class ComfyClient {
       socket?.close();
       throw abortError(signal);
     }
+    // Stall watchdog: when the prompt stops moving (a game holding the VRAM makes ComfyUI spill to system RAM and
+    // crawl), stalled aborts the wait with a TransientError, so the job retries later and the gpu lane moves on.
+    const stalled = new AbortController();
+    const watch = { submittedAt: Date.now(), lastSignalAt: Date.now(), stepped: false };
     socket?.on('message', (data, isBinary) => {
       if (isBinary) return;
       let message: { type?: string; data?: { prompt_id?: string; node?: unknown; value?: unknown; max?: unknown } };
@@ -179,16 +217,34 @@ export class ComfyClient {
         return;
       }
       const d = message.data;
-      if (!d || d.prompt_id !== promptId || typeof d.node !== 'string') return;
+      if (!d || d.prompt_id !== promptId) return;
+      const type = message.type ?? '';
+      // The prompt waited behind another client's in ComfyUI's queue until now: the first-step clock starts here.
+      if (type === 'execution_start' && !watch.stepped) watch.submittedAt = Date.now();
+      if (PROGRESS_SIGNALS.has(type)) {
+        watch.lastSignalAt = Date.now();
+        if (type === 'progress') watch.stepped = true;
+      }
+      if (typeof d.node !== 'string') return;
       const classType = graph[d.node]?.class_type ?? '';
-      if (message.type === 'executing') say(stageLabel(classType));
-      else if (message.type === 'progress' && typeof d.value === 'number' && typeof d.max === 'number') {
-        say(classType === 'ImageUpscaleWithModel' ? 'Upscaling' : 'Sampling', d.value, d.max);
+      if (type === 'executing') say(stageLabel(classType) + note);
+      else if (type === 'progress' && typeof d.value === 'number' && typeof d.max === 'number') {
+        say((classType === 'ImageUpscaleWithModel' ? 'Upscaling' : 'Sampling') + note, d.value, d.max);
       }
     });
+    let watchdog: ReturnType<typeof setInterval> | null = null;
+    // Without the socket there are no signals to watch: the run then relies on the history poll alone, as before.
+    socket?.on('close', () => { if (watchdog) clearInterval(watchdog); });
+    const waitSignal = signal ? AbortSignal.any([signal, stalled.signal]) : stalled.signal;
     let accepted = false;
     try {
-      say('Queued');
+      const room = await this.vramAvailable(signal, 3_000);
+      if (room !== null && room < this.lowVramBytes) {
+        say(`GPU memory low (${(room / 1e9).toFixed(1)} GB free) — another app may be using the GPU`);
+        note = ' · GPU memory low';
+      } else say('Queued');
+      watch.submittedAt = Date.now();
+      watch.lastSignalAt = watch.submittedAt;
       const res = await this.request('/prompt', {
         method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ prompt: graph, client_id: clientId, prompt_id: promptId }),
       }, 60_000, signal);
@@ -198,15 +254,25 @@ export class ComfyClient {
       }
       if (!res.ok) throw new PermanentError(`ComfyUI answered ${res.status} on /prompt`);
       accepted = true;
-      const entry = await this.waitForHistory(promptId, signal);
+      if (socket && socket.readyState === socket.OPEN) watchdog = this.startWatchdog(watch, stalled, say);
+      const entry = await this.waitForHistory(promptId, waitSignal);
+      if (watchdog) clearInterval(watchdog);
       // I3: the PNG lives in the library now; ComfyUI's own copy is removed once downloaded (or given up on).
       const images = await this.fetchOutputs(entry, signal).finally(() => this.removeOutputs(entry));
       if (images.length === 0) throw new PermanentError('ComfyUI finished without producing an image');
       return { promptId, images, durationMs: Date.now() - started };
     } catch (err) {
+      if (watchdog) clearInterval(watchdog);
       if (signal?.aborted) {
         await this.cancelPrompt(promptId);
         throw abortError(signal);
+      }
+      if (stalled.signal.aborted) {
+        // Stop the crawling prompt (or drop it if it is still queued), then unload the models so the next attempt,
+        // and the next job in the lane, start from a clean GPU.
+        await this.cancelPrompt(promptId);
+        await this.free();
+        throw abortError(stalled.signal);
       }
       // M6: whatever failed after ComfyUI accepted the prompt, take it out of ComfyUI's queue before the job is
       // retried, so a retry never runs next to (or after) the old prompt. A no-op for a prompt that already ended.
@@ -215,6 +281,34 @@ export class ComfyClient {
     } finally {
       socket?.close();
     }
+  }
+
+  /**
+   * Checks `watch` a few times per limit. Before the first sampling step the prompt gets `firstProgressTimeoutMs`
+   * from submission (model loading); after it, at most `stallTimeoutMs` between two progress signals. A tripped limit
+   * shows its reason as the progress label and aborts `stalled` with a TransientError carrying it.
+   */
+  private startWatchdog(
+    watch: { submittedAt: number; lastSignalAt: number; stepped: boolean },
+    stalled: AbortController,
+    say: (label: string) => void,
+  ): ReturnType<typeof setInterval> {
+    const tickMs = Math.max(10, Math.min(1_000, Math.floor(Math.min(this.firstProgressTimeoutMs, this.stallTimeoutMs) / 5)));
+    const timer = setInterval(() => {
+      const now = Date.now();
+      let reason: string | null = null;
+      if (watch.stepped) {
+        if (now - watch.lastSignalAt > this.stallTimeoutMs) reason = `GPU stalled: no progress for ${span(this.stallTimeoutMs)} (${STALL_ADVICE})`;
+      } else if (now - watch.submittedAt > this.firstProgressTimeoutMs) {
+        reason = `GPU stalled: no progress for ${span(this.firstProgressTimeoutMs)} after queueing (${STALL_ADVICE})`;
+      }
+      if (reason === null) return;
+      clearInterval(timer);
+      console.error(`[manga] comfy: ${reason}`);
+      say(reason);
+      stalled.abort(new TransientError(reason));
+    }, tickMs);
+    return timer;
   }
 
   /** POST /free {unload_models, free_memory}. Never throws: a down ComfyUI holds no VRAM (G2), so a stopped or
@@ -289,13 +383,31 @@ export class ComfyClient {
   /** `devices[0].torch_vram_total` from GET /system_stats, or null when it can't be read in `timeoutMs` (down,
    *  non-OK, missing field). Rejects only with the abort error when `signal` aborts. */
   private async vramTotal(signal: AbortSignal | undefined, timeoutMs: number): Promise<number | null> {
+    const total = (await this.device(signal, timeoutMs))?.torch_vram_total;
+    return typeof total === 'number' ? total : null;
+  }
+
+  /**
+   * The VRAM ComfyUI could use for the next run: the device's free memory plus what ComfyUI's own torch holds
+   * (`vram_free` already counts torch's reserved-but-unused part, so that part is not added twice). Its own resident
+   * model is not "taken": only other apps are. Null when it can't be read; rejects only with the abort error.
+   */
+  private async vramAvailable(signal: AbortSignal | undefined, timeoutMs: number): Promise<number | null> {
+    const device = await this.device(signal, timeoutMs);
+    if (typeof device?.vram_free !== 'number') return null;
+    const torchHeld = (device.torch_vram_total ?? 0) - (device.torch_vram_free ?? 0);
+    return device.vram_free + Math.max(0, torchHeld);
+  }
+
+  /** `devices[0]` from GET /system_stats, or null when it can't be read in `timeoutMs` (down, non-OK, no device).
+   *  Rejects only with the abort error when `signal` aborts. */
+  private async device(signal: AbortSignal | undefined, timeoutMs: number): Promise<DeviceStats | null> {
     const timeout = AbortSignal.timeout(timeoutMs);
     try {
       const res = await fetch(`${this.url}/system_stats`, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
       if (!res.ok) return null;
-      const stats = (await res.json()) as { devices?: Array<{ torch_vram_total?: number }> } | null;
-      const total = stats?.devices?.[0]?.torch_vram_total;
-      return typeof total === 'number' ? total : null;
+      const stats = (await res.json()) as { devices?: DeviceStats[] } | null;
+      return stats?.devices?.[0] ?? null;
     } catch {
       if (signal?.aborted) throw abortError(signal);
       return null;
