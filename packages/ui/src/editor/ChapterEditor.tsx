@@ -16,7 +16,7 @@ import type { EditorCommand } from './commands';
 import { ConfirmPresetModal } from './ConfirmPresetModal';
 import { EditorToolbar } from './EditorToolbar';
 import {
-  deletePageFlow, escapeSelection, exportTarget, frameInsert, pageAfterRemoval, pageToShow, removedPanelCount, resolveCurrentPage,
+  autoLetterFlow, deletePageFlow, escapeSelection, exportTarget, frameInsert, pageAfterRemoval, pageToShow, removedPanelCount, resolveCurrentPage,
 } from './editorModel';
 import { History, IdMap } from './history';
 import { HistoryBarrierContext, type Barrier } from './HistoryBarrierContext';
@@ -171,11 +171,13 @@ export function ChapterEditor({ manga, mode, chapterId, pageIds, title, backTo, 
   /** Not undoable, and a barrier: the server letters every dialogue line of the page that has no frame yet. */
   const autoLetter = async (): Promise<void> => {
     if (!pageId || lettering) return;
-    flushNudge();
     setLettering(true);
     try {
-      await history.barrier(() => ops.autoLetter(pageId));
-    } catch (err) { pushToast('error', errorText(err)); } finally { setLettering(false); }
+      await autoLetterFlow(pageId, {
+        flush: flushNudge, barrier: (fn) => history.barrier(fn), run: (id) => ops.autoLetter(id),
+        fail: (err) => pushToast('error', errorText(err)),
+      });
+    } finally { setLettering(false); }
   };
   const addFrame = async (kind: FrameKind): Promise<void> => {
     if (!pageId) return;

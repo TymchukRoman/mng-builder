@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { computeRects, DEFAULT_PAGE_FORMAT, DEFAULT_TRANSFORM, mergePanels, resizeSplit, splitPanel, type LayoutNode, type PageDetail, type Panel, type TextFrame } from '@manga/shared';
 import { queryCache } from '../src/editor/cacheAdapter';
 import { History, IdMap } from '../src/editor/history';
-import { createOps, type OpsApi } from '../src/editor/ops';
+import { createOps, type OpsApi, type OpsCache } from '../src/editor/ops';
 import { qk } from '../src/queryKeys';
 import { makeDetail, makeFrame, makePanel } from './fixtures';
 
@@ -218,6 +218,20 @@ describe('editor ops', () => {
     expect(calls).toEqual([{ method: 'POST', path: '/api/pages/pg_1/auto-letter', body: undefined }]);
     expect(detail).toBe(lettered);
     expect(page().frames.map((f) => f.id)).toEqual(['tf_1', 'tf_new']);
+  });
+
+  it('autoLetter cancels the in-flight page refetch before it writes the response', async () => {
+    const lettered = makeDetail('pg_1', [makeFrame('tf_1'), makeFrame('tf_new', 'pg_1', { order: 1 })]);
+    const log: string[] = [];
+    const { api } = fakeApi({ 'POST /api/pages/pg_1/auto-letter': () => { log.push('post'); return lettered; } });
+    const cache: OpsCache = {
+      cancel: async (id) => { log.push(`cancel ${id}`); },
+      getPage: () => undefined,
+      setPage: (d) => { log.push(`set ${d.page.id}`); },
+      setFrame: () => undefined, removeFrame: () => undefined, setPanel: () => undefined,
+    };
+    await createOps({ api, ids: new IdMap(), cache, format: () => DEFAULT_PAGE_FORMAT, onFrameError: () => undefined }).autoLetter('pg_1');
+    expect(log).toEqual(['cancel pg_1', 'post', 'set pg_1']);
   });
 
   it('autoLetter rejects with the server error and leaves the cache alone', async () => {

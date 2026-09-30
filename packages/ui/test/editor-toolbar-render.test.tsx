@@ -61,8 +61,10 @@ describe('editor toolbar', () => {
     const html = render('cover', panelSelection('pn_a'), detail);
     expect(enabled(html, 'Add title')).toBe(true);
     for (const gone of ['Layout presets', 'Split into', 'Merge', 'Add speech bubble']) expect(html).not.toContain(gone);
-    expect(enabled(html, 'Export')).toBe(true);
-    expect(enabled(html, AUTO_LETTER)).toBe(true);
+    for (const label of ['Export', AUTO_LETTER]) {
+      expect(enabled(html, label), label).toBe(true);
+      expect(html).toContain(`data-tip="${label}"`);
+    }
   });
 
   it('without a page, export and auto-letter are disabled', () => {

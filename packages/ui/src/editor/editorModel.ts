@@ -102,6 +102,28 @@ export async function deletePageFlow(pageId: string, steps: DeletePageSteps): Pr
   steps.after(pageId, before.currentId === pageId ? neighbourAfterDelete(before.pageIds, pageId) : undefined);
 }
 
+export interface AutoLetterSteps {
+  /** Commits a pending nudge burst first. */
+  flush(): void;
+  barrier<T>(fn: () => Promise<T>): Promise<T>;
+  run(pageId: string): Promise<unknown>;
+  /** Receives a refused request (for the toast). */
+  fail(err: unknown): void;
+}
+
+/**
+ * Auto-letter adds frames the history knows nothing about, so it is a barrier: on success both stacks are cleared, and a
+ * refused request keeps them. The refusal goes to `fail`, never to the caller.
+ */
+export async function autoLetterFlow(pageId: string, steps: AutoLetterSteps): Promise<void> {
+  steps.flush();
+  try {
+    await steps.barrier(() => steps.run(pageId));
+  } catch (err) {
+    steps.fail(err);
+  }
+}
+
 /**
  * When the page named in the URL (`requested`) has left the page list (deleted elsewhere: an episode re-run, another tab),
  * the page to show instead: its nearest remaining neighbour in the old order (after it, else before it), else the first

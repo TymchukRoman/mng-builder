@@ -1,4 +1,4 @@
-import { useRef, useState, type JSX } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type JSX } from 'react';
 import type { Job, JobRef } from '@manga/shared';
 import { api } from '../api';
 import { waitForJob } from '../events';
@@ -31,6 +31,18 @@ export function ExportButton({ target, pageId = null }: { target: ExportTarget; 
   const request = exportRequest(choice, target, pageId);
   const running = starting || (jobId !== null && finished === null);
   const problem = exportProblem(finished);
+  const runningRef = useRef(false);
+  const openRef = useRef(false);
+  useLayoutEffect(() => { runningRef.current = running; openRef.current = open; });
+
+  // A finished export belongs to the choice that produced it: change the format, the scope or the page and the old files go.
+  const requestKey = request ? `${request.target.type}:${request.target.id}:${request.format}` : '';
+  useEffect(() => {
+    if (runningRef.current) return;
+    setFinished(null);
+    setError(null);
+    setJobId(null); // `running` is "has a job id and no result", so the id goes with the result
+  }, [requestKey, choice.scope]);
 
   const start = async (): Promise<void> => {
     if (!request || running) return;
@@ -41,8 +53,10 @@ export function ExportButton({ target, pageId = null }: { target: ExportTarget; 
     try {
       const { jobId: id } = await api.post<JobRef>('/api/export', request);
       setJobId(id);
-      setStarting(false);
-      setFinished(await waitForJob(id));
+      const job = await waitForJob(id);
+      setFinished(job);
+      // Failures are toasted for every job (events.ts); a success needs a signal only when the popover is not showing it.
+      if (job.status === 'succeeded' && !openRef.current) pushToast('info', 'Export finished');
     } catch (err) {
       setError(errorText(err));
       setJobId(null);
@@ -52,7 +66,8 @@ export function ExportButton({ target, pageId = null }: { target: ExportTarget; 
   };
 
   const copy = (path: string): void => {
-    navigator.clipboard.writeText(path).catch((err: unknown) => pushToast('error', errorText(err)));
+    // `navigator.clipboard` is undefined outside secure contexts: the property read must fail inside the promise chain.
+    Promise.resolve().then(() => navigator.clipboard.writeText(path)).catch((err: unknown) => pushToast('error', errorText(err)));
   };
 
   return (
@@ -79,7 +94,7 @@ export function ExportButton({ target, pageId = null }: { target: ExportTarget; 
           {exportFiles(finished).map((file) => (
             <div key={file} className="row export-pop__file" data-testid="export-file" data-path={file}>
               <span className="export-pop__name" data-tip={file}>{fileName(file)}</span>
-              <IconButton icon={Copy} size="sm" label="Copy path" onClick={() => copy(file)} />
+              <IconButton icon={Copy} size="sm" label={`Copy path of ${fileName(file)}`} onClick={() => copy(file)} />
             </div>
           ))}
         </div>

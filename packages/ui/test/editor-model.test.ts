@@ -1,9 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { EditorCommand } from '../src/editor/commands';
 import { History } from '../src/editor/history';
 import { PAGE_SELECTION, frameSelection, panelSelection } from '../src/editor/selection';
 import {
-  COVER_FRAME_KINDS, CHAPTER_FRAME_KINDS, deletePageFlow, escapeSelection, exportTarget, frameInsert, insertBody, neighbourAfterDelete, nudgePatch, pageAfterRemoval, nudgeStep, pageToShow,
+  COVER_FRAME_KINDS, CHAPTER_FRAME_KINDS, autoLetterFlow, deletePageFlow, escapeSelection, exportTarget, frameInsert, insertBody, neighbourAfterDelete, nudgePatch, pageAfterRemoval, nudgeStep, pageToShow,
   removedPanelCount, resolveCurrentPage,
 } from '../src/editor/editorModel';
 import { makeFrame } from './fixtures';
@@ -98,6 +98,38 @@ describe('undo and redo show the command page', () => {
     expect(pageToShow('pg_1', 'pg_1', ['pg_1', 'pg_2'])).toBeNull();
     expect(pageToShow(null, 'pg_1', ['pg_1'])).toBeNull();
     expect(pageToShow('pg_gone', 'pg_1', ['pg_1'])).toBeNull();
+  });
+});
+
+describe('auto-letter', () => {
+  const cmd = (log: string[]): EditorCommand => ({
+    label: 'A', pageId: 'pg_1', apply: async () => { log.push('apply A'); }, revert: async () => { log.push('revert A'); },
+  });
+
+  it('flushes the nudge, runs the request as a barrier that clears the history, and toasts nothing', async () => {
+    const log: string[] = [];
+    const h = new History();
+    await h.run(cmd(log));
+    await autoLetterFlow('pg_1', {
+      flush: () => log.push('flush'), barrier: (fn) => h.barrier(fn),
+      run: async (id) => { log.push(`letter ${id}`); }, fail: (err) => log.push(`fail ${String(err)}`),
+    });
+    expect(log).toEqual(['apply A', 'flush', 'letter pg_1']);
+    expect(h.snapshot()).toMatchObject({ canUndo: false, canRedo: false });
+  });
+
+  it('a refused request is reported and keeps the history', async () => {
+    const log: string[] = [];
+    const h = new History();
+    await h.run(cmd(log));
+    const fail = vi.fn();
+    await autoLetterFlow('pg_1', {
+      flush: () => undefined, barrier: (fn) => h.barrier(fn),
+      run: async () => { throw new Error('404'); }, fail,
+    });
+    expect(fail).toHaveBeenCalledOnce();
+    expect(String(fail.mock.calls[0]?.[0])).toContain('404');
+    expect(h.snapshot()).toMatchObject({ canUndo: true });
   });
 });
 
