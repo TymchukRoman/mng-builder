@@ -2,7 +2,7 @@
 import type { z } from 'zod';
 import {
   BreakdownOutputSchema, LetteringOutputSchema, OutlineOutputSchema, PremiseOutputSchema, RenderOutputSchema,
-  breakdownSchemaFor, promptsSchemaFor, scriptsSchemaFor, type EpisodeRun, type EpisodeStepName,
+  breakdownSchemaFor, outlineSchemaFor, promptsSchemaFor, scriptsSchemaFor, type EpisodeRun, type EpisodeStepName,
 } from '@manga/shared';
 import type { Store } from '../../store/index.js';
 import { chapterPanels } from './chapter.js';
@@ -14,7 +14,7 @@ export function validationSchema(store: Store, run: EpisodeRun, step: EpisodeSte
     case 'premise':
       return PremiseOutputSchema;
     case 'outline':
-      return OutlineOutputSchema;
+      return outlineSchemaFor({ knownNames: knownNames(store, run) });
     case 'breakdown':
       return breakdownSchemaFor({ pages: run.input.pages, sceneCount: requireOutput(run, 'outline', OutlineOutputSchema).scenes.length });
     case 'scripts':
@@ -34,7 +34,7 @@ export function validationSchema(store: Store, run: EpisodeRun, step: EpisodeSte
   }
 }
 
-/** Every character of the run's manga: the scripts may use any of them (outline approval can add some). */
+/** Every character of the run's manga: the outline and the scripts may use any of them (outline approval can add some). */
 export function knownNames(store: Store, run: EpisodeRun): string[] {
   const chapter = store.chapters.require(run.chapterId);
   return store.characters.listByManga(chapter.mangaId).map((c) => c.name);

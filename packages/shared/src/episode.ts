@@ -39,10 +39,33 @@ export const NewCharacterDraftSchema = z.object({
   name: z.string().trim().min(1), role: CharacterRoleSchema, personality: z.string(), speechStyle: z.string(), appearanceTags: z.string().min(1),
 });
 export type NewCharacterDraft = z.infer<typeof NewCharacterDraftSchema>;
+/** The most new characters one outline may add (an adaptation brings its cast along); the outline prompt says the same. */
+export const MAX_NEW_CHARACTERS = 8;
 export const OutlineOutputSchema = z.object({
-  scenes: z.array(OutlineSceneSchema).min(1), newCharacters: z.array(NewCharacterDraftSchema).max(5),
+  scenes: z.array(OutlineSceneSchema).min(1), newCharacters: z.array(NewCharacterDraftSchema).max(MAX_NEW_CHARACTERS),
 });
 export type OutlineOutput = z.infer<typeof OutlineOutputSchema>;
+export interface OutlineRules { knownNames: string[] }
+
+/**
+ * Closes the cast at the source: every scene's characterNames entry is a character the manga has or one this answer
+ * adds in newCharacters. Otherwise the scripts step would meet names no character carries (an adaptation's cast
+ * assumed to exist), and the refined schema sends the model through the correction round here instead.
+ */
+export function outlineSchemaFor(rules: OutlineRules): z.ZodType<OutlineOutput> {
+  return OutlineOutputSchema.superRefine((value, ctx) => {
+    const names = [...rules.knownNames, ...value.newCharacters.map((c) => c.name)];
+    value.scenes.forEach((scene, i) => {
+      scene.characterNames.forEach((name, k) => {
+        if (names.some((n) => sameName(n, name))) return;
+        ctx.addIssue({
+          code: 'custom', path: ['scenes', i, 'characterNames', k],
+          message: `unknown character "${name}": add "${name}" to newCharacters (with appearanceTags) or remove it; groups and crowds are not characters`,
+        });
+      });
+    });
+  });
+}
 
 // ---- 3. breakdown ----
 export const BreakdownPageSchema = z.object({

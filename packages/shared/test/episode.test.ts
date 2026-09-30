@@ -2,7 +2,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   EDITABLE_STEPS, OutlineOutputSchema, PremiseOutputSchema, STEP_TASK,
-  REVIEW_AVG_SECONDS, breakdownSchemaFor, estimateReviewSeconds, estimateSeconds, formatEstimate, promptsSchemaFor, sameName, scriptsSchemaFor, stepIndex,
+  REVIEW_AVG_SECONDS, breakdownSchemaFor, estimateReviewSeconds, estimateSeconds, formatEstimate, outlineSchemaFor, promptsSchemaFor, sameName,
+  scriptsSchemaFor, stepIndex,
   type PanelScriptDraft,
 } from '../src/episode.js';
 import { PRESET_NAMES, presetPanelCount } from '../src/layout/index.js';
@@ -37,6 +38,29 @@ describe('premise and outline', () => {
     expect(OutlineOutputSchema.safeParse({ scenes: [scene], newCharacters: [] }).success).toBe(true);
     const bad = { name: 'Mika', role: 'hero', personality: '', speechStyle: '', appearanceTags: '1girl' };
     expect(OutlineOutputSchema.safeParse({ scenes: [scene], newCharacters: [bad] }).success).toBe(false);
+  });
+});
+
+describe('outlineSchemaFor (a scene names only known or new characters)', () => {
+  const schema = outlineSchemaFor({ knownNames: ['Aiko'] });
+  const scene = (characterNames: string[]) => ({ summary: 'They meet', purpose: 'setup', location: 'village gate', characterNames });
+  const draft = (name: string) => ({ name, role: 'main', personality: 'loud', speechStyle: 'shouts', appearanceTags: '1boy, spiky blond hair, orange jumpsuit' });
+
+  it('flags a scene name that is neither a known character nor a new one', () => {
+    const r = schema.safeParse({ scenes: [scene(['Aiko']), scene(['Rogue Ninja', 'Naruto'])], newCharacters: [draft('Rogue Ninja')] });
+    expect(issuesOf(r)).toEqual([
+      'scenes.1.characterNames.1: unknown character "Naruto": add "Naruto" to newCharacters (with appearanceTags) or remove it; groups and crowds are not characters',
+    ]);
+  });
+
+  it('accepts known characters and names listed in newCharacters, case-insensitively', () => {
+    expect(schema.safeParse({ scenes: [scene([' aiko', 'NARUTO', 'sasuke  uchiha'])], newCharacters: [draft('Naruto'), draft('Sasuke Uchiha')] }).success).toBe(true);
+  });
+
+  it('allows up to 8 new characters', () => {
+    const eight = Array.from({ length: 8 }, (_, i) => draft(`Ninja ${i + 1}`));
+    expect(schema.safeParse({ scenes: [scene(['Aiko'])], newCharacters: eight }).success).toBe(true);
+    expect(schema.safeParse({ scenes: [scene(['Aiko'])], newCharacters: [...eight, draft('Ninja 9')] }).success).toBe(false);
   });
 });
 

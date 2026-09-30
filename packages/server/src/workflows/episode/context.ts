@@ -1,6 +1,6 @@
 // packages/server/src/workflows/episode/context.ts
 import {
-  BreakdownOutputSchema, OutlineOutputSchema, PRESET_NAMES, PremiseOutputSchema, presetPanelCount,
+  BreakdownOutputSchema, MAX_NEW_CHARACTERS, OutlineOutputSchema, PRESET_NAMES, PremiseOutputSchema, presetPanelCount,
   type BreakdownPage, type Character, type ColorMode, type EpisodeRun, type Language, type Manga, type OutlineScene, type Panel,
   type PremiseOutput, type PresetInfo, type Settings,
 } from '@manga/shared';
@@ -19,9 +19,13 @@ export interface PremiseContext {
   step: 'premise'; language: Language; manga: { title: string; synopsis: string };
   request: { prompt: string; tone: string; pages: number }; characters: CharacterBrief[];
 }
-/** `otherCharacterNames`: the manga's characters outside this run's cast, so no new character takes one of their names (Task 5 M1). */
+/**
+ * `otherCharacterNames`: the manga's characters outside this run's cast, so no new character takes one of their names (Task 5 M1).
+ * `request` is the user's own wording, so the outline can tell an adaptation of a known story and bring its cast along.
+ */
 export interface OutlineContext {
-  step: 'outline'; language: Language; pages: number; premise: PremiseOutput; characters: CharacterBrief[]; otherCharacterNames: string[];
+  step: 'outline'; language: Language; pages: number; request: { prompt: string; tone: string }; premise: PremiseOutput;
+  characters: CharacterBrief[]; otherCharacterNames: string[];
 }
 /** `request` is the user's own wording, so an explicit panel count or layout in it reaches the step that picks them. */
 export interface BreakdownContext {
@@ -87,7 +91,8 @@ export function buildStepContext(store: Store, run: EpisodeRun, step: LlmStepNam
       };
     case 'outline':
       return {
-        step, language: manga.language, pages: run.input.pages, premise: requireOutput(run, 'premise', PremiseOutputSchema), characters: chosen.map(brief),
+        step, language: manga.language, pages: run.input.pages, request: { prompt: run.input.prompt, tone: run.input.tone },
+        premise: requireOutput(run, 'premise', PremiseOutputSchema), characters: chosen.map(brief),
         otherCharacterNames: all.filter((c) => !chosen.includes(c)).map((c) => c.name),
       };
     case 'breakdown': {
@@ -160,6 +165,7 @@ export function templateVars(store: Store, run: EpisodeRun, ctx: StepContext): R
     languageName: LANGUAGE_NAME[manga.language],
     pages: String(run.input.pages),
     maxScenes: String(Math.max(2, run.input.pages * 2)),
+    maxNewCharacters: String(MAX_NEW_CHARACTERS),
     prompt: run.input.prompt,
     tone: run.input.tone.trim() || 'any',
     colorRule: COLOR_RULE[manga.colorMode],

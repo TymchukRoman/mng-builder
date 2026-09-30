@@ -1,13 +1,15 @@
 import { getEventListeners, getMaxListeners } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ZodError } from 'zod';
-import { CHAPTER_TITLE_FROM_PREMISE, type EpisodeInput, type ImageGeneratePayload, type Job, type LlmStepPayload, type ServerEvent } from '@manga/shared';
+import { CHAPTER_TITLE_FROM_PREMISE, type EpisodeInput, type NewCharacterDraft, type OutlineOutput, type ImageGeneratePayload, type Job, type LlmStepPayload, type ServerEvent } from '@manga/shared';
 import { EPISODE_FAKE_RESPONSES } from '../src/dev/fake-episode.js';
 import { FAKE_RESPONSES } from '../src/dev/fake-responses.js';
 import { createPage, NeedsConfirmError } from '../src/domain/pages.js';
 import { InvalidOutputError } from '../src/engines/errors.js';
 import { Engines, relaneTextJobs } from '../src/engines/resolve.js';
 import { ScriptedEngine, type ScriptedResponse } from '../src/engines/scripted.js';
+import { completeStructured } from '../src/engines/structured.js';
+import type { JsonRequest, TextEngine } from '../src/engines/types.js';
 import { ConflictError, NotFoundError, ValidationError } from '../src/errors.js';
 import { EventBus } from '../src/events/bus.js';
 import { GpuArbiter, JobQueue } from '../src/jobs/index.js';
@@ -35,10 +37,15 @@ interface Rig { runner: EpisodeRunner; queue: FakeQueue; claude: ScriptedEngine;
  * A runner on a FakeQueue. auto: llm.step and imaging jobs run by themselves; manual: jobs stay queued.
  * imaging: false leaves image jobs queued while the llm.step jobs still run.
  */
-function rig(opts: { auto?: boolean; imaging?: boolean; responses?: Record<string, ScriptedResponse> } = {}): Rig {
+function rig(opts: {
+  auto?: boolean; imaging?: boolean; responses?: Record<string, ScriptedResponse>;
+  /** Wraps each scripted engine, e.g. to run some requests through a real engine's correction round. */
+  wrap?: (engine: ScriptedEngine) => TextEngine;
+} = {}): Rig {
   const claude = new ScriptedEngine('claude', { ...FAKE_RESPONSES, ...opts.responses });
   const local = new ScriptedEngine('local', { ...FAKE_RESPONSES, ...opts.responses });
-  const engines = new Engines({ settings: () => lib.store.settings.get(), claude, local });
+  const wrap = opts.wrap ?? ((e: ScriptedEngine): TextEngine => e);
+  const engines = new Engines({ settings: () => lib.store.settings.get(), claude: wrap(claude), local: wrap(local) });
   const queue = new FakeQueue(lib.store);
   const runner = new EpisodeRunner({ store: lib.store, bus, queue: queue.asQueue(), engines, newSeed: () => 1 });
   if (opts.auto !== false) {
@@ -672,5 +679,57 @@ describe('EpisodeRunner — restart safety', () => {
     expect(after.steps[0]).toMatchObject({ status: 'running', output: null });
     expect(lib.store.chapters.require(chapter.id).title).toBe(CHAPTER_TITLE_FROM_PREMISE);
     expect(queue.jobs('llm.step')).toHaveLength(2);
+  });
+});
+
+describe("EpisodeRunner — an adaptation's cast (Roman's Naruto run)", () => {
+  const draft = (name: string, appearanceTags: string): NewCharacterDraft => ({ name, role: 'main', personality: 'bold', speechStyle: 'short', appearanceTags });
+  const ROGUE = draft('Rogue Ninja', '1boy, masked face, black cloak');
+  /** The outline Roman's run got: scenes name the franchise's cast, but only the invented stand-in is a new character. */
+  const leakyOutline = (): OutlineOutput => ({
+    scenes: [
+      { summary: 'Naruto trains while villagers watch.', purpose: 'setup', location: 'Konoha', characterNames: ['Naruto', 'Villagers'] },
+      {
+        summary: 'Sasuke and Naruto face the Rogue Ninja before the Fifth Hokage.', purpose: 'climax', location: 'forest',
+        characterNames: ['Naruto', 'Sasuke', 'Rogue Ninja', 'Fifth Hokage'],
+      },
+    ],
+    newCharacters: [ROGUE],
+  });
+  const closedOutline = (): OutlineOutput => ({
+    scenes: [
+      { summary: 'Naruto trains while villagers watch.', purpose: 'setup', location: 'Konoha', characterNames: ['Naruto'] },
+      { summary: 'Sasuke and Naruto face the Rogue Ninja.', purpose: 'climax', location: 'forest', characterNames: ['Naruto', 'Sasuke', 'Rogue Ninja'] },
+    ],
+    newCharacters: [draft('Naruto', '1boy, spiky blond hair, blue eyes, orange jumpsuit'), draft('Sasuke', '1boy, black hair, dark eyes, blue shirt'), ROGUE],
+  });
+  const input = (): EpisodeInput => ({ prompt: 'Adapt any episode of Naruto to a short episode of manga', characterIds: [], pages: 2, tone: '' });
+
+  it('an outline whose scenes name characters missing from newCharacters goes through the correction round', async () => {
+    const { chapter, manga } = seedEpisodeWorld(lib.store);
+    const asked: string[] = [];
+    const answers = [JSON.stringify(leakyOutline()), JSON.stringify(closedOutline())];
+    const { runner, queue } = rig({
+      wrap: (scripted) => ({
+        name: scripted.name,
+        health: () => scripted.health(),
+        completeJson: <T>(req: JsonRequest<T>): Promise<T> => (req.name === 'episode.outline'
+          ? completeStructured(async ({ prompt }) => { asked.push(prompt); return answers.shift()!; }, req)
+          : scripted.completeJson(req)),
+      }),
+    });
+    const run = runner.start(chapter.id, input(), 'review');
+    await queue.idle();
+    expect(asked).toHaveLength(2);
+    expect(asked[1]).toContain('scenes.0.characterNames.0: unknown character "Naruto": add "Naruto" to newCharacters (with appearanceTags) or remove it');
+    expect(asked[1]).toContain('add "Villagers" to newCharacters');
+    expect(asked[1]).toContain('add "Fifth Hokage" to newCharacters');
+    const outlineStep = runner.get(run.id).steps[1]!;
+    expect(outlineStep.status).toBe('awaiting-review');
+    expect((outlineStep.output as OutlineOutput).newCharacters.map((c) => c.name)).toEqual(['Naruto', 'Sasuke', 'Rogue Ninja']);
+    runner.approve(run.id);
+    await queue.idle();
+    expect(lib.store.characters.listByManga(manga.id).map((c) => c.name).sort()).toEqual(['Naruto', 'Rogue Ninja', 'Sasuke']);
+    expect(runner.get(run.id)).toMatchObject({ status: 'awaiting-review', currentStep: 3 });
   });
 });

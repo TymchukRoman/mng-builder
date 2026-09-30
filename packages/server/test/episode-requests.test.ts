@@ -62,6 +62,16 @@ describe('stepRequests', () => {
     expect(issues(second.schema.safeParse({ pages: chunk.pages.slice(0, 3) }))).toEqual(['expected exactly 4 pages (pages 5–8 of the breakdown), got 3']);
   });
 
+  it('the outline request refuses a scene character that is neither in the manga nor in newCharacters', () => {
+    const run = scriptsRun(2);
+    const [only] = stepRequests(lib.store, run, 'outline');
+    expect(issues(only!.schema.safeParse(outline(['Aiko', 'Villagers'])))).toEqual([
+      'unknown character "Villagers": add "Villagers" to newCharacters (with appearanceTags) or remove it; groups and crowds are not characters',
+      'unknown character "Villagers": add "Villagers" to newCharacters (with appearanceTags) or remove it; groups and crowds are not characters',
+    ]);
+    expect(() => combineAnswers(lib.store, run, 'outline', [outline(['Aiko', 'Villagers'])])).toThrow(ZodError);
+  });
+
   it('combines the scripts chunks and validates the whole', () => {
     const run = scriptsRun(10);
     const whole = scripts(breakdown(10), 'Aiko');

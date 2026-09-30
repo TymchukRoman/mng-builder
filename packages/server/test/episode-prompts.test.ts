@@ -2,13 +2,14 @@
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { MAX_NEW_CHARACTERS } from '@manga/shared';
 import { createCoverPage, createPage } from '../src/domain/pages.js';
 import { withJsonInstruction } from '../src/engines/structured.js';
 import { ConflictError } from '../src/errors.js';
 import { chapterPanels } from '../src/workflows/episode/chapter.js';
 import {
   buildStepContext, contextBlock, extractContext, templateVars,
-  type BreakdownContext, type PremiseContext, type PromptsContext,
+  type BreakdownContext, type OutlineContext, type PremiseContext, type PromptsContext,
 } from '../src/workflows/episode/context.js';
 import { loadStepPrompt, renderTemplate } from '../src/workflows/episode/prompts.js';
 import { LLM_STEPS } from '../src/workflows/episode/steps.js';
@@ -124,6 +125,20 @@ describe('step contexts', () => {
     expect(renderedSystem(run, 'outline')).toContain('never one from the context\'s "characters" or "otherCharacterNames"');
   });
 
+  it("the outline closes the cast: an adaptation brings its canonical characters, crowds are not characters (Roman's Naruto run)", () => {
+    const { run } = fullWorld();
+    const system = renderedSystem(run, 'outline');
+    expect(system).toContain('Every one of them must be in one of those two lists');
+    expect(system).toContain('adapts an existing story or franchise, add its characters who take part as "newCharacters" under their canonical names');
+    expect(system).toContain('Never replace them with invented stand-ins');
+    expect(system).toContain('Groups and crowds (villagers, guards, a crowd, classmates) are not characters');
+    expect(system).toContain(`At most ${MAX_NEW_CHARACTERS} "newCharacters"`);
+    expect(system).not.toContain('at most 3');
+    // The request is the user's own wording ("Adapt any episode of Naruto…"), so the outline can tell an adaptation.
+    const ctx = buildStepContext(lib.store, run, 'outline') as OutlineContext;
+    expect(ctx.request).toEqual({ prompt: run.input.prompt, tone: run.input.tone });
+  });
+
   it('the outline drafts new characters without colours for a black-and-white manga only (M4 final S6)', () => {
     const { run, manga } = fullWorld();
     expect(renderedSystem(run, 'outline')).toContain('The book is black and white: no colours in "appearanceTags"');
@@ -223,6 +238,18 @@ describe('validationSchema', () => {
     expect(validationSchema(lib.store, run, 'breakdown').safeParse(breakdown(2)).success).toBe(true);
     expect(validationSchema(lib.store, run, 'scripts').safeParse(scripts(breakdown(2), 'aiko')).success).toBe(true);
     expect(validationSchema(lib.store, run, 'scripts').safeParse(scripts(breakdown(2), 'Mika')).success).toBe(false);
+  });
+
+  it("an outline scene may name only the manga's characters or the answer's new ones", () => {
+    const { run } = fullWorld();
+    const naruto = { name: 'Naruto', role: 'main' as const, personality: 'loud', speechStyle: 'shouts', appearanceTags: '1boy, spiky blond hair' };
+    {
+      const schema = validationSchema(lib.store, run, 'outline');
+      const r = schema.safeParse(outline(['Aiko', 'Naruto']));
+      expect(r.success).toBe(false);
+      expect(r.error?.issues[0]).toMatchObject({ path: ['scenes', 0, 'characterNames', 1], message: expect.stringContaining('add "Naruto" to newCharacters') });
+      expect(schema.safeParse(outline(['aiko', 'naruto'], [naruto])).success).toBe(true);
+    }
   });
 
   it('refuses to build a schema that needs a missing earlier output', () => {
