@@ -53,7 +53,11 @@ function rig(opts: {
   const queue = new FakeQueue(lib.store);
   const runner = new EpisodeRunner({ store: lib.store, bus, queue: queue.asQueue(), engines, newSeed: () => 1 });
   if (opts.auto !== false) {
-    queue.on('llm.step', (job, signal) => runner.handleStepJob(fakeJobContext(lib.store, bus, queue, job, signal), job.payload as LlmStepPayload));
+    queue.on('llm.step', (job, signal) => {
+      const p = job.payload as LlmStepPayload;
+      const ctx = fakeJobContext(lib.store, bus, queue, job, signal);
+      return p.type === 'chapter-summary' ? runner.handleSummaryJob(ctx, p) : runner.handleStepJob(ctx, p);
+    });
     if (opts.imaging !== false) fakeImaging(lib.store, queue);
   }
   return { runner, queue, claude, local, engines };
@@ -139,11 +143,12 @@ describe('EpisodeRunner — flow', () => {
     expect(lib.store.frames.listByPage(ch.coverPageId!).map((f) => f.kind)).toEqual(['title']);
     const mika = lib.store.characters.listByManga(manga.id).find((c) => c.name === 'Mika')!;
     expect(mika.refs.portrait).toBeDefined();
-    const steps = queue.jobs('llm.step').map((j) => [(j.payload as { step: string }).step, j.lane, j.maxAttempts]);
+    const steps = queue.jobs('llm.step').map((j) => [(j.payload as { step?: string; type: string }).step ?? (j.payload as { type: string }).type, j.lane, j.maxAttempts]);
     expect(steps).toEqual([
       ['premise', 'claude', 3], ['outline', 'claude', 3], ['breakdown', 'claude', 3], ['scripts', 'claude', 3],
-      ['prompts', 'claude', 3], ['render', 'cpu', 1], ['lettering', 'cpu', 1],
+      ['prompts', 'claude', 3], ['render', 'cpu', 1], ['lettering', 'cpu', 1], ['chapter-summary', 'claude', 2],
     ]);
+    expect(lib.store.chapters.require(chapter.id).summary).not.toBe('');
   });
 
   it('uses the lane of the engine chosen for each task', async () => {

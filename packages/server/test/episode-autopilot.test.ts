@@ -75,9 +75,16 @@ describe('episode in autopilot (integration, fakes)', { timeout: 120_000 }, () =
     const characters = (await s.api<Character[]>('GET', `/api/mangas/${manga.id}/characters`)).body;
     expect(characters.find((c) => c.name === 'Mika')?.refs.portrait).toBeDefined();
 
+    // W1 Q1: the finished run queues the chapter summary; the fake answers it in the book language.
+    const summarised = await s.until(async () => {
+      const c = (await s!.api<Chapter>('GET', `/api/chapters/${chapter.id}`)).body;
+      return c.summary !== '' ? c : null;
+    }, 10_000);
+    expect(summarised.summary).toMatch(/^Розділ 1: Кіт під дощем\./);
+
     const jobs = await runJobs(s, run.id);
     const count = (kind: Job['kind']) => jobs.filter((j) => j.kind === kind).length;
-    expect(count('llm.step')).toBe(7);
+    expect(count('llm.step')).toBe(7 + 1); // the seven steps and the chapter summary
     expect(count('image.generate')).toBe(4 + 5); // Mika's portraits + 4 story panels + the cover
     expect(count('image.review')).toBe(5);
     expect(jobs.every((j) => j.status === 'succeeded')).toBe(true);

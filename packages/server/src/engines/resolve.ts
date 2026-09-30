@@ -37,13 +37,14 @@ export const TEXT_JOB_KINDS: readonly JobKind[] = ['llm.step', 'image.review'];
 /**
  * The task a text job runs, derived from its kind and payload; null when it cannot be derived. M2: panel-prompt and
  * appearance → 'prompts', image.review → 'review'. M4: an episode step → `STEP_TASK[step]` (render/lettering stay
- * null: they are cpu-lane drivers).
+ * null: they are cpu-lane drivers). W1 F10: the chapter summary → 'story', so an engine switch re-lanes it too.
  */
 export function textTaskOf(job: Pick<Job, 'kind' | 'payload'>): Task | null {
   if (job.kind === 'image.review') return 'review';
   if (job.kind !== 'llm.step') return null;
   const payload = typeof job.payload === 'object' && job.payload !== null ? (job.payload as { type?: unknown; step?: unknown }) : {};
   if (payload.type === 'panel-prompt' || payload.type === 'appearance') return 'prompts';
+  if (payload.type === 'chapter-summary') return 'story';
   if (payload.type === 'episode' && typeof payload.step === 'string' && Object.hasOwn(STEP_TASK, payload.step)) {
     return STEP_TASK[payload.step as keyof typeof STEP_TASK];
   }

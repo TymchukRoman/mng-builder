@@ -139,7 +139,7 @@ describe('fake episode responses', () => {
 
   it('are part of FAKE_RESPONSES', async () => {
     for (const key of Object.keys(EPISODE_FAKE_RESPONSES)) expect(FAKE_RESPONSES[key]).toBe(EPISODE_FAKE_RESPONSES[key]);
-    expect(Object.keys(EPISODE_FAKE_RESPONSES).sort()).toEqual(['episode.breakdown', 'episode.outline', 'episode.premise', 'episode.prompts', 'episode.scripts']);
+    expect(Object.keys(EPISODE_FAKE_RESPONSES).sort()).toEqual(['episode.breakdown', 'episode.outline', 'episode.premise', 'episode.prompts', 'episode.scripts', 'episode.summary']);
     expect(PremiseOutputSchema.safeParse(EPISODE_FAKE_RESPONSES['episode.premise']!({
       name: 'episode.premise', task: 'story', system: '', schema: PremiseOutputSchema,
       prompt: '<context>{"step":"premise","language":"en","manga":{"title":"M","synopsis":""},"request":{"prompt":"p","tone":"","pages":1},"characters":[]}</context>',

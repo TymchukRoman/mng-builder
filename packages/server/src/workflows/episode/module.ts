@@ -20,6 +20,7 @@ export function episodeModule(deps: CoreDeps, services: Pick<M2Services, 'engine
     runner,
     register(app): void {
       registerLlmStep('episode', (ctx, payload) => runner.handleStepJob(ctx, payload));
+      registerLlmStep('chapter-summary', (ctx, payload) => runner.handleSummaryJob(ctx, payload));
       registerEpisodeRoutes(app, { store: deps.store, bus: deps.bus, queue: deps.queue, runner });
     },
     start(): void {

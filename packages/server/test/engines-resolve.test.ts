@@ -70,6 +70,10 @@ describe('textTaskOf', () => {
     expect(textTaskOf(step('constructor'))).toBeNull();
     expect(textTaskOf(job('llm.step', { type: 'episode', runId: 'er_x' }))).toBeNull();
   });
+
+  it('maps the chapter summary to the story task, so an engine switch re-lanes it (W1 F10)', () => {
+    expect(textTaskOf(job('llm.step', { type: 'chapter-summary', chapterId: 'ch_x', runId: 'er_x' }))).toBe('story');
+  });
 });
 
 describe('ScriptedEngine', () => {
@@ -127,7 +131,7 @@ describe('errors and abort helpers', () => {
 
   it('FAKE_RESPONSES covers the M2 and M4 request names', () => {
     expect(Object.keys(FAKE_RESPONSES).sort()).toEqual([
-      'appearance', 'episode.breakdown', 'episode.outline', 'episode.premise', 'episode.prompts', 'episode.scripts', 'panel-prompt', 'review',
+      'appearance', 'episode.breakdown', 'episode.outline', 'episode.premise', 'episode.prompts', 'episode.scripts', 'episode.summary', 'panel-prompt', 'review',
     ]);
   });
 });

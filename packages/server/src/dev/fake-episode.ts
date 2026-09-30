@@ -6,6 +6,7 @@ import {
 import type { JsonRequest } from '../engines/types.js';
 import {
   extractContext, type BreakdownContext, type OutlineContext, type PremiseContext, type PromptsContext, type ScriptsContext,
+  type SummaryContext,
 } from '../workflows/episode/context.js';
 
 /** The one new character every fake outline introduces, unless the manga already has her. */
@@ -93,5 +94,13 @@ export const EPISODE_FAKE_RESPONSES: Record<string, (req: JsonRequest<unknown>) 
           : `${p.characters.length > 0 ? '1girl' : 'no humans'}, upper body, waving, harbour street, evening`,
       })),
     };
+  },
+
+  /** W1 Q1: the chapter summary, in the book language. */
+  'episode.summary': (req): { summary: string } => {
+    const c = extractContext<SummaryContext>(req.prompt);
+    return c.language === 'uk'
+      ? { summary: `Розділ ${c.chapter.number}: ${c.chapter.title}. Айко знаходить кота під дощем і забирає його додому.` }
+      : { summary: `Chapter ${c.chapter.number}: ${c.chapter.title}. Aiko finds a cat in the rain and takes it home.` };
   },
 };

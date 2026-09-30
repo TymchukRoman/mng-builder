@@ -19,6 +19,7 @@ import { runLetteringStep } from './lettering.js';
 import { executeLlmStep, rawOutputError } from './llm.js';
 import { runRenderStep, type DriverDeps, type QueueLike } from './render.js';
 import { freshStep, freshSteps, monotonicIso, nowIso, patchStep, requireOutput } from './steps.js';
+import { writeChapterSummary } from './summary.js';
 import { validationSchema } from './validation.js';
 
 /** I1 (F1): an LLM step runs on the engine of its job's lane (`forLane`); `laneFor` picks that lane at enqueue time. */
@@ -298,6 +299,12 @@ export class EpisodeRunner {
     return { step: payload.step };
   }
 
+  /** The `llm.step {type:'chapter-summary'}` handler (W1 Q1). */
+  handleSummaryJob(ctx: JobContext, payload: LlmStepPayload): Promise<unknown> {
+    if (payload.type !== 'chapter-summary') throw new PermanentError(`not a chapter summary: ${payload.type}`);
+    return writeChapterSummary({ store: this.deps.store, bus: this.deps.bus, engines: this.deps.engines }, ctx, payload);
+  }
+
   stop(): void {
     this.stopped = true;
     this.lifetime.abort(new Error('episode runner stopped'));
@@ -341,12 +348,26 @@ export class EpisodeRunner {
   private accept(run: EpisodeRun, idx: number): void {
     if (EPISODE_STEPS[idx] === 'outline') this.createCharacters(run);
     if (idx >= EPISODE_STEPS.length - 1) {
-      this.save(this.get(run.id), { status: 'done' });
+      const done = this.save(this.get(run.id), { status: 'done' });
       this.setChapterStatus(run.chapterId, 'ready');
+      this.enqueueSummary(done);
       return;
     }
     this.save(this.get(run.id), { currentStep: idx + 1 });
     this.dispatch(run.id);
+  }
+
+  /**
+   * W1 Q1: the finished run's chapter summary, on the story task's lane. Nothing waits for it, so its failure never fails
+   * the run; a failure to queue it never fails the finished run either.
+   */
+  private enqueueSummary(run: EpisodeRun): void {
+    try {
+      const payload: LlmStepPayload = { type: 'chapter-summary', chapterId: run.chapterId, runId: run.id };
+      this.deps.queue.enqueue({ kind: 'llm.step', lane: this.deps.engines.laneFor('story'), payload, episodeRunId: run.id, maxAttempts: 2 });
+    } catch (err) {
+      console.error('[manga] episode runner: could not queue the chapter summary', err);
+    }
   }
 
   /** Outline acceptance (spec §8, F36): the new characters, plus portrait variants; autopilot picks the first at render time. */
