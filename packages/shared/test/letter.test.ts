@@ -1,6 +1,6 @@
 // packages/shared/test/letter.test.ts
 import { describe, expect, it } from 'vitest';
-import { autoLetter, estimateTextBoxMm, segmentsCross, wrapText, type ExistingFrame, type LetterFrame } from '../src/letter.js';
+import { autoLetter, estimateTextBoxMm, readsBefore, segmentsCross, wrapText, type ExistingFrame, type LetterFrame } from '../src/letter.js';
 import { PT_TO_MM } from '../src/sizes.js';
 import { DEFAULT_FONT_SIZE, FONT_FOR_KIND, NARRATION_PAD, TEXT_INSET } from '../src/fonts.js';
 import type { Rect } from '../src/layout/index.js';
@@ -65,18 +65,55 @@ describe('autoLetter', () => {
     expect(ltr[1]!.box.x).toBeGreaterThanOrEqual(ltr[0]!.box.x + ltr[0]!.box.w);
   });
 
-  it('uncrosses the tails of a far-side first speaker by swapping the two bubbles (M4 final S2)', () => {
+  const seg = (f: LetterFrame) => [{ x: f.box.x + f.box.w / 2, y: f.box.y + f.box.h / 2 }, f.tail!] as const;
+
+  it('uncrosses the tails of a far-side first speaker without reading the answer first: RTL (M4 final S2, residual N1)', () => {
     // RTL: Aiko (scripted left) speaks first, so §9.3 puts her bubble top-right and Ren's (scripted right) beside it:
-    // Aiko's tail would run across the panel through Ren's.
+    // Aiko's tail would run across the panel through Ren's. Ren's bubble drops to the row below instead.
     const [aiko, ren] = one(WIDE, script([speech('Where did you find it?', AIKO), speech('In the rain.', REN)]), 'rtl');
-    const seg = (f: LetterFrame) => [{ x: f.box.x + f.box.w / 2, y: f.box.y + f.box.h / 2 }, f.tail!] as const;
     expect(segmentsCross(...seg(aiko!), ...seg(ren!))).toBe(false);
-    expect(aiko!.box.x + aiko!.box.w / 2).toBeLessThan(ren!.box.x + ren!.box.w / 2); // each bubble on its speaker's side
+    // The question stays where §9.3 put it: top row, reading-start (right) side
+    expect(aiko!.box.x + aiko!.box.w).toBeCloseTo(WIDE.x + WIDE.w - IX, 9);
+    expect(aiko!.box.y).toBeCloseTo(WIDE.y + IY, 9);
+    // The answer reads after it: on a lower row, at that row's reading start
+    expect(ren!.box.y).toBeGreaterThanOrEqual(aiko!.box.y + aiko!.box.h);
+    expect(ren!.box.x + ren!.box.w).toBeCloseTo(WIDE.x + WIDE.w - IX, 9);
+    expect(readsBefore(aiko!.box, ren!.box, 'rtl')).toBe(true);
     expect(aiko!.tail!.x).toBeCloseTo(WIDE.x + WIDE.w * 0.2, 9); // tails still point at the speakers
     expect(ren!.tail!.x).toBeCloseTo(WIDE.x + WIDE.w * 0.8, 9);
-    expect([aiko!.order, ren!.order]).toEqual([0, 1]); // the frames keep the dialogue's order
+    expect([aiko!.order, ren!.order]).toEqual([0, 1]);
     expect(noOverlaps([aiko!, ren!])).toBe(true);
     for (const f of [aiko!, ren!]) expect(inside(f.box, WIDE)).toBe(true);
+  });
+
+  it('uncrosses the tails of a far-side first speaker without reading the answer first: LTR (residual N1)', () => {
+    // LTR mirror: Ren (scripted right) speaks first, so his bubble is top-left with a tail across to the right.
+    const [ren, aiko] = one(WIDE, script([speech('Where did you find it?', REN), speech('In the rain.', AIKO)]), 'ltr');
+    expect(segmentsCross(...seg(ren!), ...seg(aiko!))).toBe(false);
+    expect(ren!.box.x).toBeCloseTo(WIDE.x + IX, 9);
+    expect(ren!.box.y).toBeCloseTo(WIDE.y + IY, 9);
+    expect(aiko!.box.y).toBeGreaterThanOrEqual(ren!.box.y + ren!.box.h);
+    expect(aiko!.box.x).toBeCloseTo(WIDE.x + IX, 9);
+    expect(readsBefore(ren!.box, aiko!.box, 'ltr')).toBe(true);
+    expect(noOverlaps([ren!, aiko!])).toBe(true);
+    for (const f of [ren!, aiko!]) expect(inside(f.box, WIDE)).toBe(true);
+  });
+
+  it('leaves crossing tails alone when no layout keeps the reading order (residual N1)', () => {
+    // A panel one bubble high: there is no row below, and a swap would read the answer first.
+    const flat: Rect = { x: 0.1, y: 0.1, w: 0.8, h: 0.035 };
+    const [a, b] = one(flat, script([speech('Where?', AIKO), speech('Here.', REN)]), 'rtl');
+    expect(readsBefore(a!.box, b!.box, 'rtl')).toBe(true);
+    expect(a!.box.y).toBeCloseTo(b!.box.y, 9); // same row, question on the right: §9.3 placement kept
+    expect(segmentsCross(...seg(a!), ...seg(b!))).toBe(true); // the tails still cross: better than a wrong reading order
+  });
+
+  it('reads bubbles top row first, then from the reading side', () => {
+    const box = (x: number, y: number): Box => ({ x, y, w: 0.1, h: 0.05 });
+    expect(readsBefore(box(0.1, 0.1), box(0.5, 0.2), 'rtl')).toBe(true); // higher row wins
+    expect(readsBefore(box(0.5, 0.1), box(0.1, 0.1), 'rtl')).toBe(true); // same row: the right one first
+    expect(readsBefore(box(0.1, 0.1), box(0.5, 0.1), 'rtl')).toBe(false);
+    expect(readsBefore(box(0.1, 0.1), box(0.5, 0.1), 'ltr')).toBe(true);
   });
 
   it('detects crossing segments, not touching or parallel ones', () => {

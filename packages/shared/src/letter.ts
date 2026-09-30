@@ -152,13 +152,35 @@ function intoSlot(box: Box, slot: Box, area: Area, dir: ReadingDirection): Box {
 interface Placed { frame: LetterFrame; line: DialogueLine }
 
 /**
- * M4 final S2: spec §9.3 places the first speaker's bubble on the reading side, so a first speaker standing on the far
- * side gets a tail across the panel that crosses the next one's (live smoke: over a face). Within one panel, two new
- * bubbles whose tails cross swap slots and get their tails again, when that uncrosses them without crowding another
- * frame. Each line keeps its `order`, so the frames' reading sequence stays the dialogue's. Each pair swaps at most once.
+ * Whether bubble `p` is read before `q` (spec §9.3 reading order): a higher row first; on the same row (the boxes
+ * overlap vertically) the one nearer the reading start, the right for RTL and the left for LTR.
+ */
+export function readsBefore(p: Box, q: Box, dir: ReadingDirection): boolean {
+  if (p.y + p.h <= q.y + EPS) return true;
+  if (q.y + q.h <= p.y + EPS) return false;
+  return dir === 'rtl' ? p.x + p.w > q.x + q.w + EPS : p.x < q.x - EPS;
+}
+
+/** How many pairs of bubbles read against their dialogue order. */
+function inversions(boxes: Box[], dir: ReadingDirection): number {
+  let n = 0;
+  for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) if (!readsBefore(boxes[i]!, boxes[j]!, dir)) n++;
+  return n;
+}
+
+/**
+ * M4 final S2 (and residual N1): spec §9.3 places the first speaker's bubble on the reading side, so a first speaker
+ * standing on the far side gets a tail across the panel that crosses the next one's (live smoke: over a face). Within
+ * one panel, for two new bubbles whose tails cross, two layouts are tried:
+ * 1. a swap: the later bubble takes the earlier one's slot, the earlier one the next free slot;
+ * 2. a stagger: the earlier bubble stays; the later one moves down to the next free row below it.
+ * A layout is taken only when it uncrosses the two tails, crowds no other frame, keeps the earlier line reading first
+ * and adds no reading-order inversion among the panel's bubbles. Otherwise the tails stay as they are. Each line keeps
+ * its `order`. Each pair is handled at most once.
  */
 function uncrossTails(placed: Placed[], obstacles: Box[], panel: LetterPanel, area: Area, dir: ReadingDirection, gx: number, gy: number): void {
-  const swapped = new Set<string>();
+  const tried = new Set<string>();
+  const bubbles = (): Placed[] => placed.filter((p) => p.frame.tail !== null);
   for (let round = 0; round < placed.length * placed.length; round++) {
     let changed = false;
     for (let i = 0; i < placed.length && !changed; i++) {
@@ -167,21 +189,30 @@ function uncrossTails(placed: Placed[], obstacles: Box[], panel: LetterPanel, ar
         const b = placed[j]!;
         const sa = tailSegment(a.frame);
         const sb = tailSegment(b.frame);
-        if (!sa || !sb || swapped.has(`${i}:${j}`) || !segmentsCross(sa[0], sa[1], sb[0], sb[1])) continue;
-        swapped.add(`${i}:${j}`);
-        // The later bubble takes the earlier one's slot; the earlier one goes to the next free slot in reading order.
+        if (!sa || !sb || tried.has(`${i}:${j}`) || !segmentsCross(sa[0], sa[1], sb[0], sb[1])) continue;
+        tried.add(`${i}:${j}`);
         const others = [...obstacles, ...placed.filter((_, k) => k !== i && k !== j).map((p) => p.frame.box)];
-        const boxB = intoSlot(b.frame.box, a.frame.box, area, dir);
-        const boxA = placeBubble(a.frame.box.w, a.frame.box.h, area, dir, [...others, boxB], gx, gy);
-        if (tooClose(boxA, boxB, gx, gy) || others.some((o) => tooClose(boxA, o, gx, gy) || tooClose(boxB, o, gx, gy))) continue;
-        const tailA = tailTip(panel, a.line, boxA, area);
-        const tailB = tailTip(panel, b.line, boxB, area);
-        const na = tailSegment({ box: boxA, tail: tailA })!;
-        const nb = tailSegment({ box: boxB, tail: tailB })!;
-        if (segmentsCross(na[0], na[1], nb[0], nb[1])) continue;
-        a.frame = { ...a.frame, box: boxA, tail: tailA };
-        b.frame = { ...b.frame, box: boxB, tail: tailB };
-        changed = true;
+        const swapB = intoSlot(b.frame.box, a.frame.box, area, dir);
+        const swap = { boxA: placeBubble(a.frame.box.w, a.frame.box.h, area, dir, [...others, swapB], gx, gy), boxB: swapB };
+        const below = { ...area, top: Math.min(area.bottom, a.frame.box.y + a.frame.box.h + gy) };
+        const stagger = { boxA: a.frame.box, boxB: placeBubble(b.frame.box.w, b.frame.box.h, below, dir, [...others, a.frame.box], gx, gy) };
+        const before = inversions(bubbles().map((p) => p.frame.box), dir);
+        for (const { boxA, boxB } of [swap, stagger]) {
+          if (![boxA, boxB].every((x) => x.y >= area.top - EPS && x.y + x.h <= area.bottom + EPS)) continue; // no room left
+          if (tooClose(boxA, boxB, gx, gy) || others.some((o) => tooClose(boxA, o, gx, gy) || tooClose(boxB, o, gx, gy))) continue;
+          if (!readsBefore(boxA, boxB, dir)) continue;
+          const tailA = tailTip(panel, a.line, boxA, area);
+          const tailB = tailTip(panel, b.line, boxB, area);
+          const na = tailSegment({ box: boxA, tail: tailA })!;
+          const nb = tailSegment({ box: boxB, tail: tailB })!;
+          if (segmentsCross(na[0], na[1], nb[0], nb[1])) continue;
+          const after = inversions(bubbles().map((p) => (p === a ? boxA : p === b ? boxB : p.frame.box)), dir);
+          if (after > before) continue;
+          a.frame = { ...a.frame, box: boxA, tail: tailA };
+          b.frame = { ...b.frame, box: boxB, tail: tailB };
+          changed = true;
+          break;
+        }
       }
     }
     if (!changed) return;
