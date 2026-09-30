@@ -173,7 +173,7 @@ export function EpisodePanel({ chapterId }: { chapterId: string }): JSX.Element 
             <div className="episode__tools">
               <IconButton icon={RotateCcw} size="sm" label={rerunLabel(run, selected)} disabled={!actions.rerun || busy} busy={busyOn('rerun')}
                 onClick={() => act.mutate(rerun(selected, false))} />
-              <IconButton icon={Braces} size="sm" label={current.raw === null ? 'Edit as JSON' : 'Edit as form'} active={current.raw !== null}
+              <IconButton icon={Braces} size="sm" label="Edit as JSON" active={current.raw !== null}
                 disabled={!actions.edit} onClick={onToggleRaw} />
               <IconButton icon={Save} size="sm" tone="primary" label="Save changes" disabled={!dirty.has(selected) || busy} busy={busyOn('save')}
                 onClick={() => act.mutate({ kind: 'save', step: selected, call: () => save(selected) })} />

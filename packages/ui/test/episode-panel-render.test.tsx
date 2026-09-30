@@ -58,6 +58,9 @@ describe('episode panel', () => {
       expect(html).toContain(`data-tip="${label.replace(/\\/g, '')}"`);
     }
     expect(enabled(html, 'Save changes')).toBe(false); // nothing edited yet
+    // M4 final M11: a toggle with a constant name; its state is aria-pressed, never a flipped label.
+    expect(button(html, 'Edit as JSON')).toContain('aria-pressed="false"');
+    expect(html).not.toContain('Edit as form');
     expect(html).toContain('aria-label="title"');
     expect(html).toContain('>Night market</textarea>');
     // A tablist owns its tabs directly, and the panel is labelled by the selected tab.
