@@ -2,7 +2,7 @@ import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
 import type { Job, Page } from '@manga/shared';
 import { JobWaiters, applyServerEvent, eventsUrl, nextBackoff, parseEvent, upsertJob } from '../src/events';
-import { qk } from '../src/queryKeys';
+import { fetchableId, qk } from '../src/queryKeys';
 import { makeDetail, makeJob, makeManga } from './fixtures';
 
 describe('socket helpers', () => {
@@ -65,6 +65,7 @@ describe('applyServerEvent', () => {
     onJobFailed: vi.fn(),
     reported: new Set<string>(),
     helloSeen: { value: false },
+    deletedIds: new Set<string>(),
   });
 
   it('upserts jobs into the jobs cache and reports failures once', () => {
@@ -117,6 +118,24 @@ describe('applyServerEvent', () => {
     // The page leaves the chapter's list at once, so the editor moves on before anything refetches it (then the list is refetched).
     expect(qc.getQueryData<Page[]>(qk.pages('ch_1'))?.map((p) => p.id)).toEqual(['pg_2']);
     expect(qc.getQueryState(qk.pages('ch_1'))?.isInvalidated).toBe(true);
+  });
+  it('a deleted panel or page can no longer fetch, even if a view still shows it (residual N2)', () => {
+    const qc = new QueryClient();
+    const deleted = new Set<string>();
+    expect(fetchableId('pn_a', deleted)).toBe(true);
+    applyServerEvent(qc, { type: 'entity', entity: 'panel', id: 'pn_a', op: 'deleted', mangaId: 'mg_1' }, { ...deps(), deletedIds: deleted });
+    applyServerEvent(qc, { type: 'entity', entity: 'page', id: 'pg_1', op: 'deleted', mangaId: 'mg_1' }, { ...deps(), deletedIds: deleted });
+    applyServerEvent(qc, { type: 'entity', entity: 'panel', id: 'pn_b', op: 'updated', mangaId: 'mg_1' }, { ...deps(), deletedIds: deleted });
+    expect(fetchableId('pn_a', deleted)).toBe(false);
+    expect(fetchableId('pg_1', deleted)).toBe(false);
+    expect(fetchableId('pn_b', deleted)).toBe(true);
+    expect(fetchableId(null, deleted)).toBe(false);
+    // A re-created observer (the inspector re-rendering between `panel deleted` and `page deleted`) stays idle
+    const fetch = vi.fn(async () => []);
+    const observer = new QueryObserver(qc, { queryKey: qk.panelImages('pn_a'), queryFn: fetch, enabled: fetchableId('pn_a', deleted) });
+    const stop = observer.subscribe(() => undefined);
+    expect(fetch).not.toHaveBeenCalled();
+    stop();
   });
   // preflight F5c: the first `hello` of a session must not trigger a full resync (everything was
   // just fetched); only a later `hello` (a reconnect) should.

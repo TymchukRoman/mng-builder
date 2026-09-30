@@ -3,7 +3,7 @@ import type {
   AppConfig, Chapter, Character, EpisodeRun, Image, Job, Manga, Page, PageDetail, PresetInfo, RecipeInfo, ServiceStatus, Settings, StylePreset,
 } from '@manga/shared';
 import { api, seg } from './api';
-import { qk } from './queryKeys';
+import { fetchableId, qk } from './queryKeys';
 
 export const useMangas = () => useQuery({ queryKey: qk.mangas(), queryFn: () => api.get<Manga[]>('/api/mangas') });
 export const useManga = (id: string | undefined) =>
@@ -21,9 +21,9 @@ export const useChapter = (id: string | undefined) =>
 export const usePages = (chapterId: string | undefined) =>
   useQuery({ queryKey: qk.pages(chapterId ?? ''), queryFn: () => api.get<Page[]>(`/api/chapters/${seg(chapterId)}/pages`), enabled: !!chapterId });
 export const usePageDetail = (id: string | null | undefined) =>
-  useQuery({ queryKey: qk.page(id ?? ''), queryFn: () => api.get<PageDetail>(`/api/pages/${seg(id)}`), enabled: !!id });
+  useQuery({ queryKey: qk.page(id ?? ''), queryFn: () => api.get<PageDetail>(`/api/pages/${seg(id)}`), enabled: fetchableId(id) });
 export const usePanelImages = (panelId: string | null) =>
-  useQuery({ queryKey: qk.panelImages(panelId ?? ''), queryFn: () => api.get<Image[]>(`/api/panels/${seg(panelId)}/images`), enabled: !!panelId });
+  useQuery({ queryKey: qk.panelImages(panelId ?? ''), queryFn: () => api.get<Image[]>(`/api/panels/${seg(panelId)}/images`), enabled: fetchableId(panelId) });
 /** The chapter's latest episode run, or null. No polling: every `episodeRun` event invalidates `['episode']` (events.ts). */
 export const useEpisode = (chapterId: string | undefined) =>
   useQuery({ queryKey: qk.episode(chapterId ?? ''), queryFn: () => api.get<EpisodeRun | null>(`/api/chapters/${seg(chapterId)}/episode`), enabled: !!chapterId });

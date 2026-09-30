@@ -3,7 +3,7 @@ import { useQueryClient, type QueryClient, type QueryKey } from '@tanstack/react
 import type { Job, Page, ServerEvent } from '@manga/shared';
 import { api, seg } from './api';
 import { createStore, useStore } from './lib/store';
-import { cacheLookup, keysForEntity, qk, type EntityEvent } from './queryKeys';
+import { cacheLookup, deletedIds, keysForEntity, qk, type EntityEvent } from './queryKeys';
 import { TERMINAL, errorHeadline, kindLabel } from './jobs/jobView';
 import { pushToast } from './ui/toasts';
 
@@ -89,6 +89,8 @@ export interface EventDeps {
   onJobFailed(job: Job): void;
   /** Ids of failed jobs already reported, so a repeated event does not toast twice. */
   reported: Set<string>;
+  /** Residual N2: where deleted page and panel ids go (default: the shared `deletedIds` their queries check). */
+  deletedIds?: Set<string>;
   /**
    * Controller ruling F5: `hello` is sent on every connect AND reconnect. A full invalidation on
    * the very first `hello` of a session is wasted work (everything was just fetched fresh), so we
@@ -151,6 +153,8 @@ export function applyServerEvent(qc: QueryClient, e: ServerEvent, deps: EventDep
       // `page deleted` in a page, chapter or episode cascade), which refreshes or removes the page detail. Invalidating the
       // page here would refetch, once per panel, a page that the cascade is deleting (404s). Task 18 review finding 10.
       const keys = e.entity === 'panel' && e.op === 'deleted' ? [qk.panelImages(e.id)] : keysForEntity(e, cacheLookup(qc));
+      // Residual N2: first mark a deleted page or panel, so a still-mounted view cannot re-create its dropped query (404).
+      if ((e.entity === 'panel' || e.entity === 'page') && e.op === 'deleted') (deps.deletedIds ?? deletedIds).add(e.id);
       if (e.op === 'deleted') {
         // F5: drop the deleted entity's own detail query outright (invalidating it would just
         // trigger a 404 refetch for whatever still has it mounted), then invalidate its lists.

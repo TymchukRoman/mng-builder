@@ -133,8 +133,16 @@ export function ChapterEditor({ manga, mode, chapterId, pageIds, title, backTo, 
       });
     } catch (err) { pushToast('error', errorText(err)); }
   };
-  /** For the aside (the episode stepper): a change there that deletes pages must not leave undo naming them (F33). */
-  const asideBarrier = useCallback<Barrier>((fn) => { flushNudge(); return history.barrier(fn); }, [history, flushNudge]);
+  /**
+   * For the aside (the episode stepper): a change there that deletes pages must not leave undo naming them (F33). It
+   * also drops the selection first (residual N2): an inspector left on a panel the change deletes would refetch that
+   * panel's images (on any image event) while the delete is in flight, and get a 404.
+   */
+  const asideBarrier = useCallback<Barrier>((fn) => {
+    flushNudge();
+    setSelection(PAGE_SELECTION);
+    return history.barrier(fn);
+  }, [history, flushNudge]);
   const panelId = selectedPanelId(selection);
   const selectedFrame = d && selection.kind === 'frame' ? d.frames.find((f) => f.id === selection.frameId) : undefined;
 

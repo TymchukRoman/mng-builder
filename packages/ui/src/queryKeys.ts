@@ -24,6 +24,19 @@ export const qk = {
 
 export type EntityEvent = Extract<ServerEvent, { type: 'entity' }>;
 
+/**
+ * M4 final residual N2: pages and panels the server reported deleted in this session (events.ts records them before it
+ * drops their queries). A cascade emits `panel deleted` before its `page deleted`, so an inspector still showing the
+ * panel, or an editor rendered with a stale page list, re-renders in between; without this guard it re-created the
+ * dropped query and fetched a 404. Ids are never reused, so a deleted id stays unfetchable.
+ */
+export const deletedIds = new Set<string>();
+
+/** Whether an entity's query may fetch: there is an id, and the server has not deleted it. */
+export function fetchableId(id: string | null | undefined, deleted: ReadonlySet<string> = deletedIds): boolean {
+  return !!id && !deleted.has(id);
+}
+
 export interface OwnerLookup {
   pageOfPanel(panelId: string): string | null;
   pageOfFrame(frameId: string): string | null;
