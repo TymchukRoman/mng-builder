@@ -9,6 +9,13 @@ test('a chapter generated in autopilot from the create modal exports as one PDF'
   const manga = (await (await request.post('/api/mangas', { data: { title: `E2E Episode ${Date.now()}` } })).json()) as { id: string };
   await request.post(`/api/mangas/${manga.id}/characters`, { data: { name: 'Aiko', appearanceTags: '1girl, short black hair' } });
 
+  // W1 Task 4: the API previews page 1 by default; this run goes straight through (Task 10 replaces this with the UI toggle).
+  await page.route(/\/api\/chapters\/ch_[a-z2-7]+\/episode$/, async (route) => {
+    const body = route.request().postDataJSON() as { input: Record<string, unknown> } | null;
+    if (route.request().method() !== 'POST' || body === null) return route.continue();
+    return route.continue({ postData: JSON.stringify({ ...body, input: { ...body.input, previewFirst: false } }) });
+  });
+
   // Create the chapter with the AI section in autopilot
   await page.goto(`/m/${manga.id}`);
   await page.getByRole('button', { name: 'New chapter' }).click();
