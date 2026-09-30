@@ -95,6 +95,21 @@ describe('scriptsSchemaFor', () => {
   });
 });
 
+describe('scriptsSchemaFor with a pageOffset (a chunk of the chapter)', () => {
+  const chunk = scriptsSchemaFor({ panelCounts: [2, 1], knownNames: ['Aiko'], pageOffset: 4 });
+
+  it('names absolute page numbers in its messages', () => {
+    const r = chunk.safeParse({ pages: [{ panels: [panel(), panel()] }, { panels: [panel(), panel()] }] });
+    expect(issuesOf(r)).toEqual(['pages.1.panels: page 6 needs exactly 1 panels (from the breakdown), got 2']);
+    expect(issuesOf(chunk.safeParse({ pages: [{ panels: [panel(), panel()] }] })))
+      .toEqual(['pages: expected exactly 2 pages (pages 5–6 of the breakdown), got 1']);
+  });
+
+  it('accepts a chunk that matches its slice of the breakdown', () => {
+    expect(chunk.safeParse({ pages: [{ panels: [panel(), panel()] }, { panels: [panel()] }] }).success).toBe(true);
+  });
+});
+
 describe('promptsSchemaFor', () => {
   const schema = promptsSchemaFor({ panelIds: ['pn_a', 'pn_b'] });
 

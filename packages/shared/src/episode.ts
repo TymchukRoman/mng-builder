@@ -95,19 +95,27 @@ export const PanelScriptDraftSchema = z.object({
 export type PanelScriptDraft = z.infer<typeof PanelScriptDraftSchema>;
 export const ScriptsOutputSchema = z.object({ pages: z.array(z.object({ panels: z.array(PanelScriptDraftSchema).min(1) })).min(1) });
 export type ScriptsOutput = z.infer<typeof ScriptsOutputSchema>;
-export interface ScriptsRules { panelCounts: number[]; knownNames: string[] }
+export interface ScriptsRules {
+  panelCounts: number[];
+  knownNames: string[];
+  /** For a chunk of the chapter (scripts run in page chunks): pages before it, so messages name absolute page numbers. */
+  pageOffset?: number;
+}
 
 export function scriptsSchemaFor(rules: ScriptsRules): z.ZodType<ScriptsOutput> {
   const known = (name: string): boolean => rules.knownNames.some((k) => sameName(k, name));
   const valid = rules.knownNames.join(', ') || '(none — this manga has no characters, so use no characters and null speakers)';
   return ScriptsOutputSchema.superRefine((value, ctx) => {
-    if (value.pages.length !== rules.panelCounts.length) {
-      ctx.addIssue({ code: 'custom', path: ['pages'], message: `expected exactly ${rules.panelCounts.length} pages (from the breakdown), got ${value.pages.length}` });
+    const offset = rules.pageOffset ?? 0;
+    const want = rules.panelCounts.length;
+    if (value.pages.length !== want) {
+      const source = offset === 0 ? 'from the breakdown' : `pages ${offset + 1}–${offset + want} of the breakdown`;
+      ctx.addIssue({ code: 'custom', path: ['pages'], message: `expected exactly ${want} pages (${source}), got ${value.pages.length}` });
     }
     value.pages.forEach((page, i) => {
-      const want = rules.panelCounts[i];
-      if (want !== undefined && page.panels.length !== want) {
-        ctx.addIssue({ code: 'custom', path: ['pages', i, 'panels'], message: `page ${i + 1} needs exactly ${want} panels (from the breakdown), got ${page.panels.length}` });
+      const panels = rules.panelCounts[i];
+      if (panels !== undefined && page.panels.length !== panels) {
+        ctx.addIssue({ code: 'custom', path: ['pages', i, 'panels'], message: `page ${offset + i + 1} needs exactly ${panels} panels (from the breakdown), got ${page.panels.length}` });
       }
       page.panels.forEach((p, j) => {
         p.characters.forEach((c, k) => {
