@@ -1,4 +1,6 @@
 // packages/server/test/episode-effects.test.ts
+import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readingOrder, type ScriptsOutput, type ServerEvent } from '@manga/shared';
 import { createCoverPage, createPage } from '../src/domain/pages.js';
@@ -109,14 +111,37 @@ describe('materializeScripts', () => {
     ]);
   });
 
-  it('reuses an existing chapter cover and reports it as updated (F30)', () => {
-    const { chapter, manga } = world();
+  it('reuses an existing chapter cover and reports its rewritten panel as updated (F30, G5)', () => {
+    const { chapter, manga, aiko } = world();
     const existing = createCoverPage(lib.store, manga.id, chapter.id);
+    const coverPanel = existing.panels[0]!;
     const bd = breakdown(1);
     const { coverPageId } = materializeScripts({ store: lib.store, bus }, chapter.id, { breakdown: bd, scripts: scripts(bd, 'Aiko'), premise: PREMISE });
     expect(coverPageId).toBe(existing.page.id);
-    expect(lib.store.panels.require(existing.panels[0]!.id).script.background).toBe(PREMISE.setting);
-    expect(entityEvents()).toEqual(['page:created', 'page:updated']);
+    const cover = lib.store.panels.require(coverPanel.id);
+    expect(cover.script).toMatchObject({ background: PREMISE.setting, characters: [{ characterId: aiko.id, position: 'center' }] });
+    expect(cover.refCharacterIds).toEqual([aiko.id]);
+    // The cover page row is unchanged; its panel's script and refs are (G5: one event per changed row).
+    expect(events.flatMap((e) => (e.type === 'entity' ? [`${e.entity}:${e.op}:${e.id}`] : [])).slice(-1)).toEqual([`panel:updated:${coverPanel.id}`]);
+    expect(entityEvents()).toEqual(['page:created', 'panel:updated']);
+  });
+
+  it('creates a fresh cover when the chapter cover id dangles', () => {
+    const { chapter } = world();
+    // Foreign keys (ON DELETE SET NULL) keep this from happening through the store; a raw connection with them off can.
+    const raw = new Database(join(lib.dir, 'library.sqlite'));
+    try {
+      raw.pragma('foreign_keys = OFF');
+      raw.prepare('UPDATE chapters SET cover_page_id = ? WHERE id = ?').run('pg_gone0000001', chapter.id);
+    } finally {
+      raw.close();
+    }
+    expect(lib.store.chapters.require(chapter.id).coverPageId).toBe('pg_gone0000001');
+    const bd = breakdown(1);
+    const { coverPageId } = materializeScripts({ store: lib.store, bus }, chapter.id, { breakdown: bd, scripts: scripts(bd, 'Aiko'), premise: PREMISE });
+    expect(coverPageId).not.toBe('pg_gone0000001');
+    expect(lib.store.chapters.require(chapter.id).coverPageId).toBe(coverPageId);
+    expect(entityEvents()).toEqual(['page:created', 'page:created', 'chapter:updated']);
   });
 
   it('refuses a chapter that already has story pages', () => {
@@ -146,6 +171,17 @@ describe('materializeScripts', () => {
     expect(() => materializeScripts({ store: lib.store, bus }, chapter.id, { breakdown: bd, scripts: scripts(bd, 'Nobody'), premise: PREMISE }))
       .toThrow(ValidationError);
     expect(storyPages(lib.store, chapter.id)).toHaveLength(0);
+    expect(lib.store.chapters.require(chapter.id).coverPageId).toBeNull();
+    expect(entityEvents()).toEqual([]);
+  });
+
+  it('refuses scripts whose page count differs from the breakdown (M4)', () => {
+    const { chapter } = world();
+    const bd = breakdown(1);
+    expect(() => materializeScripts({ store: lib.store, bus }, chapter.id, { breakdown: bd, scripts: scripts(breakdown(2), 'Aiko'), premise: PREMISE }))
+      .toThrow('the breakdown has 1 pages but the scripts have 2');
+    expect(storyPages(lib.store, chapter.id)).toHaveLength(0);
+    expect(entityEvents()).toEqual([]);
   });
 });
 
@@ -167,6 +203,7 @@ describe('edits after materialization', () => {
 });
 
 describe('applyPrompts', () => {
+  const LLM = { source: 'llm' } as const;
   function materialized(opts: { duo?: boolean } = {}) {
     const w = world();
     const bd = breakdown(1);
@@ -190,7 +227,7 @@ describe('applyPrompts', () => {
         { panelId: a.id, scene: 'from below, cowboy shot, 1girl, rain, speech bubble', negative: undefined },
         { panelId: b.id, scene: 'no humans, pier', negative: 'people' },
       ],
-    });
+    }, LLM);
     // Both panels are medium/eye with one cast member (oneChar → a tags recipe): "upper body" goes first.
     expect(lib.store.panels.require(a.id).prompt).toEqual({ scene: 'upper body, 1girl, rain', negative: '' });
     expect(lib.store.panels.require(b.id).prompt).toEqual({ scene: 'upper body, no humans, pier', negative: 'people' });
@@ -204,7 +241,7 @@ describe('applyPrompts', () => {
         { panelId: a.id, scene: '1girl, rain', negative: undefined },
         { panelId: cover.id, scene: 'Close-up. Aiko and Mika stand on the pier at dusk.', negative: undefined },
       ],
-    });
+    }, LLM);
     expect(lib.store.panels.require(a.id).prompt.scene).toBe('upper body, 1girl, rain');
     expect(lib.store.panels.require(cover.id).prompt.scene).toBe('Medium shot from a low angle. Aiko and Mika stand on the pier at dusk.');
   });
@@ -216,17 +253,31 @@ describe('applyPrompts', () => {
         { panelId: a.id, scene: '1girl, red umbrella, golden light, blue-green sea, orange, white dress, grey sky, silver hair, black cat', negative: undefined },
         { panelId: cover.id, scene: 'An orange sky glows above a red-haired girl in a crimson coat and a black scarf.', negative: undefined },
       ],
-    });
+    }, LLM);
     expect(lib.store.panels.require(a.id).prompt.scene)
       .toBe('upper body, 1girl, umbrella, light, sea, white dress, grey sky, silver hair, black cat');
     expect(lib.store.panels.require(cover.id).prompt.scene)
       .toBe('Medium shot from a low angle. A sky glows above a girl in a coat and a black scarf.');
   });
 
+  it('never strips a character whose name is a colour word (M1)', () => {
+    const { chapter, manga, a, b } = materialized();
+    seedCharacter(lib.store, manga.id, 'Amber');
+    applyPrompts({ store: lib.store, bus }, chapter.id, {
+      panels: [
+        { panelId: a.id, scene: '1girl, amber, amber lamp', negative: undefined },
+        { panelId: b.id, scene: 'Amber holds an amber lamp', negative: undefined },
+      ],
+    }, LLM);
+    // The name is masked as a whole word, case-insensitively: a colour word that is a character's name always stays.
+    expect(lib.store.panels.require(a.id).prompt.scene).toBe('upper body, 1girl, amber, amber lamp');
+    expect(lib.store.panels.require(b.id).prompt.scene).toBe('upper body, Amber holds an amber lamp');
+  });
+
   it('keeps colour words in a colour manga', () => {
     const { chapter, manga, a } = materialized();
     lib.store.mangas.update(manga.id, { colorMode: 'color' });
-    applyPrompts({ store: lib.store, bus }, chapter.id, { panels: [{ panelId: a.id, scene: '1girl, red umbrella', negative: undefined }] });
+    applyPrompts({ store: lib.store, bus }, chapter.id, { panels: [{ panelId: a.id, scene: '1girl, red umbrella', negative: undefined }] }, LLM);
     expect(lib.store.panels.require(a.id).prompt.scene).toBe('upper body, 1girl, red umbrella');
   });
 
@@ -234,7 +285,7 @@ describe('applyPrompts', () => {
     const { chapter, a, b } = materialized();
     const run = () => applyPrompts({ store: lib.store, bus }, chapter.id, {
       panels: [{ panelId: a.id, scene: '1girl, rain', negative: undefined }, { panelId: b.id, scene: 'red, golden, cowboy shot', negative: undefined }],
-    });
+    }, LLM);
     expect(run).toThrow(InvalidOutputError);
     expect(run).toThrow(`prompts: the AI wrote no usable scene for panel ${b.id}`);
     expect(lib.store.panels.require(a.id).prompt.scene).toBe('');

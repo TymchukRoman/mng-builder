@@ -69,10 +69,12 @@ function leadingCharacters(scripts: ScriptsOutput, characters: Character[]): str
  * The chapter cover (M1's createCoverPage reuses an existing one). Task 4 review M1: the leads are both the script
  * cast and the refCharacterIds, so the prompts step and image generation know who is on it and get their refs.
  */
-function prepareCover(store: Store, chapter: Chapter, manga: Manga, premise: PremiseOutput, scripts: ScriptsOutput, characters: Character[]): string {
+function prepareCover(
+  store: Store, chapter: Chapter, manga: Manga, premise: PremiseOutput, scripts: ScriptsOutput, characters: Character[],
+): { pageId: string; panelId: string | null } {
   const detail = createCoverPage(store, manga.id, chapter.id);
   const panel = detail.panels[0];
-  if (!panel) return detail.page.id;
+  if (!panel) return { pageId: detail.page.id, panelId: null };
   const leads = leadingCharacters(scripts, characters);
   const positions: Position[] = leads.length === 1 ? ['center'] : ['left', 'right'];
   store.panels.update(panel.id, {
@@ -83,7 +85,7 @@ function prepareCover(store: Store, chapter: Chapter, manga: Manga, premise: Pre
     },
     refCharacterIds: leads,
   });
-  return detail.page.id;
+  return { pageId: detail.page.id, panelId: panel.id };
 }
 
 /** Step 4 (spec §8): "Materializes Pages and Panels" — all or nothing. */
@@ -94,6 +96,11 @@ export function materializeScripts(
   const manga = store.mangas.require(chapter.mangaId);
   if (storyPages(store, chapterId).length > 0) {
     throw new ConflictError('the chapter already has pages; re-run the scripts step with confirm to replace them');
+  }
+  // Review M4: Task 4's scriptsSchemaFor already checks this for the step's answer; materialization checks it again
+  // itself, because it would otherwise ignore extra script pages silently.
+  if (input.scripts.pages.length !== input.breakdown.pages.length) {
+    throw new ValidationError(`the breakdown has ${input.breakdown.pages.length} pages but the scripts have ${input.scripts.pages.length}`);
   }
   const hadCover = chapter.coverPageId !== null && store.pages.get(chapter.coverPageId) !== null;
   const characters = store.characters.listByManga(manga.id);
@@ -108,18 +115,19 @@ export function materializeScripts(
       slots.forEach((panelId, j) => { store.panels.update(panelId, draftToScript(drafts[j]!, characters)); });
       return detail.page.id;
     });
-    return { pageIds, coverPageId: prepareCover(store, chapter, manga, input.premise, input.scripts, characters) };
+    return { pageIds, cover: prepareCover(store, chapter, manga, input.premise, input.scripts, characters) };
   });
   // A new page's `created` covers its fresh panels (M1: POST /api/chapters/:id/pages emits only the page).
   for (const id of result.pageIds) emitEntity(bus, 'page', id, 'created', manga.id);
-  // F30: as POST /api/chapters/:id/cover does — a new cover is created and set on the chapter; an old one is updated.
-  if (hadCover) {
-    emitEntity(bus, 'page', result.coverPageId, 'updated', manga.id);
-  } else {
-    emitEntity(bus, 'page', result.coverPageId, 'created', manga.id);
+  // F30: a new cover is created and set on the chapter, as POST /api/chapters/:id/cover does. An existing cover's page
+  // row is untouched; only its panel's script and refs change, so that panel is the one updated (G5, review I1).
+  if (!hadCover) {
+    emitEntity(bus, 'page', result.cover.pageId, 'created', manga.id);
     emitEntity(bus, 'chapter', chapter.id, 'updated', manga.id);
+  } else if (result.cover.panelId !== null) {
+    emitEntity(bus, 'panel', result.cover.panelId, 'updated', manga.id);
   }
-  return result;
+  return { pageIds: result.pageIds, coverPageId: result.cover.pageId };
 }
 
 /** A user edit of the scripts output after materialization: rewrite the panel scripts in place. */
@@ -146,7 +154,7 @@ export function applyScripts({ store, bus }: EffectDeps, chapterId: string, scri
 }
 
 /**
- * Where a prompts output comes from. `llm` (the step's own answer) is finished like M2's panel-prompt (F2): sanitised,
+ * Where a prompts output comes from (required, review M3, so every caller decides). `llm` (the step's own answer) is finished like M2's panel-prompt (F2): sanitised,
  * the model's framing replaced by the script's camera wording, chromatic colours dropped for a B&W book, and an
  * unusable scene fails naming the panel. `user` (an edit of the output) is stored verbatim.
  */
@@ -154,11 +162,12 @@ export interface ApplyPromptsOptions { source: 'llm' | 'user' }
 
 /** Step 5 → panel.prompt (and user edits of it). */
 export function applyPrompts(
-  { store, bus }: EffectDeps, chapterId: string, prompts: PromptsOutput, { source }: ApplyPromptsOptions = { source: 'llm' },
+  { store, bus }: EffectDeps, chapterId: string, prompts: PromptsOutput, { source }: ApplyPromptsOptions,
 ): void {
   const chapter = store.chapters.require(chapterId);
   const manga = store.mangas.require(chapter.mangaId);
   const settings = store.settings.get();
+  const names = store.characters.listByManga(manga.id).map((c) => c.name); // never strip "Amber" or "Violet" (review M1)
   const panels = new Map(chapterPanels(store, chapterId, manga.readingDirection).map((e) => [e.panel.id, e.panel]));
   store.tx(() => {
     for (const p of prompts.panels) {
@@ -167,7 +176,7 @@ export function applyPrompts(
       let scene = p.scene;
       if (source === 'llm') {
         const { style } = panelStyle(store, settings, manga, panel);
-        const raw = manga.colorMode === 'bw' ? stripColourWords(p.scene) : p.scene;
+        const raw = manga.colorMode === 'bw' ? stripColourWords(p.scene, names) : p.scene;
         const finished = finishScene(style, panel.script.shot, panel.script.angle, raw);
         if (finished === null) throw new InvalidOutputError(`prompts: the AI wrote no usable scene for panel ${p.panelId}`, p.scene);
         scene = finished;
