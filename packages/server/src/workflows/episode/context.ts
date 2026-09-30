@@ -51,8 +51,9 @@ const ASSUMED_PORTRAIT = 'assumed-portrait';
 /**
  * F3: the style of the recipe the panel will route to at render time. Every cast member (the panel's
  * refCharacterIds) is assumed to have a portrait by then, so routing already counts them as references.
+ * The prompts context and the prompts effect (finishScene, F2) both use it, so the two always agree.
  */
-function panelStyle(store: Store, settings: Settings, manga: Manga, panel: Panel): Pick<PromptsPanelBrief, 'style' | 'pictures'> {
+export function panelStyle(store: Store, settings: Settings, manga: Manga, panel: Panel): Pick<PromptsPanelBrief, 'style' | 'pictures'> {
   const characters = panelCharacters(store, panel, manga.id); // exactly what panelContext counts at render time (I1)
   const cast = panel.refCharacterIds
     .map((id) => characters.find((c) => c.id === id))
