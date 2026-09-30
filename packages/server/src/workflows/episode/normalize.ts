@@ -189,7 +189,12 @@ function englishScenes(value: unknown): unknown {
   };
 }
 
-/** Prompts: only the offered panels, the first entry per panel, and a scene from the script for every panel left without one. */
+/**
+ * Prompts: only the offered panels, the first entry per panel, and a scene from the script for every panel left without one.
+ * W1 F19 (accepted): a cut-off answer that `repairJson` (R3) mended by dropping its last, half-written entry lands here too.
+ * That panel then gets its scene from its script, with no correction round and only the console warning in llm.ts. Nothing
+ * is invented (the script is the user's story), but the model's own scene for that panel is lost without a visible error.
+ */
 function fitPrompts(value: unknown, offered: readonly PromptsPanelBrief[]): NormalizedAnswer {
   if (!isRecord(value) || !Array.isArray(value['panels'])) return { value, filled: [] };
   const byId = new Map(offered.map((p) => [p.panelId, p]));
