@@ -8,3 +8,4 @@ export * from './sizes.js';
 export * from './styles.js';
 export * from './fonts.js';
 export * from './jobs.js';
+export * from './episode.js';
