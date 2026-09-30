@@ -837,3 +837,58 @@ describe("EpisodeRunner — an adaptation's cast (Roman's Naruto run)", () => {
     expect(runner.get(run.id).steps[3]!.output).toEqual(before);
   });
 });
+
+describe('EpisodeRunner — shape slips of a local model (Roman\'s qwen3 prompts answer)', () => {
+  /** The fake prompts answer, reshaped by `edit` per request (one request per page, the cover last). */
+  const promptsWith = (edit: (answer: { panels: Array<Record<string, unknown>> }, call: number) => unknown): ScriptedResponse => {
+    let call = 0;
+    return (req) => edit(structuredClone(EPISODE_FAKE_RESPONSES['episode.prompts']!(req)) as { panels: Array<Record<string, unknown>> }, call++);
+  };
+  /** Runs a review run past scripts: prompts run, then render stops at its review point. */
+  async function throughPrompts(responses: Record<string, ScriptedResponse>) {
+    const w = world();
+    const { runner, queue } = rig({ responses });
+    const run = runner.start(w.chapter.id, w.input, 'review');
+    await queue.idle();
+    runner.approve(run.id);
+    await queue.idle();
+    runner.approve(run.id);
+    await queue.idle();
+    return { ...w, runner, run };
+  }
+
+  it('a prompts answer whose "negative" is an object completes, with the object read as text', async () => {
+    const { runner, run, chapter, manga } = await throughPrompts({
+      'episode.prompts': promptsWith((a) => ({ panels: a.panels.map((p) => ({ ...p, negative: { 'extra people': 'extra people' } })) })),
+    });
+    expect(runner.get(run.id).steps[4]).toMatchObject({ status: 'done', error: null });
+    const panels = chapterPanels(lib.store, chapter.id, manga.readingDirection);
+    expect(panels.map((e) => lib.store.panels.require(e.panel.id).prompt.negative)).toEqual(panels.map(() => 'extra people'));
+  });
+
+  it('a prompts answer that skips a panel and invents another completes: the skipped panel is written from its script', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { runner, run, chapter, manga } = await throughPrompts({
+      'episode.prompts': promptsWith((a, call) => (call === 0
+        ? { panels: [...a.panels.slice(1), { panelId: 'pn_invented', scene: 'a ghost panel' }] }
+        : a)),
+    });
+    expect(runner.get(run.id).steps[4]).toMatchObject({ status: 'done', error: null });
+    const [first] = chapterPanels(lib.store, chapter.id, manga.readingDirection);
+    const panel = lib.store.panels.require(first!.panel.id);
+    expect(panel.prompt.scene).toContain(panel.script.action);
+    expect(panel.prompt.scene).toContain(panel.script.background);
+    const stored = runner.get(run.id).steps[4]!.output as { panels: Array<{ panelId: string }> };
+    expect(stored.panels.map((p) => p.panelId)).not.toContain('pn_invented');
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]![0])).toMatch(new RegExp(`^\\[manga\\] episode prompts: .*${first!.panel.id}`));
+  });
+
+  it('a user edit of the prompts with an object "negative" is still refused', async () => {
+    const { runner, run } = await throughPrompts({});
+    const stored = runner.get(run.id).steps[4]!.output as { panels: Array<Record<string, unknown>> };
+    const edited = { panels: stored.panels.map((p) => ({ ...p, negative: { 'extra people': 'extra people' } })) };
+    expect(() => runner.editOutput(run.id, 'prompts', edited)).toThrow(ZodError);
+    expect(runner.get(run.id).steps[4]!.output).toEqual(stored);
+  });
+});

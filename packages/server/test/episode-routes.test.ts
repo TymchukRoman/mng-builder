@@ -88,6 +88,25 @@ describe('episode routes', { timeout: 90_000 }, () => {
     expect([bad.status, bad.body.error.code]).toEqual([400, 'validation']);
   });
 
+  it('PUT prompts output answers 400 for a "negative" that is not text, though an LLM answer gets it repaired', async () => {
+    s = await startM4TestServer();
+    const { chapter } = await chapterOn(s);
+    const run = (await s.api<EpisodeRun>('POST', `/api/chapters/${chapter.id}/episode`, { input: { prompt: 'A cat', pages: 1 } })).body;
+    await runUntil(s, chapter.id, 'awaiting-review', 1);
+    expect((await s.api('POST', `/api/episodes/${run.id}/approve`)).status).toBe(200);
+    await runUntil(s, chapter.id, 'awaiting-review', 3);
+    expect((await s.api('POST', `/api/episodes/${run.id}/approve`)).status).toBe(200);
+    const promptsDone = await s.until(async () => {
+      const r = (await s!.api<EpisodeRun | null>('GET', `/api/chapters/${chapter.id}/episode`)).body;
+      return r && r.steps[4]!.status === 'done' ? r : null;
+    });
+    const output = structuredClone(promptsDone.steps[4]!.output) as { panels: Array<Record<string, unknown>> };
+    output.panels[0]!['negative'] = { 'extra people': 'extra people' };
+    const bad = await s.api<ApiErrorBody>('PUT', `/api/episodes/${run.id}/steps/prompts/output`, { output });
+    expect([bad.status, bad.body.error.code]).toEqual([400, 'validation']);
+    expect(bad.body.error.message).toContain('panels.0.negative');
+  });
+
   it('PUT scripts output answers 400 for a character the manga lacks (a typo), though an LLM answer may name one', async () => {
     s = await startM4TestServer();
     const { chapter } = await chapterOn(s);

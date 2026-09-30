@@ -1,7 +1,8 @@
 // packages/server/test/episode-requests.test.ts
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ZodError } from 'zod';
-import type { EpisodeRun, ScriptsOutput } from '@manga/shared';
+import { OutlineOutputSchema, type EpisodeRun, type ScriptsOutput } from '@manga/shared';
+import { jsonSchemaOf } from '../src/engines/structured.js';
 import { createCoverPage, createPage } from '../src/domain/pages.js';
 import { chapterPanels } from '../src/workflows/episode/chapter.js';
 import { buildStepContext, extractContext, templateVars, type PromptsContext, type ScriptsContext } from '../src/workflows/episode/context.js';
@@ -71,6 +72,20 @@ describe('stepRequests', () => {
     expect(combineAnswers(lib.store, run, 'scripts', answers)).toEqual(whole);
   });
 
+  it("every request repairs an answer's shape slips before validating it, with the same JSON Schema as the step's schema", () => {
+    const run = scriptsRun(2);
+    const [outlineRequest] = stepRequests(lib.store, run, 'outline');
+    expect(jsonSchemaOf(outlineRequest!.schema)).toEqual(jsonSchemaOf(OutlineOutputSchema));
+    const slipped = { scenes: { summary: ['Aiko', 'runs'], purpose: 1, location: 'alley', characterNames: 'Aiko' }, newCharacters: null };
+    expect(outlineRequest!.schema.parse(slipped)).toEqual({
+      scenes: [{ summary: 'Aiko, runs', purpose: '1', location: 'alley', characterNames: ['Aiko'] }], newCharacters: [],
+    });
+    const [scriptsRequest] = stepRequests(lib.store, run, 'scripts');
+    const answer = scripts(breakdown(2), 'Aiko');
+    answer.pages[0]!.panels[0]!.shot = 'Close-Up' as never;
+    expect((scriptsRequest!.schema.parse(answer) as ScriptsOutput).pages[0]!.panels[0]!.shot).toBe('close');
+  });
+
   it('the outline request refuses a scene character that is neither in the manga nor in newCharacters', () => {
     const run = scriptsRun(2);
     const [only] = stepRequests(lib.store, run, 'outline');
@@ -97,6 +112,7 @@ describe('stepRequests', () => {
     createPage(lib.store, chapter.id, TWO_PANEL_PRESET);
     createCoverPage(lib.store, manga.id, chapter.id);
     const ids = chapterPanels(lib.store, chapter.id, manga.readingDirection).map((e) => e.panel.id);
+    updatePanel(lib.store, ids[0]!, { action: 'A cat shelters under a bench', background: 'rainy park' });
 
     const requests = stepRequests(lib.store, run, 'prompts');
     const contexts = requests.map((r) => extractContext<PromptsContext>(r.prompt));
@@ -106,7 +122,12 @@ describe('stepRequests', () => {
 
     const answer = (panelIds: string[]) => ({ panels: panelIds.map((panelId) => ({ panelId, scene: 'solo, rain' })) });
     expect(requests[0]!.schema.safeParse(answer(ids.slice(0, 2))).success).toBe(true);
-    expect(requests[0]!.schema.safeParse(answer(ids.slice(0, 3))).success).toBe(false);
+    // A panel of another page is dropped before validation, and a skipped one is written from its script.
+    expect((requests[0]!.schema.parse(answer(ids.slice(0, 3))) as { panels: Array<{ panelId: string }> }).panels.map((p) => p.panelId)).toEqual(ids.slice(0, 2));
+    expect((requests[0]!.schema.parse(answer(ids.slice(1, 2))) as { panels: Array<{ panelId: string }> }).panels.map((p) => p.panelId)).toEqual([ids[1], ids[0]]);
+    expect(requests[0]!.filled).toEqual([ids[0]]);
+    // A skipped panel with nothing in its script cannot be written, so validation still refuses the answer.
+    expect(requests[0]!.schema.safeParse(answer(ids.slice(0, 1))).success).toBe(false);
     const whole = combineAnswers(lib.store, run, 'prompts', [answer(ids.slice(0, 2)), answer(ids.slice(2, 4)), answer(ids.slice(4))]);
     expect((whole as { panels: Array<{ panelId: string }> }).panels.map((p) => p.panelId)).toEqual(ids);
     expect(() => combineAnswers(lib.store, run, 'prompts', [answer(ids.slice(0, 2))])).toThrow(/missing panelIds/);

@@ -25,7 +25,7 @@ export function rawOutputError(err: InvalidOutputError): PermanentError {
 
 /**
  * Runs an LLM step: the calls of `stepRequests` in order (scripts in page chunks, prompts one page per call, F18),
- * joined and validated as a whole by `combineAnswers`. Every call runs on the engine of the job's LANE, never on
+ * each answer repaired by `normalizeLlmAnswer`, joined and validated as a whole by `combineAnswers`. Every call runs on the engine of the job's LANE, never on
  * the live settings (I1, F1). Each call's correction round sees its own refined schema.
  */
 export async function executeLlmStep(
@@ -35,15 +35,20 @@ export async function executeLlmStep(
   const requests = stepRequests(deps.store, run, step);
   const answers: unknown[] = [];
   try {
-    for (const { progress, ...request } of requests) {
+    for (const { name, task, system, prompt, schema, progress } of requests) {
       ctx.progress(progress);
-      answers.push(await engine.completeJson({ ...request, signal: ctx.signal, onProgress: (label) => ctx.progress(label) }));
+      answers.push(await engine.completeJson({ name, task, system, prompt, schema, signal: ctx.signal, onProgress: (label) => ctx.progress(label) }));
     }
   } catch (err) {
     throw err instanceof InvalidOutputError ? rawOutputError(err) : err;
   }
   try {
-    return combineAnswers(deps.store, run, step, answers);
+    const output = combineAnswers(deps.store, run, step, answers);
+    const filled = requests.flatMap((r) => r.filled);
+    if (filled.length > 0) {
+      console.warn(`[manga] episode prompts: run ${run.id}: the AI wrote no scene for ${filled.length} panel(s), so it comes from the script: ${filled.join(', ')}`);
+    }
+    return output;
   } catch (err) {
     if (!(err instanceof ZodError)) throw err;
     const problems = err.issues.map((i) => i.message).join('; ');
