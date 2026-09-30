@@ -89,3 +89,19 @@ test('a panel image that fails to load shows a warning badge, not a blank panel 
   await expect(panel.locator('img')).toHaveCount(0);
   expect(errors.all()).toEqual([]);
 });
+
+test('the print route flags a missing page and a crafted id as errors, never as ready', async ({ page }) => {
+  const errors = collectErrors(page, { allowedFailures: { status: 404, urlSuffix: '/api/pages/pg_missing' } });
+  await page.goto('/render/page/pg_missing');
+  await expect.poll(() => page.evaluate('window.__MANGA_RENDER_ERROR__ ?? null') as Promise<string | null>).toContain('pg_missing');
+  expect(await page.evaluate('window.__MANGA_RENDER_READY__ ?? false')).toBe(false);
+
+  const pageRequests: string[] = [];
+  page.on('request', (r) => { if (r.url().includes('/api/pages/')) pageRequests.push(r.url()); });
+  // Unvalidated, this was GET /api/pages/pg_x/shutdown?. (A crafted id with dots never reaches the SPA: the server's fallback skips paths with an extension.)
+  await page.goto('/render/page/pg_x%2Fshutdown%3F');
+  await expect.poll(() => page.evaluate('window.__MANGA_RENDER_ERROR__ ?? null') as Promise<string | null>).toContain('not found');
+  expect(await page.evaluate('window.__MANGA_RENDER_READY__ ?? false')).toBe(false);
+  expect(pageRequests).toEqual([]);
+  expect(errors.all()).toEqual([]);
+});
