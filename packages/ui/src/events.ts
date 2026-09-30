@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useQueryClient, type QueryClient, type QueryKey } from '@tanstack/react-query';
-import type { Job, ServerEvent } from '@manga/shared';
+import type { Job, Page, ServerEvent } from '@manga/shared';
 import { api, seg } from './api';
 import { createStore, useStore } from './lib/store';
 import { cacheLookup, keysForEntity, qk, type EntityEvent } from './queryKeys';
@@ -113,6 +113,7 @@ const DETAIL_KEY: Partial<Record<EntityEvent['entity'], (id: string) => QueryKey
   character: qk.character,
   chapter: qk.chapter,
   page: qk.page,
+  panel: qk.panelImages,
 };
 
 function sameKey(a: QueryKey, b: QueryKey): boolean {
@@ -146,11 +147,17 @@ export function applyServerEvent(qc: QueryClient, e: ServerEvent, deps: EventDep
       qc.setQueryData(qk.status(), e.status);
       return;
     case 'entity': {
-      const keys = keysForEntity(e, cacheLookup(qc));
+      // A panel is never deleted alone: the server pairs it with its page's own event (`page updated` after a layout op,
+      // `page deleted` in a page, chapter or episode cascade), which refreshes or removes the page detail. Invalidating the
+      // page here would refetch, once per panel, a page that the cascade is deleting (404s). Task 18 review finding 10.
+      const keys = e.entity === 'panel' && e.op === 'deleted' ? [qk.panelImages(e.id)] : keysForEntity(e, cacheLookup(qc));
       if (e.op === 'deleted') {
         // F5: drop the deleted entity's own detail query outright (invalidating it would just
         // trigger a 404 refetch for whatever still has it mounted), then invalidate its lists.
         const ownKey = DETAIL_KEY[e.entity]?.(e.id) ?? null;
+        // A deleted page leaves the cached page lists at once (they are still refetched below), so an editor or page list that
+        // shows it moves on in the same render instead of re-creating its removed detail query and fetching a 404.
+        if (e.entity === 'page') qc.setQueriesData<Page[]>({ queryKey: ['pages'] }, (prev) => prev?.filter((p) => p.id !== e.id));
         if (ownKey) qc.removeQueries({ queryKey: ownKey, exact: true });
         for (const queryKey of keys) {
           if (ownKey && sameKey(queryKey, ownKey)) continue;

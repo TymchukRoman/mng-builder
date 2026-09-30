@@ -1,6 +1,6 @@
 import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
-import type { Job } from '@manga/shared';
+import type { Job, Page } from '@manga/shared';
 import { JobWaiters, applyServerEvent, eventsUrl, nextBackoff, parseEvent, upsertJob } from '../src/events';
 import { qk } from '../src/queryKeys';
 import { makeDetail, makeJob, makeManga } from './fixtures';
@@ -98,6 +98,25 @@ describe('applyServerEvent', () => {
     expect(qc.getQueryData(qk.manga('mg_1'))).toBeUndefined();
     expect(qc.getQueryState(qk.mangas())?.isInvalidated).toBe(true);
     expect(qc.getQueryState(qk.manga('mg_2'))?.isInvalidated).toBe(false);
+  });
+  // Task 18 review finding 10: a page cascade (page delete, chapter delete, an episode re-run) emits `panel deleted` for each
+  // panel before `page deleted`. Invalidating the owning page per panel refetched a page the cascade was deleting (404s).
+  it('a deleted panel removes its own images query and leaves its page to the page event', () => {
+    const qc = new QueryClient();
+    qc.setQueryData(qk.page('pg_1'), makeDetail('pg_1'));
+    qc.setQueryData(qk.panelImages('pn_a'), []);
+    qc.setQueryData(qk.panelImages('pn_b'), []);
+    applyServerEvent(qc, { type: 'entity', entity: 'panel', id: 'pn_a', op: 'deleted', mangaId: 'mg_1' }, deps());
+    expect(qc.getQueryState(qk.page('pg_1'))?.isInvalidated).toBe(false);
+    expect(qc.getQueryState(['page'])).toBeUndefined();
+    expect(qc.getQueryData(qk.panelImages('pn_a'))).toBeUndefined();
+    expect(qc.getQueryState(qk.panelImages('pn_b'))?.isInvalidated).toBe(false);
+    qc.setQueryData(qk.pages('ch_1'), [makeDetail('pg_1').page, makeDetail('pg_2').page]);
+    applyServerEvent(qc, { type: 'entity', entity: 'page', id: 'pg_1', op: 'deleted', mangaId: 'mg_1' }, deps());
+    expect(qc.getQueryData(qk.page('pg_1'))).toBeUndefined();
+    // The page leaves the chapter's list at once, so the editor moves on before anything refetches it (then the list is refetched).
+    expect(qc.getQueryData<Page[]>(qk.pages('ch_1'))?.map((p) => p.id)).toEqual(['pg_2']);
+    expect(qc.getQueryState(qk.pages('ch_1'))?.isInvalidated).toBe(true);
   });
   // preflight F5c: the first `hello` of a session must not trigger a full resync (everything was
   // just fetched); only a later `hello` (a reconnect) should.
