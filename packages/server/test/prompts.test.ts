@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { Character, PanelScript } from '@manga/shared';
+import { orderRefs } from '../src/handlers/context.js';
+import { RECIPES } from '../src/imaging/recipes/index.js';
 import { CAMERA_TAGS, cameraSentence, cameraTags, cameraWording, stripCameraSentences, stripCameraTags } from '../src/prompts/camera.js';
 import { loadPrompt } from '../src/prompts/load.js';
 import { normalizeAppearanceTags, sanitizeSentences, sanitizeTags } from '../src/prompts/sanitize.js';
@@ -20,6 +22,11 @@ describe('loadPrompt', () => {
     const onDisk = readFileSync(fileURLToPath(new URL(`../src/prompts/${name}.md`, import.meta.url)), 'utf8').trim();
     expect(loadPrompt(name)).toBe(onDisk);
     expect(onDisk.length).toBeGreaterThan(200);
+  });
+
+  it('reads a sub-folder and names the file it could not find', () => {
+    expect(loadPrompt('premise', 'episode')).toContain('<!-- user -->');
+    expect(() => loadPrompt('nope', 'episode')).toThrow(/^Prompt episode\/nope\.md not found \(looked in .*episode[\\/]nope\.md/);
   });
 
   it('forbids appearance, names, lettering and camera framing in both scene prompts', () => {
@@ -155,5 +162,26 @@ describe('finishScene (shared by M2 panel-prompt and the M4 prompts step)', () =
     expect(finishScene('tags', 'medium', 'eye', 'upper body, text, cowboy shot')).toBeNull();
     expect(finishScene('natural', 'wide', 'high', 'A medium shot at eye level.')).toBeNull();
     expect(finishScene('tags', 'medium', 'eye', ' , ; ')).toBeNull();
+  });
+});
+
+describe('orderRefs (the "picture N" order shared by pickRefs and the episode prompts step)', () => {
+  const aiko = character('ch_aiko000001', 'Aiko');
+  const ren = character('ch_ren0000001', 'Ren');
+  const mika = character('ch_mika000001', 'Mika');
+  const images: Record<string, string[]> = { Aiko: ['im_a1', 'im_a2'], Ren: [], Mika: ['im_m1', 'im_m2'] };
+  const imagesOf = (c: Character): string[] => images[c.name]!;
+
+  it('takes the first image of each character of a multi-character cast, skipping those without one', () => {
+    expect(orderRefs(RECIPES['qwen-edit-ref']!, [aiko, ren, mika], imagesOf).map((r) => [r.imageId, r.character.name]))
+      .toEqual([['im_a1', 'Aiko'], ['im_m1', 'Mika']]);
+  });
+
+  it('takes every image of a single character, and caps at the recipe maxRefs', () => {
+    expect(orderRefs(RECIPES['anime-ref']!, [aiko], imagesOf).map((r) => r.imageId)).toEqual(['im_a1', 'im_a2']);
+    const many = (c: Character): string[] => [`${c.name}-1`, `${c.name}-2`, `${c.name}-3`];
+    expect(orderRefs(RECIPES['anime-ref']!, [aiko], many)).toHaveLength(2); // maxRefs 2
+    expect(orderRefs(RECIPES['anime-ref']!, [aiko, ren, mika], many).map((r) => r.character.name)).toEqual(['Aiko', 'Ren']);
+    expect(orderRefs(RECIPES['anime']!, [aiko], many)).toEqual([]); // maxRefs 0
   });
 });

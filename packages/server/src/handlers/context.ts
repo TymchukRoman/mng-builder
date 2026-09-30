@@ -9,15 +9,23 @@ export const nonEmpty = (s: string | null | undefined): s is string => typeof s 
 
 export interface PanelContext { panel: Panel; page: Page; manga: Manga; characters: Character[]; refCharacters: Character[] }
 
+/**
+ * The panel's characters as routing counts them (`charCount`): script characters, then ref toggles, deduplicated,
+ * keeping only characters of this manga. panelContext (render path) and the M4 prompts step share it (I1).
+ */
+export function panelCharacters(store: Store, panel: Panel, mangaId: string): Character[] {
+  const ids = [...new Set([...panel.script.characters.map((c) => c.characterId), ...panel.refCharacterIds])];
+  return ids
+    .map((id) => store.characters.get(id))
+    .filter((c): c is Character => c !== null && c.mangaId === mangaId);
+}
+
 /** Characters that exist (script order, then ref toggles) and the toggled ones that have a usable reference image. */
 export function panelContext(store: Store, panelId: string): PanelContext {
   const panel = store.panels.require(panelId);
   const page = store.pages.require(panel.pageId);
   const manga = store.mangas.require(page.mangaId);
-  const ids = [...new Set([...panel.script.characters.map((c) => c.characterId), ...panel.refCharacterIds])];
-  const characters = ids
-    .map((id) => store.characters.get(id))
-    .filter((c): c is Character => c !== null && c.mangaId === manga.id);
+  const characters = panelCharacters(store, panel, manga.id);
   const hasRef = (c: Character): boolean => refImages(store, c).length > 0;
   const refCharacters = panel.refCharacterIds
     .map((id) => characters.find((c) => c.id === id))

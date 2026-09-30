@@ -9,7 +9,7 @@ import { loadStepPrompt, renderTemplate } from '../src/workflows/episode/prompts
 import { SCRIPTS_PAGES_PER_CALL, combineAnswers, stepRequests } from '../src/workflows/episode/requests.js';
 import { PREMISE, TWO_PANEL_PRESET, breakdown, outline, scripts, seedEpisodeWorld, seedRun } from './helpers/episode-fixtures.js';
 import { openTestLibrary, type TestLibrary } from './helpers/library.js';
-import { seedCharacter } from './helpers/seed.js';
+import { seedCharacter, updatePanel } from './helpers/seed.js';
 
 let lib: TestLibrary;
 beforeEach(() => { lib = openTestLibrary(); });
@@ -91,6 +91,25 @@ describe('stepRequests', () => {
     const whole = combineAnswers(lib.store, run, 'prompts', [answer(ids.slice(0, 2)), answer(ids.slice(2, 4)), answer(ids.slice(4))]);
     expect((whole as { panels: Array<{ panelId: string }> }).panels.map((p) => p.panelId)).toEqual(ids);
     expect(() => combineAnswers(lib.store, run, 'prompts', [answer(ids.slice(0, 2))])).toThrow(/missing panelIds/);
+  });
+
+  it("keeps a natural-style panel's picture lines inside its per-page chunk (F3 with F18)", () => {
+    const { manga, chapter } = seedEpisodeWorld(lib.store);
+    const aiko = seedCharacter(lib.store, manga.id, 'Aiko');
+    const mika = seedCharacter(lib.store, manga.id, 'Mika');
+    const bd = breakdown(2);
+    const run = seedRun(lib.store, chapter.id, { outputs: { premise: PREMISE, outline: outline([]), breakdown: bd, scripts: scripts(bd, null) } });
+    createPage(lib.store, chapter.id, TWO_PANEL_PRESET);
+    createPage(lib.store, chapter.id, TWO_PANEL_PRESET);
+    const secondPage = chapterPanels(lib.store, chapter.id, manga.readingDirection).filter((e) => e.pageNumber === 2);
+    const duo = secondPage[1]!.panel;
+    const stage = (id: string) => ({ characterId: id, pose: '', expression: '', position: 'left' as const });
+    updatePanel(lib.store, duo.id, { characters: [stage(aiko.id), stage(mika.id)] }, { refCharacterIds: [aiko.id, mika.id] });
+
+    const chunk = extractContext<PromptsContext>(stepRequests(lib.store, run, 'prompts')[1]!.prompt);
+    expect(chunk.panels.map((p) => p.panelId)).toEqual(secondPage.map((e) => e.panel.id));
+    expect(chunk.panels[1]).toMatchObject({ style: 'natural', pictures: ['picture 1 shows Aiko', 'picture 2 shows Mika'] });
+    expect(chunk.panels[0]).toMatchObject({ style: 'tags' });
   });
 
   it('refuses several answers for a one-call step', () => {

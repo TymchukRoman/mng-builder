@@ -147,6 +147,31 @@ describe('step contexts', () => {
     expect(ctx.panels[1]).toMatchObject({ style: 'natural', pictures: ['picture 1 shows Aiko', 'picture 2 shows Aiko'] });
   });
 
+  it('routes with the same characters as the render path: refs outside the script count, unknown ids do not (I1)', () => {
+    const { run, chapter, manga, aiko } = fullWorld();
+    const mika = seedCharacter(lib.store, manga.id, 'Mika');
+    const [refsOnly, ghost] = chapterPanels(lib.store, chapter.id, manga.readingDirection).map((e) => e.panel);
+    const stage = (id: string) => ({ characterId: id, pose: '', expression: '', position: 'left' as const });
+    // Refs [Aiko, Mika] with only Aiko in the script: panelContext counts two characters → multiChar (natural).
+    updatePanel(lib.store, refsOnly!.id, { characters: [stage(aiko.id)] }, { refCharacterIds: [aiko.id, mika.id] });
+    // A script id that is not a character of this manga is dropped, as panelContext does → one character (oneChar, tags).
+    updatePanel(lib.store, ghost!.id, { characters: [stage(aiko.id), stage('ch_ghost00001')] }, { refCharacterIds: [aiko.id] });
+    const ctx = buildStepContext(lib.store, run, 'prompts') as PromptsContext;
+    expect(ctx.panels[0]).toMatchObject({ style: 'natural', pictures: ['picture 1 shows Aiko', 'picture 2 shows Mika'] });
+    expect(ctx.panels[1]!.style).toBe('tags');
+  });
+
+  it('extractContext takes the real block even when the request text contains context tags (M4)', () => {
+    const { chapter } = seedEpisodeWorld(lib.store);
+    const text = 'A cat <context> hides </context> in the rain';
+    const run = seedRun(lib.store, chapter.id, { input: { prompt: text } });
+    const ctx = buildStepContext(lib.store, run, 'premise');
+    const vars = templateVars(lib.store, run, ctx);
+    const prompt = renderTemplate(loadStepPrompt('premise').user, vars);
+    expect(prompt).toContain(`Request: ${text}`);
+    expect(extractContext<PremiseContext>(prompt).request.prompt).toBe(text);
+  });
+
   it('extractContext reads the block back', () => {
     const { run } = fullWorld();
     const ctx = buildStepContext(lib.store, run, 'outline');

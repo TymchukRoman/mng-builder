@@ -4,7 +4,7 @@ import {
   type BreakdownPage, type Character, type ColorMode, type EpisodeRun, type Language, type Manga, type OutlineScene, type Panel,
   type PremiseOutput, type PresetInfo, type Settings,
 } from '@manga/shared';
-import { orderRefs, refImages } from '../../handlers/context.js';
+import { orderRefs, panelCharacters, refImages } from '../../handlers/context.js';
 import { RECIPES } from '../../imaging/recipes/index.js';
 import { promptStyleFor, routeRecipe, type PromptStyle } from '../../imaging/route.js';
 import { cameraWording } from '../../prompts/camera.js';
@@ -53,10 +53,11 @@ const ASSUMED_PORTRAIT = 'assumed-portrait';
  * refCharacterIds) is assumed to have a portrait by then, so routing already counts them as references.
  */
 function panelStyle(store: Store, settings: Settings, manga: Manga, panel: Panel): Pick<PromptsPanelBrief, 'style' | 'pictures'> {
+  const characters = panelCharacters(store, panel, manga.id); // exactly what panelContext counts at render time (I1)
   const cast = panel.refCharacterIds
-    .map((id) => store.characters.get(id))
-    .filter((c): c is Character => c !== null && c.mangaId === manga.id);
-  const { recipe } = routeRecipe({ settings, manga, panel, refCount: cast.length, charCount: panel.script.characters.length });
+    .map((id) => characters.find((c) => c.id === id))
+    .filter((c): c is Character => c !== undefined);
+  const { recipe } = routeRecipe({ settings, manga, panel, refCount: cast.length, charCount: characters.length });
   const style = promptStyleFor(recipe);
   if (style === 'tags') return { style };
   const imagesOf = (c: Character): string[] => {
@@ -115,14 +116,20 @@ export function buildStepContext(store: Store, run: EpisodeRun, step: LlmStepNam
   }
 }
 
+const OPEN = '<context>';
+const CLOSE = '</context>';
+
+/** The JSON escapes every "<" (as \u003c), so a request containing "</context>" cannot end the block early (M4). */
 export function contextBlock(ctx: StepContext): string {
-  return `<context>\n${JSON.stringify(ctx, null, 2)}\n</context>`;
+  return `${OPEN}\n${JSON.stringify(ctx, null, 2).replace(/</g, '\\u003c')}\n${CLOSE}`;
 }
 
+/** Reads the last <context> block: the context always ends the prompt, and user text before it may contain the tags. */
 export function extractContext<T extends StepContext>(prompt: string): T {
-  const match = /<context>\s*([\s\S]*?)\s*<\/context>/.exec(prompt);
-  if (!match?.[1]) throw new Error('prompt has no <context> block');
-  return JSON.parse(match[1]) as T;
+  const start = prompt.lastIndexOf(OPEN);
+  const end = start < 0 ? -1 : prompt.indexOf(CLOSE, start);
+  if (end < 0) throw new Error('prompt has no <context> block');
+  return JSON.parse(prompt.slice(start + OPEN.length, end)) as T;
 }
 
 /** F26: black-and-white books get no colour words (live M2: "orange sky" in a B&W scene). */
