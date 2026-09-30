@@ -175,7 +175,12 @@ export function scriptsSchemaFor(rules: ScriptsRules): z.ZodType<ScriptsOutput> 
 
 // ---- 5. prompts ----
 export const PromptsOutputSchema = z.object({
-  panels: z.array(z.object({ panelId: z.string().min(3), scene: z.string().min(1), negative: z.string().nullish().transform((v) => v ?? undefined) })).min(1),
+  // `negative` is an optional string (null reads as absent). Written as a preprocess, not a transform, so its JSON Schema
+  // stays {"type":"string"} and optional: a transform made it {} and required, and the local engine's constrained
+  // decoding then let the model put an object there (Roman's run: "negative": {"extra people": "extra people"}).
+  panels: z.array(z.object({
+    panelId: z.string().min(3), scene: z.string().min(1), negative: z.preprocess((v) => v ?? undefined, z.string().optional()),
+  })).min(1),
 });
 export type PromptsOutput = z.infer<typeof PromptsOutputSchema>;
 export interface PromptsRules { panelIds: string[] }

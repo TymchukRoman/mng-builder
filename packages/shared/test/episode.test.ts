@@ -1,7 +1,8 @@
 // packages/shared/test/episode.test.ts
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import {
-  EDITABLE_STEPS, OutlineOutputSchema, PremiseOutputSchema, STEP_TASK,
+  EDITABLE_STEPS, OutlineOutputSchema, PremiseOutputSchema, PromptsOutputSchema, STEP_TASK,
   REVIEW_AVG_SECONDS, breakdownSchemaFor, estimateReviewSeconds, estimateSeconds, formatEstimate, outlineSchemaFor, promptsSchemaFor, sameName,
   scriptsSchemaFor, stepIndex,
   type PanelScriptDraft,
@@ -172,6 +173,15 @@ describe('promptsSchemaFor', () => {
 
   it('accepts exactly one entry per panel id', () => {
     expect(schema.safeParse({ panels: [{ panelId: 'pn_b', scene: 'rain' }, { panelId: 'pn_a', scene: 'sun', negative: 'blur' }] }).success).toBe(true);
+  });
+
+  it('describes "negative" as an optional string in its JSON Schema, so constrained decoding cannot put an object there', () => {
+    const json = z.toJSONSchema(PromptsOutputSchema, { unrepresentable: 'any' }) as unknown as {
+      properties: { panels: { items: { properties: Record<string, unknown>; required: string[] } } };
+    };
+    expect(json.properties.panels.items.properties['negative']).toEqual({ type: 'string' });
+    expect(json.properties.panels.items.required).toEqual(['panelId', 'scene']);
+    expect(schema.safeParse({ panels: [{ panelId: 'pn_a', scene: 'x', negative: { 'extra people': 'extra people' } }, { panelId: 'pn_b', scene: 'y' }] }).success).toBe(false);
   });
 
   it('accepts a null negative and normalises it to undefined', () => {
