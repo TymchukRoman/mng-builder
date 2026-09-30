@@ -1,18 +1,29 @@
-import { rmSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  EMPTY_SCRIPT, type ApiErrorBody, type Chapter, type EpisodeRun, type LlmStepPayload, type Manga, type PageDetail, type ServerEvent,
+  EMPTY_SCRIPT, type ApiErrorBody, type Chapter, type EpisodeRun, type Job, type LlmStepPayload, type Manga, type PageDetail, type ServerEvent,
 } from '@manga/shared';
 import type { JsonRequest } from '../src/engines/types.js';
-import { seedEpisodeWorld, seedRun, TWO_PANEL_PRESET } from './helpers/episode-fixtures.js';
-import { openTestLibrary } from './helpers/library.js';
+import type { episodeModule } from '../src/workflows/episode/module.js';
+import { seedEpisodeWorld, seedRun, STAMP, TWO_PANEL_PRESET } from './helpers/episode-fixtures.js';
+import { openTestLibrary, type TestLibrary } from './helpers/library.js';
 import { startM4TestServer, type M4TestServer } from './helpers/m4-server.js';
 
 let s: M4TestServer | null = null;
+/** Servers and libraries a test opened besides `s`; released in reverse order even when the test fails. */
+const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
   await s?.close();
   s = null;
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
+
+/** A library folder with a seeded chapter, closed and ready for a server to open. Removed after the test. */
+function seededLibrary(): { dir: string; chapter: Chapter; store: TestLibrary['store'] } {
+  const lib = openTestLibrary();
+  cleanups.push(() => lib.close());
+  const { chapter } = seedEpisodeWorld(lib.store);
+  return { dir: lib.dir, chapter, store: lib.store };
+}
 
 async function chapterOn(server: M4TestServer): Promise<{ manga: Manga; chapter: Chapter }> {
   const manga = (await server.api<Manga>('POST', '/api/mangas', { title: `Routes ${Date.now()}` })).body;
@@ -26,6 +37,9 @@ async function runUntil(server: M4TestServer, chapterId: string, status: Episode
     return run && run.status === status && (step === undefined || run.currentStep === step) ? run : null;
   });
 }
+
+const premiseJobs = (server: M4TestServer, runId: string): Job[] =>
+  server.deps.store.jobs.listByEpisodeRun(runId).filter((j) => (j.payload as { step?: string }).step === 'premise');
 
 /** An answer that never comes: it ends only when the engine call is aborted (as when the server stops). */
 const hangUntilAborted = (req: JsonRequest<unknown>): Promise<never> => new Promise((_resolve, reject) => {
@@ -129,55 +143,73 @@ describe('episode routes', { timeout: 90_000 }, () => {
   });
 
   it('resumes a running run when the server starts', async () => {
-    const lib = openTestLibrary();
-    const { chapter } = seedEpisodeWorld(lib.store);
-    seedRun(lib.store, chapter.id, { input: { pages: 1 } });
-    lib.store.close();
-    s = await startM4TestServer({ library: lib.dir });
+    const { dir, chapter, store } = seededLibrary();
+    seedRun(store, chapter.id, { input: { pages: 1 } });
+    store.close();
+    s = await startM4TestServer({ library: dir });
     const run = await runUntil(s, chapter.id, 'awaiting-review', 1);
     expect(run.steps[0]!.status).toBe('done');
-    await s.close();
-    s = null;
-    rmSync(lib.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('restart: a run stopped mid-step continues on a new server over the same library', async () => {
-    const lib = openTestLibrary();
-    const { chapter } = seedEpisodeWorld(lib.store);
-    lib.store.close();
-    const first = await startM4TestServer({ library: lib.dir, claude: { 'episode.premise': hangUntilAborted } });
+    const { dir, chapter, store } = seededLibrary();
+    store.close();
+    const first = await startM4TestServer({ library: dir, claude: { 'episode.premise': hangUntilAborted } });
+    cleanups.push(() => first.close());
     const started = (await first.api<EpisodeRun>('POST', `/api/chapters/${chapter.id}/episode`, { input: { prompt: 'A cat', pages: 1 } })).body;
     await first.until(async () => first.claude.calls.some((c) => c.name === 'episode.premise') || null);
     await first.close(); // the premise call is interrupted: its job goes back to queued and the step stays running
-    s = await startM4TestServer({ library: lib.dir });
+    s = await startM4TestServer({ library: dir });
     const run = await runUntil(s, chapter.id, 'awaiting-review', 1);
     expect(run.id).toBe(started.id);
     expect(run.steps[0]!.status).toBe('done');
     expect((await s.api<Chapter>('GET', `/api/chapters/${chapter.id}`)).body.title).toBe('The Cat in the Rain');
-    const premiseJobs = s.deps.store.jobs.listByEpisodeRun(run.id).filter((j) => (j.payload as LlmStepPayload).type === 'episode' && (j.payload as { step: string }).step === 'premise');
-    expect(premiseJobs.map((j) => j.status)).toEqual(['succeeded']); // the interrupted job was re-run, not duplicated
-    await s.close();
-    s = null;
-    rmSync(lib.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    expect(premiseJobs(s, run.id).map((j) => j.status)).toEqual(['succeeded']); // the interrupted job was re-run, not duplicated
   });
 
   it('restart: the resumed run is watching its job, so a failure after the restart fails the step', async () => {
-    const lib = openTestLibrary();
-    const { chapter } = seedEpisodeWorld(lib.store);
-    lib.store.close();
-    const first = await startM4TestServer({ library: lib.dir, claude: { 'episode.premise': hangUntilAborted } });
+    const { dir, chapter, store } = seededLibrary();
+    store.close();
+    const first = await startM4TestServer({ library: dir, claude: { 'episode.premise': hangUntilAborted } });
+    cleanups.push(() => first.close());
     await first.api<EpisodeRun>('POST', `/api/chapters/${chapter.id}/episode`, { input: { prompt: 'A cat', pages: 1 } });
     await first.until(async () => first.claude.calls.some((c) => c.name === 'episode.premise') || null);
     await first.close();
-    s = await startM4TestServer({
-      library: lib.dir,
-      claude: { 'episode.premise': () => { throw new Error('engine gone'); } },
-    });
+    s = await startM4TestServer({ library: dir, claude: { 'episode.premise': () => { throw new Error('engine gone'); } } });
     const run = await runUntil(s, chapter.id, 'failed');
     expect(run.steps[0]).toMatchObject({ status: 'failed', error: expect.stringContaining('engine gone') as string });
-    await s.close();
-    s = null;
-    rmSync(lib.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  it('crash: a step job left running in the database is queued again before the run resumes, and runs once', async () => {
+    const { dir, chapter, store } = seededLibrary();
+    // What a crash leaves behind: no graceful stop, the premise step running with its job claimed (status 'running').
+    const seeded = seedRun(store, chapter.id, { input: { pages: 1 } });
+    store.episodes.update(seeded.id, { steps: seeded.steps.map((st, i) => (i === 0 ? { ...st, status: 'running' as const, startedAt: STAMP } : st)) });
+    const payload: LlmStepPayload = { type: 'episode', runId: seeded.id, step: 'premise' };
+    const inserted = store.jobs.insert({ kind: 'llm.step', lane: 'claude', priority: 0, payload, maxAttempts: 3, nextRunAt: STAMP, episodeRunId: seeded.id });
+    expect(store.jobs.claimNext('claude', new Date().toISOString())?.id).toBe(inserted.id);
+    expect(store.jobs.require(inserted.id).status).toBe('running');
+    store.close();
+
+    // resume() must see the job as queued: startServer runs queue.recover() before the modules' start().
+    const seenAtResume: Array<string | undefined> = [];
+    s = await startM4TestServer({
+      library: dir,
+      inspectModules: (modules, deps) => {
+        const episode = modules.find((m) => m.name === 'episode') as ReturnType<typeof episodeModule>;
+        const resume = episode.runner.resume.bind(episode.runner);
+        episode.runner.resume = (): number => {
+          seenAtResume.push(deps.store.jobs.get(inserted.id)?.status);
+          return resume();
+        };
+      },
+    });
+    const run = await runUntil(s, chapter.id, 'awaiting-review', 1);
+    expect(run.id).toBe(seeded.id);
+    expect(seenAtResume).toEqual(['queued']);
+    const jobs = premiseJobs(s, run.id);
+    expect(jobs.map((j) => [j.id, j.status])).toEqual([[inserted.id, 'succeeded']]); // the same job ran, once, and no second one was queued
+    expect(s.claude.calls.filter((c) => c.name === 'episode.premise')).toHaveLength(1);
   });
 });
 

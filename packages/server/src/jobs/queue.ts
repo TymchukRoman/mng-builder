@@ -131,12 +131,22 @@ export class JobQueue {
     });
   }
 
-  /** resetRunning() then poll loop. */
+  /**
+   * Puts the jobs a crashed process left 'running' back in line. startServer calls it before the modules' start(), so a
+   * module that resumes work there sees those jobs as queued. Idempotent, and start() calls it too. Does nothing
+   * while the queue is running: a job that is really running must not be reset.
+   */
+  recover(): void {
+    if (this.started) return;
+    this.store.jobs.resetRunning();
+  }
+
+  /** recover() then poll loop. */
   start(): void {
     if (this.started) return;
+    this.recover();
     this.started = true;
     this.stopping = false;
-    this.store.jobs.resetRunning();
     this.timer = setInterval(() => this.tick(), this.pollMs);
     this.timer.unref();
     this.tick();

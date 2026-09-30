@@ -15,11 +15,7 @@ export function episodeModule(deps: CoreDeps, services: Pick<M2Services, 'engine
       registerEpisodeRoutes(app, { store: deps.store, bus: deps.bus, runner });
     },
     start(): void {
-      // Task 9: resume() must see the jobs an interrupted process left behind as queued, and JobQueue.start() is what
-      // re-queues them (resetRunning). startServer calls module start() before queue.start(), so start the queue here
-      // first (it is idempotent: startServer's own call is then a no-op).
-      deps.queue.start();
-      runner.resume();
+      runner.resume(); // startServer has run queue.recover(), so interrupted step jobs are already queued
     },
     stop(): void {
       runner.stop();

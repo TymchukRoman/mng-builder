@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AppConfig } from '@manga/shared';
 import { defaultModules } from '../../src/all-modules.js';
-import { startServer, type CoreDeps } from '../../src/app.js';
+import { startServer, type AppModule, type CoreDeps } from '../../src/app.js';
 import { FAKE_RESPONSES } from '../../src/dev/fake-responses.js';
 import { ScriptedEngine, type ScriptedResponse } from '../../src/engines/scripted.js';
 import { ComfyClient } from '../../src/imaging/comfy.js';
@@ -32,6 +32,8 @@ export interface M4TestServerOptions {
   /** Reuse an existing library folder (restart tests); it is not deleted on close. */
   library?: string;
   config?: Partial<AppConfig>;
+  /** Called with the modules `defaultModules` built, before the server starts them (ordering probes wrap their hooks). */
+  inspectModules?: (modules: AppModule[], deps: CoreDeps) => void;
 }
 
 /** The whole app (defaultModules) on a temp library and a random port, with FakeComfy and scripted engines. */
@@ -40,15 +42,27 @@ export async function startM4TestServer(opts: M4TestServerOptions = {}): Promise
   const fake = await startFakeComfy();
   const claude = new ScriptedEngine('claude', { ...FAKE_RESPONSES, ...opts.claude });
   const local = new ScriptedEngine('local', { ...FAKE_RESPONSES, ...opts.local });
-  const started = await startServer({
-    config: { libraryPath: library, port: 0, ...opts.config },
-    uiDir: opts.uiDir ?? null,
-    modules: (deps) => {
-      // F20: defaultModules picks the shared service set up from the registry, so the fakes go in first.
-      servicesFor(deps, { fakes: false, claude, local, comfy: new ComfyClient({ url: fake.url, launcher: null, pollMs: 20 }) });
-      return defaultModules(deps);
-    },
-  });
+  const cleanLibrary = (): void => {
+    if (!opts.library) rmSync(library, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  };
+  let started: Awaited<ReturnType<typeof startServer>>;
+  try {
+    started = await startServer({
+      config: { libraryPath: library, port: 0, ...opts.config },
+      uiDir: opts.uiDir ?? null,
+      modules: (deps) => {
+        // F20: defaultModules picks the shared service set up from the registry, so the fakes go in first.
+        servicesFor(deps, { fakes: false, claude, local, comfy: new ComfyClient({ url: fake.url, launcher: null, pollMs: 20 }) });
+        const modules = defaultModules(deps);
+        opts.inspectModules?.(modules, deps);
+        return modules;
+      },
+    });
+  } catch (err) {
+    await fake.close();
+    cleanLibrary();
+    throw err;
+  }
   const api = async <T = unknown>(method: string, path: string, body?: unknown): Promise<{ status: number; body: T }> => {
     const res = await fetch(`${started.url}${path}`, {
       method, ...(body !== undefined ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {}),
@@ -65,12 +79,20 @@ export async function startM4TestServer(opts: M4TestServerOptions = {}): Promise
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
   };
+  let closing: Promise<void> | null = null;
   return {
     url: started.url, deps: started.deps, library, claude, local, fake, api, until,
-    async close(): Promise<void> {
-      await started.stop();
-      await fake.close();
-      if (!opts.library) rmSync(library, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-    },
+    /** Idempotent; the fake and the library are released even when stopping the server throws. */
+    close: () => (closing ??= (async (): Promise<void> => {
+      try {
+        await started.stop();
+      } finally {
+        try {
+          await fake.close();
+        } finally {
+          cleanLibrary();
+        }
+      }
+    })()),
   };
 }

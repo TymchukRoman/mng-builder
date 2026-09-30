@@ -115,6 +115,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     throw err;
   }
   const running = app;
+  queue.recover(); // before the modules' start(): what they resume must see interrupted jobs as queued
   for (const mod of modules) await mod.start?.(deps);
   queue.start();
 

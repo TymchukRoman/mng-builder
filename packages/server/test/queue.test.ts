@@ -297,6 +297,25 @@ describe('JobQueue', () => {
     expect(await q.waitFor(stale.id)).toMatchObject({ status: 'succeeded', result: 'recovered' });
   });
 
+  it('recover() re-queues crashed jobs before start(), is idempotent, and never resets a job that is really running', async () => {
+    const stale = t.store.jobs.insert({
+      kind: 'image.generate', lane: 'gpu', priority: 0, payload: null, maxAttempts: 3, nextRunAt: new Date().toISOString(), episodeRunId: null,
+    });
+    t.store.jobs.claimNext('gpu', new Date().toISOString());
+    const q = makeQueue();
+    q.recover();
+    q.recover();
+    expect(t.store.jobs.require(stale.id).status).toBe('queued');
+    const release = deferred();
+    q.register('image.generate', async () => { await release.promise; return 'ok'; });
+    q.start();
+    await vi.waitFor(() => expect(t.store.jobs.require(stale.id).status).toBe('running'));
+    q.recover(); // the queue is running: this job is really running and stays so
+    expect(t.store.jobs.require(stale.id).status).toBe('running');
+    release.resolve();
+    expect(await q.waitFor(stale.id)).toMatchObject({ status: 'succeeded', attempts: 2 }); // the crashed claim spent one
+  });
+
   it('puts an aborted running job back in the queue on stop without spending the attempt', async () => {
     const q = makeQueue();
     q.register('image.generate', (ctx) => new Promise((_, reject) => {
