@@ -4,14 +4,18 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
 import { EMPTY_SCRIPT, type Chapter, type ExportRenderResult, type Image, type Job, type JobRef, type Manga, type PageDetail } from '@manga/shared';
+import { hasHeadlessChromium } from './helpers/chromium.js';
 import { startM4TestServer, type M4TestServer } from './helpers/m4-server.js';
 
 const UI_DIR = fileURLToPath(new URL('../../ui/dist', import.meta.url));
 const HAS_UI = existsSync(`${UI_DIR}/index.html`);
+const HAS_CHROMIUM = hasHeadlessChromium();
 // The skip reason is part of the suite name, so it shows in the run output.
-const SUITE = HAS_UI
-  ? 'export with real Chromium'
-  : 'export with real Chromium (SKIPPED: packages/ui/dist is missing; run `npm run build`)';
+const SUITE = !HAS_CHROMIUM
+  ? 'export with real Chromium (SKIPPED: the headless Chromium is not installed; run `npx playwright install --only-shell chromium`)'
+  : HAS_UI
+    ? 'export with real Chromium'
+    : 'export with real Chromium (SKIPPED: packages/ui/dist is missing; run `npm run build`)';
 
 // The print size of the default page format at scale 1 (spec §9.2, G4): the PNG element screenshot is the PageView.
 const PNG_WIDTH = 2150;
@@ -33,7 +37,7 @@ async function job(server: M4TestServer, id: string): Promise<Job> {
 
 // NOTE (F35): this test serves whatever is in packages/ui/dist. A stale dist still passes it but hides UI changes
 // (for example the Task 17 `?hires=1` print route); rebuild with `npm run build` before trusting it.
-describe.skipIf(!HAS_UI)(SUITE, { timeout: 180_000 }, () => {
+describe.skipIf(!HAS_UI || !HAS_CHROMIUM)(SUITE, { timeout: 180_000 }, () => {
   it('exports a page PNG at print size and a chapter PDF at 182×257 mm', async () => {
     // Every HTTP request the server sees (the browser's included); registered first so its hook covers all routes.
     const requests: string[] = [];
