@@ -8,6 +8,7 @@ import {
   FONT_FOR_KIND,
   FrameKindSchema,
   MIN_READABLE_PT,
+  printSizePx,
   pickSize,
   SDXL_SIZES,
   STYLE_PRESETS,
@@ -73,5 +74,13 @@ describe('fonts', () => {
       expect(BUNDLED_FONTS).toContain(FONT_FOR_KIND[kind]);
       expect(DEFAULT_FONT_SIZE[kind]).toBeGreaterThanOrEqual(MIN_READABLE_PT);
     }
+  });
+});
+
+describe('printSizePx', () => {
+  it('is the exact export pixel size, round(mm / 25.4 * dpi), optionally scaled', () => {
+    expect(printSizePx(DEFAULT_PAGE_FORMAT)).toEqual({ w: 2150, h: 3035 });
+    expect(printSizePx(DEFAULT_PAGE_FORMAT, 0.5)).toEqual({ w: 1075, h: 1518 });
+    expect(printSizePx({ ...DEFAULT_PAGE_FORMAT, widthMm: 25.4, heightMm: 50.8, dpi: 100 })).toEqual({ w: 100, h: 200 });
   });
 });

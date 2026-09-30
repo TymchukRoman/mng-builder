@@ -1,3 +1,5 @@
+import type { PageFormat } from './schemas.js';
+
 export const SDXL_SIZES: Array<[number, number]> = [
   [1024, 1024], [896, 1152], [832, 1216], [768, 1344], [640, 1536], [1152, 896], [1216, 832], [1344, 768], [1536, 640],
 ];
@@ -18,4 +20,12 @@ export function pickSize(aspect: number, sizes: Array<[number, number]>): [numbe
     }
   }
   return best;
+}
+
+/** Exact export pixel size of a page (spec §10): round(mm / 25.4 × dpi × scale). Used by the export and the print route. */
+export function printSizePx(format: PageFormat, scale = 1): { w: number; h: number } {
+  return {
+    w: Math.round((format.widthMm / 25.4) * format.dpi * scale),
+    h: Math.round((format.heightMm / 25.4) * format.dpi * scale),
+  };
 }

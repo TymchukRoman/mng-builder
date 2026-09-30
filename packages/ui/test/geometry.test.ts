@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_PAGE_FORMAT, DEFAULT_TRANSFORM } from '@manga/shared';
-import { clampTransform, coverFit, pageSizePx, panBy, panLimits, printSizePx, ptToPx, pxPerMm, rectPx, zoomBy } from '../src/page/geometry';
+import { DEFAULT_PAGE_FORMAT, DEFAULT_TRANSFORM, printSizePx } from '@manga/shared';
+import { clampTransform, coverFit, pageSizePx, panBy, panLimits, ptToPx, pxPerMm, rectPx, zoomBy } from '../src/page/geometry';
 
 describe('page size', () => {
   it('matches the spec print size for B5 at 300 dpi', () => {

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_PAGE_FORMAT, DEFAULT_TRANSFORM, resizeSplit } from '@manga/shared';
-import { printSizePx } from '../src/page/geometry';
+import { DEFAULT_PAGE_FORMAT, DEFAULT_TRANSFORM, printSizePx, resizeSplit } from '@manga/shared';
 import {
   dragFrameGeom, dragLabel, framesInOrder, geomPatch, ghostTailAt, rotateHandleAt, wheelZoom, imageFor, liveFrames, panelImageFilter, panelImageView, placeImage, printPpm, renderSize, sameTransform, usableSize,
 } from '../src/page/pageModel';

@@ -1,10 +1,10 @@
 import type { ColorMode, Image, ImageTransform, LayoutNode, PageDetail, PageFormat, Panel, TextFrame } from '@manga/shared';
-import type { Box } from '@manga/shared';
+import { printSizePx, type Box } from '@manga/shared';
 import { defaultTail, dragBox, moveFrame, rotationFromPointer, type Handle } from '../editor/frameDrag';
 import { applyMoves, reanchorFrames, rectMap } from '../editor/reanchor';
 import type { UpdateFrameBody } from '../types';
 import type { BoxPx, PointPx } from './bubbles';
-import { coverFit, pageSizePx, printSizePx, pxPerMm, zoomBy, type Placement, type SizePx } from './geometry';
+import { coverFit, pageSizePx, pxPerMm, zoomBy, type Placement, type SizePx } from './geometry';
 
 export type FrameGeom = Pick<TextFrame, 'box' | 'tail' | 'rotation'>;
 

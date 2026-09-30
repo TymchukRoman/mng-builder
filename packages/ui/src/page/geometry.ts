@@ -10,14 +10,6 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
 
-/** Exact export pixel size (spec §10): round(mm / 25.4 × dpi). */
-export function printSizePx(format: PageFormat, scale = 1): SizePx {
-  return {
-    w: Math.round((format.widthMm / 25.4) * format.dpi * scale),
-    h: Math.round((format.heightMm / 25.4) * format.dpi * scale),
-  };
-}
-
 /** Page size at a given on-screen width, consistent with printSizePx at the print width. */
 export function pageSizePx(format: PageFormat, widthPx: number): SizePx {
   const exactW = (format.widthMm / 25.4) * format.dpi;
