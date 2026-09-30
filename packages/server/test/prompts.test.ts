@@ -69,6 +69,26 @@ describe('sanitizers', () => {
     // Look-alikes stay: words that only contain a colour.
     expect(stripColourWords('shredded paper near the greenhouse, a blueprint, bored')).toBe('shredded paper near the greenhouse, a blueprint, bored');
   });
+
+  it('tidies what the colour strip leaves: colour lists, conjunctions, hyphens and dangling articles (M2)', () => {
+    const tidy = (text: string) => sanitizeSentences(stripColourWords(text));
+    expect(tidy('A red and blue umbrella lies there.')).toBe('An umbrella lies there.');
+    expect(tidy('A red, orange or golden sky.')).toBe('A sky.');
+    expect(tidy('A red and white flag waves.')).toBe('A white flag waves.');
+    expect(tidy('The red-and-white flag and a blue-striped shirt.')).toBe('The white flag and a striped shirt.');
+    expect(tidy('A red with white stripes shirt.')).toBe('A with white stripes shirt.');
+    expect(tidy('The girl sits, holding a blue')).toBe('The girl sits, holding');
+    expect(tidy('She wears a red. Then she leaves.')).toBe('She wears. Then she leaves.');
+    expect(sanitizeTags(stripColourWords('red-and-white flag, blue-striped shirt, 1girl'))).toBe('white flag, striped shirt, 1girl');
+  });
+
+  it('keeps the given names, whole words only and case-insensitively (M1)', () => {
+    expect(sanitizeSentences(stripColourWords('Amber and Violet hold a red lamp near violet flowers.', ['Amber', 'violet'])))
+      .toBe('Amber and Violet hold a lamp near violet flowers.');
+    expect(sanitizeSentences(stripColourWords('An amber lamp near Ambers house.', ['Amber'])))
+      .toBe('An amber lamp near Ambers house.');
+    expect(sanitizeSentences(stripColourWords('A red coat on Марія.', ['Марія', '']))).toBe('A coat on Марія.');
+  });
 });
 
 describe('scriptBlock', () => {
