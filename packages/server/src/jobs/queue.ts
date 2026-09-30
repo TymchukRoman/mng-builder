@@ -15,7 +15,11 @@ export interface JobQueueOptions {
   limits?: Partial<Record<Lane, number>>; pollMs?: number; backoffMs?: number[]; now?: () => Date;
 }
 
-export const DEFAULT_LANE_LIMITS: Readonly<Record<Lane, number>> = { gpu: 1, claude: 2, cpu: 1 };
+/**
+ * cpu runs two jobs (M4 final M5): the episode render/lettering drivers only await other lanes, so a long render never
+ * holds the lane alone; exports run one at a time behind their own lock (export/job.ts).
+ */
+export const DEFAULT_LANE_LIMITS: Readonly<Record<Lane, number>> = { gpu: 1, claude: 2, cpu: 2 };
 export const DEFAULT_BACKOFF_MS: readonly number[] = [5_000, 30_000, 120_000];
 const LANES: readonly Lane[] = ['gpu', 'claude', 'cpu'];
 const TERMINAL: ReadonlySet<JobStatus> = new Set(['succeeded', 'failed', 'cancelled']);
@@ -60,7 +64,7 @@ export class JobQueue {
     this.handlers.set(kind, handler);
   }
 
-  /** Default lane limits: gpu 1, claude 2, cpu 1; maxAttempts default 3. */
+  /** Default lane limits: gpu 1, claude 2, cpu 2; maxAttempts default 3. */
   enqueue(input: EnqueueInput): Job {
     const job = this.store.jobs.insert({
       kind: input.kind,

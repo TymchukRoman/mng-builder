@@ -10,6 +10,49 @@ import { mergePdfs } from './pdf.js';
 
 export interface ExportJobDeps { baseUrl(): string; render?: PageRenderer; probeUi?(baseUrl: string, signal?: AbortSignal): Promise<void> }
 
+/** The progress label of an export waiting for another one to finish (M4 final M5). */
+export const WAITING_FOR_EXPORT = 'Waiting for another export';
+
+/**
+ * One export at a time (M4 final M5): the cpu lane runs two jobs so a render driver never blocks an export, and this
+ * lock keeps two exports from rendering in Chromium side by side. Waiters are served in order; the lock is handed on.
+ */
+export class ExportLock {
+  private held = false;
+  private readonly waiting: Array<() => void> = [];
+
+  get busy(): boolean {
+    return this.held;
+  }
+
+  /** Resolves with the release function once this caller holds the lock; rejects with the signal's reason if aborted first. */
+  acquire(signal: AbortSignal): Promise<() => void> {
+    signal.throwIfAborted();
+    const release = (): void => {
+      const next = this.waiting.shift();
+      if (next) next();
+      else this.held = false;
+    };
+    if (!this.held) {
+      this.held = true;
+      return Promise.resolve(release);
+    }
+    return new Promise((resolve, reject) => {
+      const onAbort = (): void => {
+        const i = this.waiting.indexOf(wake);
+        if (i >= 0) this.waiting.splice(i, 1);
+        reject(signal.reason);
+      };
+      const wake = (): void => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(release);
+      };
+      this.waiting.push(wake);
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+}
+
 /** How long the UI check waits for this server to answer. */
 export const PROBE_TIMEOUT_MS = 10_000;
 
@@ -80,27 +123,39 @@ async function ensureHires(ctx: JobContext, pageIds: string[]): Promise<void> {
 }
 
 export function exportJobHandler(deps: ExportJobDeps): JobHandler {
+  const lock = new ExportLock();
   return async (ctx): Promise<ExportRenderResult> => {
     const payload = ExportSchema.parse(ctx.job.payload) as ExportRenderPayload;
-    const plan = planExport(ctx.store, payload);
-    const baseUrl = deps.baseUrl();
-    // M5 (review): check the UI first, so a missing UI fails at once without spending GPU time on upscales.
-    await (deps.probeUi ?? probeUi)(baseUrl, ctx.signal);
-    await ensureHires(ctx, plan.items.map((i) => i.pageId));
-    ctx.signal.throwIfAborted();
-    // Task 12: only this export's own files are written into the plan's dir; nothing else there is cleared or deleted.
-    // M3 (review), partial failure: page files are overwritten in place, each written whole by Chromium. An export
-    // that fails at page k leaves this run's pages 1..k beside the previous export's later pages and chapter.pdf;
-    // the failed job says so, and a re-run replaces them. chapter.pdf itself is replaced atomically (mergePdfs).
-    await mkdir(plan.dir, { recursive: true });
-    const files = await (deps.render ?? renderWithChromium)({
-      baseUrl, items: plan.items, format: plan.format, pageFormat: plan.pageFormat, signal: ctx.signal,
-      onPage: (i, n) => ctx.progress(`Rendering page ${Math.min(i + 1, n)}/${n}`, i, n),
-    });
-    if (plan.chapterPdf) {
-      ctx.progress('Merging the chapter PDF');
-      files.push(await mergePdfs(files, plan.chapterPdf));
+    planExport(ctx.store, payload); // a missing target fails at once, not after the wait
+    if (lock.busy) ctx.progress(WAITING_FOR_EXPORT);
+    const release = await lock.acquire(ctx.signal);
+    try {
+      return await exportNow(deps, ctx, payload);
+    } finally {
+      release();
     }
-    return { files };
   };
+}
+
+async function exportNow(deps: ExportJobDeps, ctx: JobContext, payload: ExportRenderPayload): Promise<ExportRenderResult> {
+  const plan = planExport(ctx.store, payload); // again: the chapter may have changed while this export waited
+  const baseUrl = deps.baseUrl();
+  // M5 (review): check the UI first, so a missing UI fails at once without spending GPU time on upscales.
+  await (deps.probeUi ?? probeUi)(baseUrl, ctx.signal);
+  await ensureHires(ctx, plan.items.map((i) => i.pageId));
+  ctx.signal.throwIfAborted();
+  // Task 12: only this export's own files are written into the plan's dir; nothing else there is cleared or deleted.
+  // M3 (review), partial failure: page files are overwritten in place, each written whole by Chromium. An export
+  // that fails at page k leaves this run's pages 1..k beside the previous export's later pages and chapter.pdf;
+  // the failed job says so, and a re-run replaces them. chapter.pdf itself is replaced atomically (mergePdfs).
+  await mkdir(plan.dir, { recursive: true });
+  const files = await (deps.render ?? renderWithChromium)({
+    baseUrl, items: plan.items, format: plan.format, pageFormat: plan.pageFormat, signal: ctx.signal,
+    onPage: (i, n) => ctx.progress(`Rendering page ${Math.min(i + 1, n)}/${n}`, i, n),
+  });
+  if (plan.chapterPdf) {
+    ctx.progress('Merging the chapter PDF');
+    files.push(await mergePdfs(files, plan.chapterPdf));
+  }
+  return { files };
 }

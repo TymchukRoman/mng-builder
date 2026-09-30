@@ -8,9 +8,10 @@ import { DEFAULT_PAGE_FORMAT, type ApiErrorBody, type Chapter, type ExportRender
 import { encodeSolidPng } from '../src/dev/png.js';
 import { createCoverPage, createPage } from '../src/domain/pages.js';
 import { pdfScale, type PageRenderer } from '../src/export/browser.js';
-import { exportJobHandler, probeUi } from '../src/export/job.js';
+import { ExportLock, WAITING_FOR_EXPORT, exportJobHandler, probeUi } from '../src/export/job.js';
 import { mergePdfs } from '../src/export/pdf.js';
 import { EventBus } from '../src/events/bus.js';
+import { GpuArbiter, JobQueue } from '../src/jobs/index.js';
 import { TWO_PANEL_PRESET, seedEpisodeWorld } from './helpers/episode-fixtures.js';
 import { FakeQueue, fakeJobContext } from './helpers/fake-queue.js';
 import { openTestLibrary, type TestLibrary } from './helpers/library.js';
@@ -193,6 +194,86 @@ describe('exportJobHandler', () => {
   it('refuses to export when the UI is not built', async () => {
     server = await startM4TestServer({ uiDir: null });
     await expect(probeUi(server.url)).rejects.toThrow('The UI is not built (packages/ui/dist is missing): run "npm run build" before exporting');
+  });
+});
+
+describe('export and the cpu lane (M4 final M5)', () => {
+  /** A real queue with the default lane limits; `llm.step` stands in for a render driver that holds a cpu slot. */
+  function cpuQueue() {
+    const bus = new EventBus();
+    const gpu = new GpuArbiter();
+    const queue = new JobQueue({ store: lib.store, bus, gpu, pollMs: 5 });
+    let releaseDriver!: () => void;
+    const driverHeld = new Promise<void>((resolve) => { releaseDriver = resolve; });
+    queue.register('llm.step', async () => { await driverHeld; return null; });
+    return { queue, releaseDriver };
+  }
+  const exportJob = (queue: JobQueue, pageId: string): Job =>
+    queue.enqueue({ kind: 'export.render', lane: 'cpu', payload: { target: { type: 'page', id: pageId }, format: 'png' }, maxAttempts: 1 });
+
+  it('an export runs while a render driver holds the other cpu slot', async () => {
+    const { chapter } = seedEpisodeWorld(lib.store);
+    const page = createPage(lib.store, chapter.id, TWO_PANEL_PRESET);
+    const { queue, releaseDriver } = cpuQueue();
+    queue.register('export.render', exportJobHandler({ baseUrl: () => 'http://127.0.0.1:1', render: stubRenderer([]), probeUi: noProbe }));
+    queue.start();
+    try {
+      const driver = queue.enqueue({ kind: 'llm.step', lane: 'cpu', payload: { type: 'episode', runId: 'er_x', step: 'render' }, maxAttempts: 1 });
+      const exported = await queue.waitFor(exportJob(queue, page.page.id).id);
+      expect(exported.status).toBe('succeeded');
+      expect(lib.store.jobs.require(driver.id).status).toBe('running');
+      releaseDriver();
+      expect((await queue.waitFor(driver.id)).status).toBe('succeeded');
+    } finally {
+      releaseDriver();
+      await queue.stop();
+    }
+  });
+
+  it('two exports run one after the other; the second says it is waiting', async () => {
+    const { chapter } = seedEpisodeWorld(lib.store);
+    const page = createPage(lib.store, chapter.id, TWO_PANEL_PRESET);
+    const { queue } = cpuQueue();
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    const firstHeld = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const render: PageRenderer = async (req) => {
+      order.push('start');
+      if (order.length === 1) await firstHeld;
+      order.push('end');
+      return stubRenderer([])(req);
+    };
+    queue.register('export.render', exportJobHandler({ baseUrl: () => 'http://127.0.0.1:1', render, probeUi: noProbe }));
+    queue.start();
+    try {
+      const first = exportJob(queue, page.page.id);
+      const second = exportJob(queue, page.page.id);
+      await expect.poll(() => lib.store.jobs.require(second.id).progress?.label).toBe(WAITING_FOR_EXPORT);
+      expect(lib.store.jobs.require(second.id).status).toBe('running'); // it holds the other cpu slot, waiting for the lock
+      expect(order).toEqual(['start']);
+      releaseFirst();
+      expect((await queue.waitFor(first.id)).status).toBe('succeeded');
+      expect((await queue.waitFor(second.id)).status).toBe('succeeded');
+      expect(order).toEqual(['start', 'end', 'start', 'end']);
+    } finally {
+      releaseFirst();
+      await queue.stop();
+    }
+  });
+
+  it('an export aborted while it waits for the lock leaves the lock to the others', async () => {
+    const lock = new ExportLock();
+    const release = await lock.acquire(new AbortController().signal);
+    const aborted = new AbortController();
+    const waiting = lock.acquire(aborted.signal);
+    const next = lock.acquire(new AbortController().signal);
+    aborted.abort(new Error('cancelled'));
+    await expect(waiting).rejects.toThrow('cancelled');
+    release();
+    const releaseNext = await next;
+    expect(lock.busy).toBe(true);
+    releaseNext();
+    expect(lock.busy).toBe(false);
   });
 });
 
