@@ -150,6 +150,25 @@ describe('autoLetter', () => {
     expect(frames[0]!.order).toBe(1);
   });
 
+  it('ignores frames that do not touch the panel: a frame in panel B does not move the sfx or bubbles of panel A', () => {
+    const layout: LayoutNode = { type: 'split', dir: 'h', ratio: 0.5, a: { type: 'panel', id: 'pn_a' }, b: { type: 'panel', id: 'pn_b' } };
+    const rectA: Rect = { x: 0.05, y: 0.05, w: 0.9, h: 0.43 };
+    const rectB: Rect = { x: 0.05, y: 0.52, w: 0.9, h: 0.43 };
+    const run = (existingFrames: ExistingFrame[]): LetterFrame[] => autoLetter({
+      layout, format: F, direction: 'ltr', existingFrames,
+      panels: [
+        { id: 'pn_a', rect: rectA, script: script([{ speakerId: null, kind: 'sfx', text: 'BANG' }, speech('Hello there!')]) },
+        { id: 'pn_b', rect: rectB, script: script([]) },
+      ],
+    });
+    const inB: ExistingFrame = { panelId: 'pn_b', text: 'in B', box: { x: rectB.x + 0.05, y: rectB.y + 0.05, w: 0.3, h: 0.1 }, order: 0 };
+    const pageLevel: ExistingFrame = { ...inB, panelId: null, text: 'page note' };
+    const bare = run([]);
+    for (const other of [inB, pageLevel]) {
+      expect(run([other]).map((f) => f.box)).toEqual(bare.map((f) => f.box));
+    }
+  });
+
   it('avoids every frame on the page as an obstacle, whatever its panelId', () => {
     const blocker = { x: WIDE.x + IX, y: WIDE.y + IY, w: 0.3, h: 0.05 };
     for (const panelId of [null, 'pn_other']) {

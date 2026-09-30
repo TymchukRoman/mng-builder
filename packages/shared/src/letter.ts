@@ -83,6 +83,11 @@ function tooClose(a: Box, b: Box, gx: number, gy: number): boolean {
   return a.x < b.x + b.w + gx - EPS && b.x < a.x + a.w + gx - EPS && a.y < b.y + b.h + gy - EPS && b.y < a.y + a.h + gy - EPS;
 }
 
+/** True when the box overlaps the area (touching edges do not count). */
+function intersects(b: Box, area: Area): boolean {
+  return b.x < area.right - EPS && b.x + b.w > area.left + EPS && b.y < area.bottom - EPS && b.y + b.h > area.top + EPS;
+}
+
 function placeBubble(w: number, h: number, area: Area, dir: ReadingDirection, occupied: Box[], gx: number, gy: number): Box {
   let y = area.top;
   for (let row = 0; row < 500 && y + h <= area.bottom + EPS; row++) {
@@ -141,8 +146,9 @@ export function autoLetter(input: AutoLetterInput): LetterFrame[] {
     const r = panel.rect;
     const area: Area = { left: r.x + ix, right: r.x + r.w - ix, top: r.y + iy, bottom: r.y + r.h - iy };
     const existing = input.existingFrames.filter((f) => f.panelId === id);
-    // Every frame on the page is an obstacle (page-level and other panels' frames too); only the text match is per panel.
-    const occupied: Box[] = input.existingFrames.map((f) => f.box);
+    // Obstacles: every frame whose box reaches into this panel's lettering area, whatever its panelId (page-level frames
+    // included). Frames wholly in other panels must not count: `placeSfx` would slide below them. Only the text match is per panel.
+    const occupied: Box[] = input.existingFrames.map((f) => f.box).filter((b) => intersects(b, area));
     const todo = panel.script.dialogue.filter((l) => !existing.some((f) => f.text === l.text));
     const sorted = [
       ...todo.filter((l) => l.kind === 'narration'),
