@@ -46,6 +46,17 @@ describe('episode view', () => {
     expect(stepActions(run('done', 6, 'done'), 'premise')).toMatchObject({ cancel: false, approve: false, edit: true });
   });
 
+  it('edits a done outline or breakdown only while the next step is pending (M4 final M2)', () => {
+    const atScripts = run('running', 3, 'running');
+    expect(stepActions(atScripts, 'outline').edit).toBe(false);
+    expect(stepActions(atScripts, 'breakdown').edit).toBe(false);
+    expect(stepActions(atScripts, 'premise').edit).toBe(true);
+    const failedAtOutlineNext = run('failed', 2, 'pending');
+    expect(stepActions(failedAtOutlineNext, 'outline').edit).toBe(true);
+    expect(stepActions(run('awaiting-review', 1, 'awaiting-review'), 'outline').edit).toBe(true);
+    expect(stepActions(run('done', 6, 'done'), 'scripts').edit).toBe(true);
+  });
+
   it('calls a re-run of the failed current step a retry', () => {
     expect(rerunLabel(run('failed', 5, 'failed'), 'render')).toBe('Retry this step');
     expect(rerunLabel(run('failed', 5, 'failed'), 'outline')).toBe('Re-run from here (later steps run again)');

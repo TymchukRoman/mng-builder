@@ -260,6 +260,29 @@ describe('EpisodeRunner — failure, retry, edit, rerun, cancel', () => {
     expect(() => runner.editOutput(run.id, 'breakdown', { pages: [] })).toThrow('step breakdown has no output to edit (it is pending)');
   });
 
+  it('a done outline or breakdown is editable only while the next step is pending; only the latest run is (M4 final M2)', async () => {
+    const { chapter, input } = world();
+    const { runner, queue } = rig();
+    const run = runner.start(chapter.id, input, 'review');
+    await queue.idle();
+    const drafted = runner.get(run.id).steps[1]!.output;
+    runner.approve(run.id); // outline done; breakdown ran; the run waits at scripts
+    await queue.idle();
+    expect(runner.get(run.id).currentStep).toBe(3);
+    expect(() => runner.editOutput(run.id, 'outline', drafted)).toThrow(new ConflictError('Re-run from this step instead'));
+    expect(() => runner.editOutput(run.id, 'breakdown', runner.get(run.id).steps[2]!.output)).toThrow('Re-run from this step instead');
+    runner.editOutput(run.id, 'premise', { ...PREMISE, title: 'Still editable' });
+
+    runner.cancel(run.id);
+    lib.store.episodes.update(run.id, { steps: runner.get(run.id).steps.map((st, i) => (i === 2 ? { ...st, status: 'pending' as const, output: null } : st)) });
+    runner.editOutput(run.id, 'outline', drafted); // the breakdown has not run: the outline still drives it
+
+    const newer = seedRun(lib.store, chapter.id, { status: 'cancelled' }); // a later run of the same chapter
+    expect(lib.store.episodes.latestByChapter(chapter.id)?.id).toBe(newer.id);
+    expect(() => runner.editOutput(run.id, 'premise', { ...PREMISE, title: 'Old run' })).toThrow('only the latest run of a chapter can be edited');
+    expect(lib.store.chapters.require(chapter.id).title).not.toBe('Old run');
+  });
+
   it('a prompts edit is stored verbatim on the panels (no camera prepend, no colour strip)', async () => {
     const { chapter, input } = world();
     const { runner, queue } = rig();

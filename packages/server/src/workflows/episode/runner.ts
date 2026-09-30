@@ -1,6 +1,6 @@
 import { setMaxListeners } from 'node:events';
 import {
-  BreakdownOutputSchema, EDITABLE_STEPS, EPISODE_STEPS, OutlineOutputSchema, PremiseOutputSchema, PromptsOutputSchema,
+  BreakdownOutputSchema, EDIT_NEEDS_PENDING_NEXT, EDIT_TOO_LATE_MESSAGE, EDITABLE_STEPS, EPISODE_STEPS, OutlineOutputSchema, PremiseOutputSchema, PromptsOutputSchema,
   REVIEW_POINTS, STEP_TASK, ScriptsOutputSchema, panelIds, stepIndex,
   type Chapter, type EpisodeInput, type EpisodeRun, type EpisodeStepName, type ImageGeneratePayload, type Job, type LlmStepPayload,
 } from '@manga/shared';
@@ -123,6 +123,11 @@ export class EpisodeRunner {
     if (!EDITABLE_STEPS.has(name)) throw new ValidationError(`the ${name} output is informational and cannot be edited`);
     if (step.status !== 'awaiting-review' && step.status !== 'done') {
       throw new ConflictError(`step ${name} has no output to edit (it is ${step.status})`);
+    }
+    // M4 final M2: only the latest run drives the chapter, and a done outline/breakdown only while the next step waits.
+    if (this.deps.store.episodes.latestByChapter(run.chapterId)?.id !== run.id) throw new ConflictError('only the latest run of a chapter can be edited');
+    if (step.status === 'done' && EDIT_NEEDS_PENDING_NEXT.has(name) && run.steps[idx + 1]?.status !== 'pending') {
+      throw new ConflictError(EDIT_TOO_LATE_MESSAGE);
     }
     const value = validationSchema(this.deps.store, run, name).parse(output); // ZodError → 400 validation
     const fx = this.effectDeps();

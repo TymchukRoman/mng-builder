@@ -174,6 +174,14 @@ export const STEP_TASK: Record<EpisodeStepName, Task | null> = {
 
 export const EDITABLE_STEPS: ReadonlySet<EpisodeStepName> = new Set<EpisodeStepName>(['premise', 'outline', 'breakdown', 'scripts', 'prompts']);
 
+/**
+ * M4 final M2: an outline or breakdown drives only the step after it (outline acceptance creates the characters; the
+ * breakdown shapes the scripts). Once done, it can be edited only while that next step is still pending; after that,
+ * an edit would change nothing or desync the run, so the server answers 409 with this message.
+ */
+export const EDIT_NEEDS_PENDING_NEXT: ReadonlySet<EpisodeStepName> = new Set<EpisodeStepName>(['outline', 'breakdown']);
+export const EDIT_TOO_LATE_MESSAGE = 'Re-run from this step instead';
+
 // ---- render-time estimate (spec §8: "panels × recipe average") ----
 /**
  * Seconds per image, seeded from the live timings (M2 Task 24 live check / P1 bake-off):

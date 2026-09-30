@@ -1,4 +1,4 @@
-import { EDITABLE_STEPS, EPISODE_STEPS, type EpisodeRun, type EpisodeStepName } from '@manga/shared';
+import { EDIT_NEEDS_PENDING_NEXT, EDITABLE_STEPS, EPISODE_STEPS, type EpisodeRun, type EpisodeStepName } from '@manga/shared';
 import { ApiError } from '../api';
 import type { Barrier } from '../editor/HistoryBarrierContext';
 
@@ -39,6 +39,12 @@ export function runLabel(run: EpisodeRun): string {
 
 export interface StepActions { approve: boolean; autopilot: boolean; cancel: boolean; rerun: boolean; edit: boolean }
 
+/** M4 final M2 (the server's rule): a done outline or breakdown stays editable only while the next step is pending. */
+function editTooLate(run: EpisodeRun, idx: number): boolean {
+  const name = EPISODE_STEPS[idx];
+  return name !== undefined && EDIT_NEEDS_PENDING_NEXT.has(name) && run.steps[idx + 1]?.status !== 'pending';
+}
+
 /** Mirrors the server's rules (Task 9) so buttons are only enabled when the call can succeed. */
 export function stepActions(run: EpisodeRun, selected: EpisodeStepName): StepActions {
   const idx = EPISODE_STEPS.indexOf(selected);
@@ -49,7 +55,7 @@ export function stepActions(run: EpisodeRun, selected: EpisodeStepName): StepAct
     autopilot: live && run.mode === 'review',
     cancel: live,
     rerun: step !== undefined && idx <= run.currentStep && step.status !== 'pending',
-    edit: step !== undefined && EDITABLE_STEPS.has(selected) && (step.status === 'done' || step.status === 'awaiting-review'),
+    edit: step !== undefined && EDITABLE_STEPS.has(selected) && (step.status === 'awaiting-review' || (step.status === 'done' && !editTooLate(run, idx))),
   };
 }
 
