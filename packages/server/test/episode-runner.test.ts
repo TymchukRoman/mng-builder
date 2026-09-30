@@ -1051,4 +1051,20 @@ describe('EpisodeRunner — render stops (W1 Q2, C2)', () => {
     await queue.idle();
     expect(runner.get(run.id).currentStep).toBe(stepIndex('lettering'));
   });
+
+  it('a run with a failed panel still letters every page and finishes (review M5c; spec R1)', async () => {
+    const { chapter, input } = world();
+    const { runner, queue } = rig({ imaging: false });
+    let broken: string | null = null;
+    fakeImaging(lib.store, queue, { beforePanel: (id) => { broken ??= id; if (id === broken) throw new Error('ComfyUI rejected the graph'); } });
+    const run = runner.start(chapter.id, { ...input, previewFirst: false }, 'autopilot');
+    await queue.idle();
+    const r = runner.get(run.id);
+    expect(r.status).toBe('done');
+    expect(broken).not.toBeNull();
+    expect(r.steps[stepIndex('render')]!.output).toMatchObject({ failedPanelIds: [broken] });
+    expect(lib.store.panels.require(broken!).activeImageId).toBeNull();
+    expect(r.steps[stepIndex('lettering')]).toMatchObject({ status: 'done', output: { frames: expect.any(Number) as number } });
+    expect((r.steps[stepIndex('lettering')]!.output as { frames: number }).frames).toBeGreaterThan(0);
+  });
 });

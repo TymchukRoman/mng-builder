@@ -1,5 +1,6 @@
 import {
-  castCount, countSentence, countTag, estimateReviewSeconds, grownMen, estimateSeconds, formatEstimate, renderGate, stepIndex, type CastCount,
+  RenderOutputSchema, castCount, countSentence, countTag, estimateReviewSeconds, grownMen, estimateSeconds, formatEstimate, renderGate, stepIndex,
+  type CastCount,
   type Character, type EpisodeRun, type Image, type ImageGeneratePayload, type ImageGenerateResult, type ImageReviewPayload,
   type Job, type Manga, type Panel, type RenderOutput, type ReviewResult, type Settings,
 } from '@manga/shared';
@@ -227,17 +228,19 @@ async function reviewAll(
   return results.filter((r): r is { panel: Panel; review: ReviewResult } => r !== null);
 }
 
-const NOTHING_RENDERED = { jobs: [] as string[], reviewed: 0, flagged: 0, rounds: 0 };
+type PhaseCounts = Pick<RenderOutput, 'jobs' | 'reviewed' | 'flagged' | 'rounds'>;
+const NOTHING_RENDERED: PhaseCounts = { jobs: [], reviewed: 0, flagged: 0, rounds: 0 };
 
 /**
  * Renders `todo`, then batch review → re-render flagged, for at most settings.review.rounds rounds (spec §8). W1 R1: a failed
  * panel is recorded, not fatal; only a phase in which every panel failed is systemic (engine down, bad recipe) and fails the
  * step. Reviews cover the chapter's unreviewed images, never a panel whose render failed and never one in `unreviewable`.
+ * `failed`: the panels whose render failed in this phase (a failed re-render in a review round keeps the first image).
  */
 async function renderPanels(
   deps: DriverDeps, ctx: JobContext, run: EpisodeRun, current: () => Panel[], todo: Panel[], leftovers: Leftovers, label: string,
   unreviewable: ReadonlySet<string>,
-): Promise<Pick<RenderOutput, 'jobs' | 'reviewed' | 'flagged' | 'rounds'>> {
+): Promise<{ counts: PhaseCounts; failed: ReadonlySet<string> }> {
   const { store } = deps;
   const settings = store.settings.get();
   const jobIds: string[] = [];
@@ -269,7 +272,7 @@ async function renderPanels(
       batch = current().filter((p) => again.done.has(p.id));
     }
   }
-  return { jobs: jobIds, reviewed, flagged, rounds };
+  return { counts: { jobs: jobIds, reviewed, flagged, rounds }, failed };
 }
 
 /**
@@ -293,8 +296,12 @@ export async function runRenderStep(deps: DriverDeps, ctx: JobContext, run: Epis
   if (entries.length === 0) throw new PermanentError('Nothing to render: the chapter has no panels yet (the scripts step creates them)');
   const ids = entries.map((e) => e.panel.id);
   const current = (): Panel[] => ids.map((id) => store.panels.require(id));
-  const withoutImage = (among?: ReadonlySet<string>): string[] =>
-    current().filter((p) => p.activeImageId === null && (among === undefined || among.has(p.id))).map((p) => p.id);
+  /**
+   * Review M2: the panels whose render failed in this phase (one may keep an older image) plus every panel of `among` that
+   * still has no image, in reading order, so the list matches the progress label's "N failed".
+   */
+  const failedPanels = (failed: ReadonlySet<string>, among: ReadonlySet<string> = new Set(ids)): string[] =>
+    current().filter((p) => failed.has(p.id) || (p.activeImageId === null && among.has(p.id))).map((p) => p.id);
   const pendingWith = (leftovers: Leftovers): Panel[] =>
     current().filter((p) => !renderedSince(store, p, token) || leftovers.hasGenerate(p.id));
   const gate = renderGate(step?.output); // set: this dispatch is the Continue of that stop
@@ -302,6 +309,8 @@ export async function runRenderStep(deps: DriverDeps, ctx: JobContext, run: Epis
 
   if (gate === null && run.input.previewFirst === false) {
     const todo = pendingWith(new Leftovers(liveJobs(store, run.id)));
+    // Review M4 (accepted): the stop comes before ensurePortraits, so a portrait the Continue still has to generate is not in
+    // this estimate (a few recipes at most).
     const estimateSeconds = estimateRender(store, settings, manga, todo);
     if (estimateSeconds > settings.episode.confirmRenderMinutes * 60) {
       return { ...NOTHING_RENDERED, failedPanelIds: [], confirm: true, panels: todo.length, estimateSeconds };
@@ -318,11 +327,13 @@ export async function runRenderStep(deps: DriverDeps, ctx: JobContext, run: Epis
     const rest = todo.filter((p) => !previewed.has(p.id));
     if (rest.length > 0) {
       const now = todo.filter((p) => previewed.has(p.id));
+      // Review M1: the preview reviews only the cover and page 1; an older image of a later page waits for the Continue.
+      const later = new Set(ids.filter((id) => !previewed.has(id)));
       const phase = await renderPanels(
-        deps, ctx, run, current, now, leftovers, label(now, `Rendering page 1 and the cover: ${now.length} panels`), new Set(),
+        deps, ctx, run, current, now, leftovers, label(now, `Rendering page 1 and the cover: ${now.length} panels`), later,
       );
       return {
-        ...phase, failedPanelIds: withoutImage(previewed), preview: true, remainingPanels: rest.length,
+        ...phase.counts, failedPanelIds: failedPanels(phase.failed, previewed), preview: true, remainingPanels: rest.length,
         estimateSeconds: estimateRender(store, settings, manga, rest),
       };
     }
@@ -334,5 +345,11 @@ export async function runRenderStep(deps: DriverDeps, ctx: JobContext, run: Epis
   const todoIds = new Set(todo.map((p) => p.id));
   const checked = gate === 'preview' ? new Set([...previewed].filter((id) => !todoIds.has(id))) : new Set<string>();
   const phase = await renderPanels(deps, ctx, run, current, todo, leftovers, label(todo, `Rendering ${todo.length} panels`), checked);
-  return { ...phase, failedPanelIds: withoutImage() };
+  // Review M3: the output of the whole step, so the preview phase's jobs and review counts are kept.
+  const before = gate === 'preview' ? RenderOutputSchema.parse(step?.output) : NOTHING_RENDERED;
+  return {
+    jobs: [...before.jobs, ...phase.counts.jobs], reviewed: before.reviewed + phase.counts.reviewed,
+    flagged: before.flagged + phase.counts.flagged, rounds: Math.max(before.rounds, phase.counts.rounds),
+    failedPanelIds: failedPanels(phase.failed),
+  };
 }

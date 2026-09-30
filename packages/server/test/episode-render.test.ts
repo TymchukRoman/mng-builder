@@ -462,7 +462,8 @@ describe('runRenderStep — preview first (W1 Q2)', () => {
     const out = await render(again, flagP1a);
     const continued = queue.jobs('image.review').slice(reviewsBefore).map((j) => (j.payload as ImageReviewPayload).panelId);
     expect(continued.sort()).toEqual([p2a!, p2b!].sort());
-    expect(out).toMatchObject({ reviewed: 2, flagged: 0 });
+    expect(out).toMatchObject({ reviewed: 5, flagged: 1, rounds: 1 }); // M3: the preview phase's counts are kept
+    expect(out.jobs).toEqual(expect.arrayContaining(first.jobs));
     expect(panelJobs(p1a!)).toHaveLength(2); // page 1 stays as the user saw it
   });
 
@@ -477,10 +478,12 @@ describe('runRenderStep — preview first (W1 Q2)', () => {
 describe('runRenderStep — size stop (W1 C2)', () => {
   it('stops once before any GPU work when the render would take longer than confirmRenderMinutes', async () => {
     lib.store.settings.patch({ episode: { confirmRenderMinutes: 1 } });
-    const { run } = renderWorld({ portrait: false, mode: 'autopilot', previewFirst: false });
+    const { run, manga, panelIds } = renderWorld({ portrait: false, mode: 'autopilot', previewFirst: false });
     const out = await render(run);
     expect(renderGate(out)).toBe('confirm');
     expect(out.panels).toBe(5);
+    const all = panelIds.map((id) => lib.store.panels.require(id));
+    expect(out.estimateSeconds).toBe(estimateRender(lib.store, lib.store.settings.get(), manga, all));
     expect(out.estimateSeconds).toBeGreaterThan(60);
     expect(queue.jobs('image.generate')).toEqual([]); // not even a portrait
   });
@@ -506,5 +509,51 @@ describe('runRenderStep — size stop (W1 C2)', () => {
     expect(run.input.previewFirst).toBeUndefined();
     expect(renderGate(await render(run))).toBeNull();
     for (const id of panelIds) expect(lib.store.panels.require(id).activeImageId).not.toBeNull();
+  });
+});
+
+describe('runRenderStep — review fix round 1 (M1, M2, M5b)', () => {
+  /** The step started after every image seeded so far: a re-run of a render that already finished. */
+  async function restamp(run: EpisodeRun): Promise<EpisodeRun> {
+    await new Promise((resolve) => setTimeout(resolve, 5)); // a later createdAt than the seeded images
+    return lib.store.episodes.update(run.id, { steps: patchStep(run.steps, stepIndex('render'), { startedAt: nowIso() }) });
+  }
+  const reviewedPanels = (from = 0) => queue.jobs('image.review').slice(from).map((j) => (j.payload as ImageReviewPayload).panelId);
+
+  it('the preview reviews only the cover and page 1, never an older image of a later page (M1)', async () => {
+    const { run, manga, panelIds } = renderWorld({ previewFirst: true });
+    const [p1a, p1b, p2a, p2b, cover] = panelIds;
+    for (const id of [p2a!, p2b!]) lib.store.panels.update(id, { activeImageId: seedImage(lib.store, manga.id, { type: 'panel', id }, null).id });
+    const out = await render(await restamp(run), { review: () => [{ kind: 'text', note: 'sign' }] });
+    expect(out).toMatchObject({ preview: true, remainingPanels: 2 });
+    expect(new Set(reviewedPanels())).toEqual(new Set([p1a!, p1b!, cover!]));
+    expect([...panelJobs(p2a!), ...panelJobs(p2b!)]).toEqual([]);
+  });
+
+  it('counts a panel whose render failed although it keeps an older image (M2)', async () => {
+    lib.store.settings.patch({ review: { autoInEpisode: false } });
+    const { run, manga, panelIds } = renderWorld();
+    const broken = panelIds[2]!;
+    const old = seedImage(lib.store, manga.id, { type: 'panel', id: broken }, null);
+    lib.store.panels.update(broken, { activeImageId: old.id });
+    const progress: string[] = [];
+    const out = await render(await restamp(run), { beforePanel: (id) => { if (id === broken) throw new Error('ComfyUI rejected the graph'); } }, progress);
+    expect(out.failedPanelIds).toEqual([broken]);
+    expect(lib.store.panels.require(broken).activeImageId).toBe(old.id);
+    expect(progress.at(-1)).toMatch(/ · 1 failed$/);
+  });
+
+  it('a page 1 panel that failed in the preview is listed, then rendered again and reviewed at Continue (M5b)', async () => {
+    const { run, panelIds } = renderWorld({ previewFirst: true });
+    const [p1a, , p2a, p2b] = panelIds;
+    const first = await render(run, { beforePanel: (id) => { if (id === p1a) throw new Error('ComfyUI rejected the graph'); } });
+    expect(first).toMatchObject({ preview: true, remainingPanels: 2, failedPanelIds: [p1a] });
+    const reviewsBefore = queue.jobs('image.review').length;
+    const again = lib.store.episodes.update(run.id, { steps: patchStep(run.steps, stepIndex('render'), { output: first }) });
+    const out = await render(again);
+    expect(out.failedPanelIds).toEqual([]);
+    expect(panelJobs(p1a!).map((j) => j.status)).toEqual(['failed', 'succeeded']);
+    expect(lib.store.panels.require(p1a!).activeImageId).not.toBeNull();
+    expect(reviewedPanels(reviewsBefore).sort()).toEqual([p1a!, p2a!, p2b!].sort());
   });
 });

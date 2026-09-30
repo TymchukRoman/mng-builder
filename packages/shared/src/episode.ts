@@ -218,7 +218,10 @@ export function promptsSchemaFor(rules: PromptsRules): z.ZodType<PromptsOutput> 
 // ---- 6. render, 7. lettering (informational outputs) ----
 export const RenderOutputSchema = z.object({
   jobs: z.array(z.string()), reviewed: z.number().int().min(0), flagged: z.number().int().min(0), rounds: z.number().int().min(0),
-  /** W1 R1: panels whose render failed (they have no image); outputs stored before W1 have none. */
+  /**
+   * W1 R1: panels whose render failed in this step, plus any still without an image. A panel re-rendered on a re-run may
+   * keep its older image and still be listed. Outputs stored before W1 have none.
+   */
   failedPanelIds: z.array(z.string()).default([]),
   /** W1 Q2, the preview stop: the cover and page 1 are rendered; `remainingPanels` wait for Continue. */
   preview: z.literal(true).optional(),
@@ -226,7 +229,10 @@ export const RenderOutputSchema = z.object({
   /** W1 C2, the size stop: nothing is rendered yet; `panels` wait for Continue. */
   confirm: z.literal(true).optional(),
   panels: z.number().int().min(0).optional(),
-  /** Both stops: the expected seconds of the panels that wait (review rounds included). */
+  /**
+   * Both stops: the expected seconds of the panels that wait (review rounds included). The size stop leaves out any portrait
+   * the Continue still has to generate.
+   */
   estimateSeconds: z.number().min(0).optional(),
 });
 export type RenderOutput = z.infer<typeof RenderOutputSchema>;
