@@ -34,7 +34,7 @@ export function registerExportCommands(program: Command, ctx: () => Promise<CliC
       const [job] = await c.waitJobs([jobId]);
       if (!job || job.status !== 'succeeded') {
         // M2 ruling F14: a job that did not succeed makes the command exit 1.
-        if (c.json && job) c.out({ jobId, status: job.status, error: job.error }, () => '');
+        if (c.json && job) c.out(job, () => '');
         throw new CliError(`export ${job?.status ?? 'failed'}: ${job?.error ?? 'unknown error'}`, 1);
       }
       const { files } = job.result as ExportRenderResult;

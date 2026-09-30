@@ -1,9 +1,9 @@
 import { Command, CommanderError } from 'commander';
 import { registerAiCommands } from './commands/ai.js';
 import { registerChapterCommands } from './commands/chapters.js';
+import { registerCharacterCommands } from './commands/characters.js';
 import { registerEpisodeCommands } from './commands/episode.js';
 import { registerExportCommands } from './commands/export.js';
-import { registerCharacterCommands } from './commands/characters.js';
 import { registerJobCommands } from './commands/jobs.js';
 import { registerMangaCommands } from './commands/mangas.js';
 import { registerPageCommands } from './commands/pages.js';

@@ -49,4 +49,30 @@ describe('followRun', () => {
     expect(seen).toEqual(['running: premise running', 'running: outline running', 'awaiting-review: outline awaiting-review']);
     expect(sleeps).toEqual([5, 5, 5]);
   });
+
+  it('throws when the chapter has no episode run', async () => {
+    const api = { get: async <T>(): Promise<T> => null as T };
+    await expect(followRun(api, 'ch_1', { sleep: async () => undefined })).rejects.toThrow('chapter ch_1 has no episode run');
+  });
+
+  it('returns the unsettled run at once when the signal aborts during the default sleep, leaving no timer', async () => {
+    const api = { get: async <T>(): Promise<T> => run('running', 0) as T };
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 20);
+    const started = Date.now();
+    const final = await followRun(api, 'ch_1', { intervalMs: 60_000, signal: controller.signal });
+    expect(final.status).toBe('running');
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  it('does not poll again after an abort, and stops before sleeping when already aborted', async () => {
+    let gets = 0;
+    const api = { get: async <T>(): Promise<T> => { gets += 1; return run('running', 0) as T; } };
+    const controller = new AbortController();
+    controller.abort();
+    const sleeps: number[] = [];
+    const final = await followRun(api, 'ch_1', { signal: controller.signal, sleep: async (ms) => { sleeps.push(ms); } });
+    expect(final.status).toBe('running');
+    expect([gets, sleeps]).toEqual([1, []]);
+  });
 });

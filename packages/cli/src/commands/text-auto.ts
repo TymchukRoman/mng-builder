@@ -10,8 +10,10 @@ export function registerTextAutoCommand(program: Command, ctx: () => Promise<Cli
     .argument('<page>', 'page id')
     .action(async (pageRef: string) => {
       const c = await ctx();
-      const pageId = (await c.resolve.page(pageRef)).page.id;
+      const before = await c.resolve.page(pageRef);
+      const pageId = before.page.id;
       const detail = await c.api.post<PageDetail>(`/api/pages/${encodeURIComponent(pageId)}/auto-letter`);
-      c.out(detail, () => `${detail.frames.length} frames on ${pageId}`);
+      const created = detail.frames.length - before.frames.length;
+      c.out(detail, () => `${created} frames created on ${pageId} (${detail.frames.length} in all)`);
     });
 }

@@ -16,12 +16,14 @@ import { startM4TestServer, type M4TestServer, type M4TestServerOptions } from '
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled']);
 const FAILING_PREMISE: M4TestServerOptions = { claude: { 'episode.premise': () => { throw new Error('model overloaded'); } } };
 
-function testContext(baseUrl: string, outputs: unknown[], stderr: string[], wait: boolean): CliContext {
+interface CtxOptions { json?: boolean; signal?: AbortSignal }
+
+function testContext(baseUrl: string, outputs: unknown[], stderr: string[], wait: boolean, opts: CtxOptions = {}): CliContext {
   const api = new ApiClient(baseUrl);
   return {
-    api, json: false, wait, baseUrl,
-    io: { stdout: () => undefined, stderr: (t) => { stderr.push(t); } },
-    out: (data) => { outputs.push(data); },
+    api, json: opts.json === true, wait, baseUrl,
+    io: { stdout: (t) => { stdout.push(t); }, stderr: (t) => { stderr.push(t); }, ...(opts.signal ? { signal: opts.signal } : {}) },
+    out: (data, human) => { outputs.push(data); humans.push(human()); },
     waitJobs: async (ids) => {
       const done: Job[] = [];
       for (const id of ids) {
@@ -52,6 +54,8 @@ function testContext(baseUrl: string, outputs: unknown[], stderr: string[], wait
 let s: M4TestServer;
 let outputs: unknown[];
 let stderr: string[];
+let stdout: string[];
+let humans: string[];
 const open: M4TestServer[] = [];
 async function serve(opts?: M4TestServerOptions): Promise<void> {
   s = await startM4TestServer(opts);
@@ -60,13 +64,15 @@ async function serve(opts?: M4TestServerOptions): Promise<void> {
 beforeEach(() => {
   outputs = [];
   stderr = [];
+  stdout = [];
+  humans = [];
 });
 afterEach(async () => {
   await Promise.all(open.splice(0).map((server) => server.close()));
 });
 
-function manga(wait = false): Command {
-  const ctx = testContext(s.url, outputs, stderr, wait);
+function manga(wait = false, opts: CtxOptions = {}): Command {
+  const ctx = testContext(s.url, outputs, stderr, wait, opts);
   const root = new Command('manga').option('--json').option('--wait').option('--url <url>').exitOverride().configureOutput({ writeErr: () => undefined });
   root.command('text'); // M1's group
   registerEpisodeCommands(root, async () => ctx);
@@ -74,7 +80,7 @@ function manga(wait = false): Command {
   registerTextAutoCommand(root, async () => ctx);
   return root;
 }
-const run = (args: string[], wait = false) => manga(wait).parseAsync(args, { from: 'user' });
+const run = (args: string[], wait = false, opts: CtxOptions = {}) => manga(wait, opts).parseAsync(args, { from: 'user' });
 const last = <T>() => outputs.at(-1) as T;
 
 async function world(): Promise<{ chapter: Chapter; aiko: Character }> {
@@ -126,9 +132,46 @@ describe('manga episode …', { timeout: 90_000 }, () => {
     await run(['episode', 'edit', chapter.id, 'premise', '--file', file]);
     expect((await s.api<Chapter>('GET', `/api/chapters/${chapter.id}`)).body.title).toBe('From a file');
     await expect(run(['episode', 'rerun', chapter.id, 'breakdown'])).rejects.toThrow(CliError);
-    await expect(run(['episode', 'rerun', chapter.id, 'breakdown'])).rejects.toThrow("re-running breakdown replaces the chapter's pages (2 panels); add --confirm");
+    await expect(run(['episode', 'rerun', chapter.id, 'breakdown'])).rejects.toThrow(/^re-running breakdown replaces the chapter's pages \(\d+ panels: pn_\w+.*\); add --confirm$/);
     await run(['episode', 'rerun', chapter.id, 'breakdown', '--confirm'], true);
     expect(last<EpisodeRun>()).toMatchObject({ status: 'awaiting-review', currentStep: 3 });
+  });
+
+  /** What the server itself says the rerun would replace (the story pages' panels; the cover is kept). */
+  async function removedIds(chapterId: string): Promise<string[]> {
+    const runId = (await latest(chapterId))!.id;
+    const refused = await s.api<{ error: { details: { removedPanelIds: string[] } } }>('POST', `/api/episodes/${runId}/steps/breakdown/rerun`, {});
+    return refused.body.error.details.removedPanelIds;
+  }
+
+  async function pagesExist(): Promise<Chapter> {
+    const { chapter } = await world();
+    await run(['episode', 'start', chapter.id, '--prompt', 'A cat', '--pages', '1']);
+    await awaitingAt(chapter.id, 1);
+    await run(['episode', 'approve', chapter.id], true);
+    return chapter;
+  }
+
+  it('rerun without --confirm lists the panel ids in the error', async () => {
+    const chapter = await pagesExist();
+    const err = await run(['episode', 'rerun', chapter.id, 'breakdown']).catch((e: unknown) => e);
+    const ids = await removedIds(chapter.id);
+    expect(ids.length).toBeGreaterThan(0);
+    expect(err).toMatchObject({ name: 'CliError', exitCode: 1, silent: false });
+    expect((err as Error).message).toBe(`re-running breakdown replaces the chapter's pages (${ids.length} panels: ${ids.join(', ')}); add --confirm`);
+  });
+
+  it('rerun without --confirm under --json prints { error, removedPanelIds } on stdout and fails silently', async () => {
+    const chapter = await pagesExist();
+    stderr.length = 0;
+    const ids = await removedIds(chapter.id);
+    const err = await run(['episode', 'rerun', chapter.id, 'breakdown'], false, { json: true }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ name: 'CliError', exitCode: 1, silent: true });
+    const printed = JSON.parse(stdout.join('')) as { error: string; removedPanelIds: string[] };
+    expect(printed.error).toBe('needs_confirm');
+    expect([...printed.removedPanelIds].sort()).toEqual([...ids].sort());
+    expect(ids.length).toBeGreaterThan(0);
+    expect(stderr).toEqual([]);
   });
 
   it('cancel stops the run', async () => {
@@ -183,6 +226,22 @@ describe('manga episode --wait exit codes (F17)', { timeout: 90_000 }, () => {
     expect(last<EpisodeRun>().status).toBe('cancelled');
   });
 
+  it('an aborted --wait follow exits 1 as interrupted (not 0) and returns at once', async () => {
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    await serve({ claude: { 'episode.premise': async (req) => { await held; req.signal?.throwIfAborted(); throw new Error('unreachable'); } } });
+    const { chapter } = await world();
+    const controller = new AbortController();
+    const pending = run(['episode', 'start', chapter.id, '--prompt', 'A cat'], true, { signal: controller.signal }).catch((e: unknown) => e);
+    await s.until(async () => s.claude.calls.some((c) => c.name === 'episode.premise') || null);
+    controller.abort();
+    const err = await pending;
+    release();
+    expect(err).toMatchObject({ name: 'CliError', exitCode: 1 });
+    expect((err as Error).message).toMatch(/^interrupted: episode still running/);
+    expect(last<EpisodeRun>().status).toBe('running');
+  });
+
   it('the real program prints the run as JSON and exits 1', async () => {
     await serve(FAILING_PREMISE);
     const { chapter } = await world();
@@ -216,6 +275,15 @@ describe('manga export / text auto', { timeout: 60_000 }, () => {
     expect((err as Error).message).toMatch(/^export failed: The UI is not built/);
   });
 
+  it('export --wait --json prints the failed Job before exiting 1', async () => {
+    const { chapter } = await world();
+    await s.api('POST', `/api/chapters/${chapter.id}/pages`, { layoutPreset: '2-rows' });
+    const err = await run(['export', chapter.id], true, { json: true }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ name: 'CliError', exitCode: 1 });
+    expect(last<Job>()).toMatchObject({ kind: 'export.render', status: 'failed' });
+    expect(last<Job>().error).toContain('The UI is not built');
+  });
+
   it('export sends --out as an absolute path resolved against the CLI cwd (Task 12 carry-over)', async () => {
     const { chapter } = await world();
     await s.api('POST', `/api/chapters/${chapter.id}/pages`, { layoutPreset: '2-rows' });
@@ -240,5 +308,9 @@ describe('manga export / text auto', { timeout: 60_000 }, () => {
     await s.api('PATCH', `/api/panels/${page.panels[0]!.id}`, { script: { ...EMPTY_SCRIPT, dialogue: [{ speakerId: null, kind: 'narration', text: 'Rain.' }] } });
     await run(['text', 'auto', page.page.id]);
     expect(last<PageDetail>().frames.map((f) => f.text)).toEqual(['Rain.']);
+    expect(humans.at(-1)).toBe(`1 frames created on ${page.page.id} (1 in all)`);
+    await run(['text', 'auto', page.page.id]);
+    expect(last<PageDetail>().frames.map((f) => f.text)).toEqual(['Rain.']);
+    expect(humans.at(-1)).toBe(`0 frames created on ${page.page.id} (1 in all)`);
   });
 });

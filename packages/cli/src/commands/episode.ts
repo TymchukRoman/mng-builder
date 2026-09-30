@@ -6,7 +6,7 @@ import { ApiError } from '../client.js';
 import type { CliContext } from '../context.js';
 import { formatRun, runLine } from '../episode-format.js';
 import { CliError } from '../errors.js';
-import { followRun } from '../follow.js';
+import { followRun, isSettled } from '../follow.js';
 
 const enc = encodeURIComponent;
 
@@ -45,6 +45,10 @@ async function show(c: CliContext, chapterId: string, run: EpisodeRun): Promise<
     })
     : run;
   c.out(final, () => formatRun(final));
+  // An aborted follow (Ctrl+C through io.signal) is not a success: the run is still going on the server.
+  if (c.wait && !isSettled(final)) {
+    throw new CliError(`interrupted: episode still ${final.status}; check it with "manga episode status"`, 1);
+  }
   if (c.wait && (final.status === 'failed' || final.status === 'cancelled')) {
     const error = stepError(final);
     throw new CliError(`episode ${final.status}${error ? `: ${error}` : ''}`, 1);
@@ -126,8 +130,13 @@ export function registerEpisodeCommands(program: Command, ctx: () => Promise<Cli
         next = await c.api.post<EpisodeRun>(`/api/episodes/${enc(run.id)}/steps/${step}/rerun`, { confirm: opts.confirm === true });
       } catch (err) {
         if (err instanceof ApiError && err.code === 'needs_confirm') {
-          const n = (err.details as { removedPanelIds?: string[] } | undefined)?.removedPanelIds?.length ?? 0;
-          throw new CliError(`re-running ${step} replaces the chapter's pages (${n} panels); add --confirm`);
+          const removed = (err.details as { removedPanelIds?: string[] } | undefined)?.removedPanelIds ?? [];
+          if (c.json) {
+            c.io.stdout(`${JSON.stringify({ error: 'needs_confirm', removedPanelIds: removed }, null, 2)}
+`);
+            throw new CliError('needs confirmation', 1, true);
+          }
+          throw new CliError(`re-running ${step} replaces the chapter's pages (${removed.length} panels: ${removed.join(', ')}); add --confirm`);
         }
         throw err;
       }
