@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { withCountTag } from '@manga/shared';
 import { InvalidOutputError } from '../engines/errors.js';
 import { PermanentError } from '../jobs/index.js';
 import type { LlmStepHandler } from '../jobs/llm-step.js';
@@ -12,7 +13,7 @@ export const AppearanceOutputSchema = z.object({ appearanceTags: z.string().min(
 /**
  * Spec §11 "AI suggest appearance": turns a free-text description into the canonical Danbooru appearance tag
  * string for a character. The answer is normalized again in code (forbidden words dropped, lowercased,
- * de-duplicated) before it ever overwrites the character's tags.
+ * de-duplicated, the count tag its words call for) before it ever overwrites the character's tags.
  */
 export function appearanceStep(services: HandlerServices): LlmStepHandler {
   return async (ctx, payload) => {
@@ -25,7 +26,8 @@ export function appearanceStep(services: HandlerServices): LlmStepHandler {
       prompt: `Character: ${character.name} (${character.role})\n\nDescription:\n${payload.description.trim()}\n\nWrite the appearance tags.`,
       schema: AppearanceOutputSchema, signal: ctx.signal, onProgress: (label) => ctx.progress(label),
     });
-    const appearanceTags = normalizeAppearanceTags(out.appearanceTags);
+    // A man's tags start with 1boy even when the model wrote 1other (Roman: "1other, fat man" rendered as a woman).
+    const appearanceTags = withCountTag(normalizeAppearanceTags(out.appearanceTags));
     // Nothing usable survived normalization (e.g. only forbidden words) — fail loudly instead of overwriting the
     // character's existing tags with an empty string (m2-rulings Task 20 addition).
     if (!appearanceTags) throw new InvalidOutputError('appearance: the AI wrote no usable appearance tags', out.appearanceTags);

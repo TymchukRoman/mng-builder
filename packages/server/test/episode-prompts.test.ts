@@ -125,6 +125,14 @@ describe('step contexts', () => {
     expect(renderedSystem(run, 'outline')).toContain('never one from the context\'s "characters" or "otherCharacterNames"');
   });
 
+  it('outline starts appearanceTags with the right count tag, 1other only when truly unknown (Roman: "1other, fat man" drew a woman)', () => {
+    const { run } = fullWorld();
+    const system = renderedSystem(run, 'outline');
+    expect(system).toContain('start with the count tag: "1boy" for a male (a man, boy or old man), "1girl" for a female');
+    expect(system).toContain('"1other" only for a human whose gender is genuinely non-binary or unknown');
+    expect(system).toContain('for a man, male traits where they fit ("beard", "stubble", "broad shoulders")');
+  });
+
   it("the outline closes the cast: an adaptation brings its canonical characters, crowds are not characters (Roman's Naruto run)", () => {
     const { run } = fullWorld();
     const system = renderedSystem(run, 'outline');

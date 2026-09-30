@@ -1,5 +1,5 @@
 // packages/server/src/workflows/episode/normalize.ts
-import { AngleSchema, CharacterRoleSchema, DialogueKindSchema, ShotSchema, StagePositionSchema } from '@manga/shared';
+import { AngleSchema, CharacterRoleSchema, DialogueKindSchema, ShotSchema, StagePositionSchema, withCountTag } from '@manga/shared';
 import type { PromptsPanelBrief } from './context.js';
 import type { LlmStepName } from './steps.js';
 
@@ -199,15 +199,30 @@ function fitPrompts(value: unknown, offered: readonly PromptsPanelBrief[]): Norm
 }
 
 /**
+ * Outline: a new character's appearanceTags start with the count tag its words call for (withCountTag): a local model
+ * wrote "1other, fat man", and the portrait came out a woman. A correct, unknown or non-human count stays as written.
+ */
+function fitOutlineCounts(value: unknown): unknown {
+  if (!isRecord(value) || !Array.isArray(value['newCharacters'])) return value;
+  return {
+    ...value,
+    newCharacters: value['newCharacters'].map((c: unknown) =>
+      (isRecord(c) && typeof c['appearanceTags'] === 'string' ? { ...c, appearanceTags: withCountTag(c['appearanceTags']) } : c)),
+  };
+}
+
+/**
  * Repairs the shape slips of a parsed LLM answer before it is validated (a local model often writes an object where
  * a string belongs, "close-up" for "close", one object for a list…): free-text fields become text, enum fields map
- * synonyms or fall back to a neutral value, a lone item becomes a list, and a prompts answer keeps only the offered
- * panels and gets a scene from the script for any it skipped. Only the LLM path uses it; user edits stay strict.
+ * synonyms or fall back to a neutral value, a lone item becomes a list, an outline's new characters get the count tag
+ * their words call for, and a prompts answer keeps only the offered panels and gets a scene from the script for any it
+ * skipped. Only the LLM path uses it; user edits stay strict.
  * Pure: never throws, never mutates `raw`, and returns what it cannot help unchanged.
  */
 export function normalizeLlmAnswer(step: LlmStepName, raw: unknown, ctx: NormalizeContext = {}): NormalizedAnswer {
   try {
     const value = repair(raw, STEP_SHAPES[step], 0);
+    if (step === 'outline') return { value: fitOutlineCounts(value), filled: [] };
     return step === 'prompts' && ctx.panels ? fitPrompts(value, ctx.panels) : { value, filled: [] };
   } catch {
     return { value: raw, filled: [] };

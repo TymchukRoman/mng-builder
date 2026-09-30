@@ -171,6 +171,14 @@ describe('llm.step appearance', () => {
     expect(events.filter((e) => e.type === 'entity' && e.entity === 'character' && e.op === 'updated')).toHaveLength(1);
   });
 
+  it('starts a man\'s tags with 1boy even when the model wrote 1other (Roman: "1other, fat man" rendered as a woman)', async () => {
+    const services = handlerServices(lib.store, comfy, { claude: { appearance: () => ({ appearanceTags: '1other, fat man, long hair' }) } });
+    const { manga } = seedManga(lib.store);
+    const deb = seedCharacter(lib.store, manga.id, 'Debil');
+    const payload = { type: 'appearance' as const, characterId: deb.id, description: 'A fat aristocrat with long wavy hair.' };
+    await expect(appearanceStep(services)(jobContext(lib.store, 'llm.step', payload).ctx, payload)).resolves.toEqual({ appearanceTags: '1boy, fat man, long hair' });
+  });
+
   it('follows the job lane, not the live settings, for the engine (I1)', async () => {
     const services = handlerServices(lib.store, comfy);
     const { manga } = seedManga(lib.store);

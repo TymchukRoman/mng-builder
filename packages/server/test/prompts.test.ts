@@ -29,6 +29,13 @@ describe('loadPrompt', () => {
     expect(() => loadPrompt('nope', 'episode')).toThrow(/^Prompt episode\/nope\.md not found \(looked in .*episode[\\/]nope\.md/);
   });
 
+  it('asks the appearance suggestion for the right count tag: 1boy for a male, 1other only when truly unknown', () => {
+    const text = loadPrompt('appearance');
+    expect(text).toContain('`1boy` for a male (a man, boy or old man), `1girl` for a female');
+    expect(text).toContain('`1other` only for a human whose gender is genuinely non-binary or unknown');
+    expect(text).toContain('`beard`');
+  });
+
   it('forbids appearance, names, lettering and camera framing in both scene prompts', () => {
     for (const name of ['panel-prompt-tags', 'panel-prompt-natural'] as const) {
       const text = loadPrompt(name);

@@ -201,3 +201,19 @@ describe('STEP_SHAPES', () => {
     }
   });
 });
+
+describe('normalizeLlmAnswer: outline count tags (Roman: "Дебіл" was "1other, fat man" and rendered as a woman)', () => {
+  const tagsOf = (appearanceTags: unknown) =>
+    (normalizeLlmAnswer('outline', { scenes: outline(['A']).scenes, newCharacters: [{ name: 'A', role: 'main', personality: '', speechStyle: '', appearanceTags }] }).value as
+      { newCharacters: Array<{ appearanceTags: string }> }).newCharacters[0]!.appearanceTags;
+
+  it('turns a clearly gendered 1other into 1boy or 1girl, and adds a missing count tag', () => {
+    expect(tagsOf('1other, fat man, long hair, wavy hair, aristocratic clothes')).toBe('1boy, fat man, long hair, wavy hair, aristocratic clothes');
+    expect(tagsOf('1other, old woman, shawl')).toBe('1girl, old woman, shawl');
+    expect(tagsOf(['king', 'beard', 'crown'])).toBe('1boy, king, beard, crown');
+  });
+
+  it('keeps a correct, unknown or non-human count as the model wrote it', () => {
+    for (const tags of ['1boy, spiky blond hair', '1girl, bob cut', '1other, hooded cloak', 'no humans, cat']) expect(tagsOf(tags)).toBe(tags);
+  });
+});
