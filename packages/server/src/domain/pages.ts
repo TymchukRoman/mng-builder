@@ -9,8 +9,9 @@ import { chapterPages, renumberPages } from './order.js';
 import { newPanelInput } from './panels.js';
 
 export class NeedsConfirmError extends HttpError {
-  constructor(public removedPanelIds: string[]) {
-    super(409, 'needs_confirm', `this layout has fewer panels and would remove ${removedPanelIds.join(', ')}; resend with confirm=true`, { removedPanelIds });
+  /** `message` defaults to the layout-preset wording; the episode rerun passes its own (F24). */
+  constructor(public removedPanelIds: string[], message?: string) {
+    super(409, 'needs_confirm', message ?? `this layout has fewer panels and would remove ${removedPanelIds.join(', ')}; resend with confirm=true`, { removedPanelIds });
     this.name = 'NeedsConfirmError';
   }
 }

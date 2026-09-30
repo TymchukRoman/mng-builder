@@ -58,6 +58,18 @@ describe('textTaskOf', () => {
     expect(textTaskOf(job('llm.step', null))).toBeNull();
     expect(textTaskOf(job('image.generate', { target: 'panel', panelId: 'pn_x' }))).toBeNull();
   });
+
+  it('maps an episode step through STEP_TASK (F1); render, lettering and unknown steps have none', () => {
+    const step = (s: string) => job('llm.step', { type: 'episode', runId: 'er_x', step: s });
+    expect(textTaskOf(step('premise'))).toBe('story');
+    expect(textTaskOf(step('outline'))).toBe('story');
+    expect(textTaskOf(step('breakdown'))).toBe('story');
+    expect(textTaskOf(step('scripts'))).toBe('dialogue');
+    expect(textTaskOf(step('prompts'))).toBe('prompts');
+    expect(textTaskOf(step('lettering'))).toBeNull();
+    expect(textTaskOf(step('constructor'))).toBeNull();
+    expect(textTaskOf(job('llm.step', { type: 'episode', runId: 'er_x' }))).toBeNull();
+  });
 });
 
 describe('ScriptedEngine', () => {

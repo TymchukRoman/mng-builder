@@ -1,4 +1,4 @@
-import type { EngineName, Job, JobKind, Lane, Settings, Task } from '@manga/shared';
+import { STEP_TASK, type EngineName, type Job, type JobKind, type Lane, type Settings, type Task } from '@manga/shared';
 import { PermanentError, type JobQueue } from '../jobs/index.js';
 import type { Store } from '../store/index.js';
 import type { TextEngine } from './types.js';
@@ -36,14 +36,18 @@ export const TEXT_JOB_KINDS: readonly JobKind[] = ['llm.step', 'image.review'];
 
 /**
  * The task a text job runs, derived from its kind and payload; null when it cannot be derived. M2: panel-prompt and
- * appearance → 'prompts', image.review → 'review'. M4 adds its episode steps here (render/lettering stay null: they
- * are cpu-lane drivers).
+ * appearance → 'prompts', image.review → 'review'. M4: an episode step → `STEP_TASK[step]` (render/lettering stay
+ * null: they are cpu-lane drivers).
  */
 export function textTaskOf(job: Pick<Job, 'kind' | 'payload'>): Task | null {
   if (job.kind === 'image.review') return 'review';
   if (job.kind !== 'llm.step') return null;
-  const type = typeof job.payload === 'object' && job.payload !== null ? (job.payload as { type?: unknown }).type : undefined;
-  return type === 'panel-prompt' || type === 'appearance' ? 'prompts' : null;
+  const payload = typeof job.payload === 'object' && job.payload !== null ? (job.payload as { type?: unknown; step?: unknown }) : {};
+  if (payload.type === 'panel-prompt' || payload.type === 'appearance') return 'prompts';
+  if (payload.type === 'episode' && typeof payload.step === 'string' && Object.hasOwn(STEP_TASK, payload.step)) {
+    return STEP_TASK[payload.step as keyof typeof STEP_TASK];
+  }
+  return null;
 }
 
 /**
