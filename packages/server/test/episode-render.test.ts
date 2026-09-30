@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  DEFAULT_SETTINGS, REVIEW_AVG_SECONDS, castCount, countSentence, countTag, estimateReviewSeconds, stepIndex,
+  DEFAULT_SETTINGS, REVIEW_AVG_SECONDS, castCount, countSentence, countTag, estimateReviewSeconds, formatEstimate, renderGate, stepIndex,
   type EpisodeRun, type ImageGeneratePayload, type ImageReviewPayload, type ServerEvent,
 } from '@manga/shared';
 import { EventBus } from '../src/events/bus.js';
@@ -32,16 +32,17 @@ afterEach(() => { lib.close(); });
 
 const deps = (): DriverDeps => ({ store: lib.store, bus, queue: queue.asQueue(), engines: { laneFor: () => 'claude' }, newSeed: () => 777 });
 
-/** Two story pages of two panels + the cover, all with Aiko; the render step is running. */
-function renderWorld(opts: { portrait?: boolean; mode?: 'review' | 'autopilot' } = {}) {
+/** Two story pages (or `pages`) of two panels + the cover, all with Aiko; the render step is running. */
+function renderWorld(opts: { portrait?: boolean; mode?: 'review' | 'autopilot'; previewFirst?: boolean; pages?: number } = {}) {
   const { manga, chapter } = seedEpisodeWorld(lib.store);
   let aiko = seedCharacter(lib.store, manga.id, 'Aiko', '1girl, short black hair');
   if (opts.portrait !== false) aiko = giveRefs(lib.store, aiko, ['portrait']);
-  const bd = breakdown(2);
+  const bd = breakdown(opts.pages ?? 2);
   const sc = scripts(bd, 'Aiko');
   materializeScripts({ store: lib.store, bus }, chapter.id, { breakdown: bd, scripts: sc, premise: PREMISE });
   const seeded = seedRun(lib.store, chapter.id, {
     mode: opts.mode ?? 'autopilot', outputs: { premise: PREMISE, outline: outline(['Aiko']), breakdown: bd, scripts: sc }, currentStep: 'render',
+    ...(opts.previewFirst !== undefined ? { input: { previewFirst: opts.previewFirst } } : {}),
   });
   const run = lib.store.episodes.update(seeded.id, { steps: patchStep(seeded.steps, stepIndex('render'), { status: 'running', startedAt: nowIso() }) });
   const panelIds = chapterPanels(lib.store, chapter.id, manga.readingDirection).map((e) => e.panel.id);
@@ -383,13 +384,6 @@ describe('runRenderStep', () => {
     expect(queue.jobs('image.generate')).toHaveLength(5);
     expect(queue.jobs('image.generate').every((j) => j.status === 'queued')).toBe(true);
   });
-
-  it('fails the step when a panel render fails, naming the panel', async () => {
-    const { run, panelIds } = renderWorld();
-    const broken = panelIds[2]!;
-    await expect(render(run, { beforePanel: (id) => { if (id === broken) throw new Error('ComfyUI rejected the graph'); } }))
-      .rejects.toThrow(`1 of 5 panel renders failed (${broken}: ComfyUI rejected the graph). Retry the render step to render only the missing panels.`);
-  });
 });
 
 describe('runLetteringStep', () => {
@@ -402,5 +396,115 @@ describe('runLetteringStep', () => {
     expect(created).toHaveLength(5);
     expect(new Set(created.map((e) => (e.type === 'entity' ? e.id : '')))).toHaveProperty('size', 5);
     expect(events).toHaveLength(5); // G5: only the new frame rows changed
+  });
+});
+
+describe('runRenderStep — failed panels (W1 R1)', () => {
+  it('records a failed panel, finishes the step, labels the failure and skips it in review', async () => {
+    const { run, panelIds } = renderWorld();
+    const broken = panelIds[2]!;
+    const progress: string[] = [];
+    const out = await render(run, { beforePanel: (id) => { if (id === broken) throw new Error('ComfyUI rejected the graph'); } }, progress);
+    expect(out.failedPanelIds).toEqual([broken]);
+    expect(lib.store.panels.require(broken).activeImageId).toBeNull();
+    expect(progress.some((l) => /^Rendering 5 panels · est\. .+ · 1 failed$/.test(l))).toBe(true);
+    const reviewed = queue.jobs('image.review').map((j) => (j.payload as ImageReviewPayload).panelId);
+    expect(reviewed).toHaveLength(4);
+    expect(reviewed).not.toContain(broken);
+  });
+
+  it('fails the step only when every panel failed, naming the first failure', async () => {
+    const { run } = renderWorld();
+    await expect(render(run, { beforePanel: () => { throw new Error('ComfyUI is not reachable'); } }))
+      .rejects.toThrow(/^All 5 panel renders failed \(pn_[a-z2-7]+: ComfyUI is not reachable\)\. Check the image engine, then retry the render step\.$/);
+  });
+});
+
+describe('runRenderStep — preview first (W1 Q2)', () => {
+  it('renders the cover and page 1 first, then stops with the rest and its estimate', async () => {
+    lib.store.settings.patch({ review: { autoInEpisode: false } });
+    const { run, manga, panelIds } = renderWorld({ previewFirst: true });
+    const [p1a, p1b, p2a, p2b, cover] = panelIds;
+    const progress: string[] = [];
+    const out = await render(run, {}, progress);
+    expect(renderGate(out)).toBe('preview');
+    const now = [p1a!, p1b!, cover!].map((id) => lib.store.panels.require(id));
+    const rest = [p2a!, p2b!].map((id) => lib.store.panels.require(id));
+    expect(out).toMatchObject({ preview: true, remainingPanels: 2, failedPanelIds: [], estimateSeconds: estimateRender(lib.store, lib.store.settings.get(), manga, rest) });
+    expect(progress[0]).toBe(`Rendering page 1 and the cover: 3 panels · est. ${formatEstimate(estimateRender(lib.store, lib.store.settings.get(), manga, now))}`);
+    expect(queue.jobs('image.generate').map((j) => (j.payload as { panelId: string }).panelId).sort()).toEqual([p1a!, p1b!, cover!].sort());
+    expect(rest.every((p) => p.activeImageId === null)).toBe(true);
+  });
+
+  it('Continue (the stop kept as the output, same token) renders only the rest and does not stop again', async () => {
+    lib.store.settings.patch({ review: { autoInEpisode: false } });
+    const { run, panelIds } = renderWorld({ previewFirst: true });
+    const first = await render(run);
+    const again = lib.store.episodes.update(run.id, { steps: patchStep(run.steps, stepIndex('render'), { output: first }) });
+    const out = await render(again);
+    expect(renderGate(out)).toBeNull();
+    expect(out.failedPanelIds).toEqual([]);
+    expect(queue.jobs('image.generate')).toHaveLength(5); // 3 for the preview + the 2 remaining, none twice
+    for (const id of panelIds) expect(lib.store.panels.require(id).activeImageId).not.toBeNull();
+  });
+
+  it('Continue never reviews again the page 1 the user checked (F14)', async () => {
+    lib.store.settings.patch({ review: { rounds: 1 } });
+    const { run, panelIds } = renderWorld({ previewFirst: true });
+    const [p1a, , p2a, p2b] = panelIds;
+    const flagP1a = { review: (_imageId: string, panelId: string | null) => (panelId === p1a ? [{ kind: 'text' as const, note: 'sign' }] : []) };
+    // The preview's last review round re-renders p1a and does not review the new image.
+    const first = await render(run, flagP1a);
+    expect(first).toMatchObject({ preview: true, flagged: 1, rounds: 1 });
+    expect(panelJobs(p1a!)).toHaveLength(2);
+    const reviewsBefore = queue.jobs('image.review').length;
+    const again = lib.store.episodes.update(run.id, { steps: patchStep(run.steps, stepIndex('render'), { output: first }) });
+    const out = await render(again, flagP1a);
+    const continued = queue.jobs('image.review').slice(reviewsBefore).map((j) => (j.payload as ImageReviewPayload).panelId);
+    expect(continued.sort()).toEqual([p2a!, p2b!].sort());
+    expect(out).toMatchObject({ reviewed: 2, flagged: 0 });
+    expect(panelJobs(p1a!)).toHaveLength(2); // page 1 stays as the user saw it
+  });
+
+  it('does not stop when page 1 is the only story page', async () => {
+    const { run, panelIds } = renderWorld({ previewFirst: true, pages: 1 });
+    const out = await render(run);
+    expect(renderGate(out)).toBeNull();
+    for (const id of panelIds) expect(lib.store.panels.require(id).activeImageId).not.toBeNull();
+  });
+});
+
+describe('runRenderStep — size stop (W1 C2)', () => {
+  it('stops once before any GPU work when the render would take longer than confirmRenderMinutes', async () => {
+    lib.store.settings.patch({ episode: { confirmRenderMinutes: 1 } });
+    const { run } = renderWorld({ portrait: false, mode: 'autopilot', previewFirst: false });
+    const out = await render(run);
+    expect(renderGate(out)).toBe('confirm');
+    expect(out.panels).toBe(5);
+    expect(out.estimateSeconds).toBeGreaterThan(60);
+    expect(queue.jobs('image.generate')).toEqual([]); // not even a portrait
+  });
+
+  it('Continue after the size stop renders without asking again', async () => {
+    lib.store.settings.patch({ episode: { confirmRenderMinutes: 1 }, review: { autoInEpisode: false } });
+    const { run, panelIds } = renderWorld({ previewFirst: false });
+    const stop = await render(run);
+    const again = lib.store.episodes.update(run.id, { steps: patchStep(run.steps, stepIndex('render'), { output: stop }) });
+    expect(renderGate(await render(again))).toBeNull();
+    for (const id of panelIds) expect(lib.store.panels.require(id).activeImageId).not.toBeNull();
+  });
+
+  it('with the preview on, only the preview stops (it shows the estimate for the rest)', async () => {
+    lib.store.settings.patch({ episode: { confirmRenderMinutes: 1 } });
+    const { run } = renderWorld({ previewFirst: true });
+    expect(renderGate(await render(run))).toBe('preview');
+  });
+
+  it('never stops a run stored before W1, whose input has no previewFirst (F18)', async () => {
+    lib.store.settings.patch({ episode: { confirmRenderMinutes: 1 } });
+    const { run, panelIds } = renderWorld();
+    expect(run.input.previewFirst).toBeUndefined();
+    expect(renderGate(await render(run))).toBeNull();
+    for (const id of panelIds) expect(lib.store.panels.require(id).activeImageId).not.toBeNull();
   });
 });

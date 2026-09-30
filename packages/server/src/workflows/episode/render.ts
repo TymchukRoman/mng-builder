@@ -1,5 +1,5 @@
 import {
-  castCount, countSentence, countTag, estimateReviewSeconds, grownMen, estimateSeconds, formatEstimate, stepIndex, type CastCount,
+  castCount, countSentence, countTag, estimateReviewSeconds, grownMen, estimateSeconds, formatEstimate, renderGate, stepIndex, type CastCount,
   type Character, type EpisodeRun, type Image, type ImageGeneratePayload, type ImageGenerateResult, type ImageReviewPayload,
   type Job, type Manga, type Panel, type RenderOutput, type ReviewResult, type Settings,
 } from '@manga/shared';
@@ -175,10 +175,11 @@ async function ensurePortraits(deps: DriverDeps, ctx: JobContext, run: EpisodeRu
 }
 
 interface GenRequest { panelId: string; patch?: RetryPatch }
+interface GenFailure { panelId: string; error: string }
 
 async function generateAll(
   deps: DriverDeps, ctx: JobContext, run: EpisodeRun, reqs: GenRequest[], leftovers: Leftovers, jobIds: string[], label: string,
-): Promise<{ done: Set<string>; failed: string[] }> {
+): Promise<{ done: Set<string>; failed: GenFailure[] }> {
   ctx.progress(label, 0, reqs.length); // before queueing, so the estimate is visible first
   const jobs = reqs.map((r) => {
     const adopted = leftovers.takeGenerate(r.panelId);
@@ -188,14 +189,16 @@ async function generateAll(
   });
   jobIds.push(...jobs.map((j) => j.id));
   const done = new Set<string>();
-  const failed: string[] = [];
+  const failed: GenFailure[] = [];
   let count = 0;
   await Promise.all(jobs.map(async (job, i) => {
     const finished = await waitForJob(deps.queue, job.id, ctx.signal);
     const panelId = reqs[i]!.panelId;
     if (finished.status === 'succeeded' && (finished.result as ImageGenerateResult | null)?.imageId) done.add(panelId);
-    else failed.push(`${panelId}: ${finished.error ?? finished.status}`);
-    ctx.progress(label, ++count, reqs.length);
+    else failed.push({ panelId, error: finished.error ?? finished.status });
+    count++;
+    // W1 R1: a failure is shown in the label and the render goes on.
+    ctx.progress(failed.length > 0 ? `${label} · ${failed.length} failed` : label, count, reqs.length);
   }));
   return { done, failed };
 }
@@ -224,38 +227,33 @@ async function reviewAll(
   return results.filter((r): r is { panel: Panel; review: ReviewResult } => r !== null);
 }
 
-/** Step 6 (spec §8): render, then batch review → re-render flagged, for at most settings.review.rounds rounds. */
-export async function runRenderStep(deps: DriverDeps, ctx: JobContext, run: EpisodeRun): Promise<RenderOutput> {
+const NOTHING_RENDERED = { jobs: [] as string[], reviewed: 0, flagged: 0, rounds: 0 };
+
+/**
+ * Renders `todo`, then batch review → re-render flagged, for at most settings.review.rounds rounds (spec §8). W1 R1: a failed
+ * panel is recorded, not fatal; only a phase in which every panel failed is systemic (engine down, bad recipe) and fails the
+ * step. Reviews cover the chapter's unreviewed images, never a panel whose render failed and never one in `unreviewable`.
+ */
+async function renderPanels(
+  deps: DriverDeps, ctx: JobContext, run: EpisodeRun, current: () => Panel[], todo: Panel[], leftovers: Leftovers, label: string,
+  unreviewable: ReadonlySet<string>,
+): Promise<Pick<RenderOutput, 'jobs' | 'reviewed' | 'flagged' | 'rounds'>> {
   const { store } = deps;
-  const chapter = store.chapters.require(run.chapterId);
-  const manga = store.mangas.require(chapter.mangaId);
   const settings = store.settings.get();
-  const token = run.steps[stepIndex('render')]?.startedAt ?? null;
-  const ids = chapterPanels(store, chapter.id, manga.readingDirection).map((e) => e.panel.id);
-  if (ids.length === 0) throw new PermanentError('Nothing to render: the chapter has no panels yet (the scripts step creates them)');
-  const current = (): Panel[] => ids.map((id) => store.panels.require(id));
-
-  await ensurePortraits(deps, ctx, run, manga.id, current());
-  const leftovers = new Leftovers(liveJobs(store, run.id));
-  // Panels rendered since this step started are done; one with an unfinished job of an earlier attempt is adopted (F11).
-  const todo = current().filter((p) => !renderedSince(store, p, token) || leftovers.hasGenerate(p.id));
   const jobIds: string[] = [];
-  const estimate = formatEstimate(estimateRender(store, settings, manga, todo));
-  const first = await generateAll(
-    deps, ctx, run, todo.map((p) => ({ panelId: p.id })), leftovers, jobIds, `Rendering ${todo.length} panels · est. ${estimate}`,
-  );
-  if (first.failed.length > 0) {
-    throw new PermanentError(
-      `${first.failed.length} of ${todo.length} panel renders failed (${first.failed[0]}). Retry the render step to render only the missing panels.`,
-    );
+  const first = await generateAll(deps, ctx, run, todo.map((p) => ({ panelId: p.id })), leftovers, jobIds, label);
+  if (todo.length > 0 && first.failed.length === todo.length) {
+    const f = first.failed[0]!;
+    throw new PermanentError(`All ${todo.length} panel renders failed (${f.panelId}: ${f.error}). Check the image engine, then retry the render step.`);
   }
-
+  const failed = new Set(first.failed.map((f) => f.panelId));
   let reviewed = 0;
   let flagged = 0;
   let rounds = 0;
   if (settings.review.autoInEpisode && settings.review.rounds > 0) {
     const newSeed = deps.newSeed ?? randomSeed;
-    let batch = current().filter((p) => p.activeImageId !== null && store.images.get(p.activeImageId)?.review == null);
+    let batch = current().filter((p) =>
+      !failed.has(p.id) && !unreviewable.has(p.id) && p.activeImageId !== null && store.images.get(p.activeImageId)?.review == null);
     for (let round = 1; round <= settings.review.rounds && batch.length > 0; round++) {
       const results = await reviewAll(deps, ctx, run, batch, leftovers, jobIds, round);
       reviewed += results.length;
@@ -272,4 +270,69 @@ export async function runRenderStep(deps: DriverDeps, ctx: JobContext, run: Epis
     }
   }
   return { jobs: jobIds, reviewed, flagged, rounds };
+}
+
+/**
+ * Step 6 (spec §8), with W1's stops. The step's token (startedAt) marks what is done: panels rendered since it are skipped,
+ * so a retry, a Continue and a resume all render only what is left.
+ * - C2: with the preview off, a render whose estimate exceeds settings.episode.confirmRenderMinutes stops before any GPU
+ *   work with `{confirm, panels, estimateSeconds}`. F18: a run stored before W1 (its input has no previewFirst) never stops.
+ * - Q2: with the preview on, the cover and page 1 render first, then the step stops with `{preview, remainingPanels,
+ *   estimateSeconds}` (no stop when nothing else is left).
+ * A stop is returned as the output; the runner waits at awaiting-review in both modes. Continue keeps that output on the
+ * step and dispatches it again, so `gate` is set and no second stop happens.
+ */
+export async function runRenderStep(deps: DriverDeps, ctx: JobContext, run: EpisodeRun): Promise<RenderOutput> {
+  const { store } = deps;
+  const chapter = store.chapters.require(run.chapterId);
+  const manga = store.mangas.require(chapter.mangaId);
+  const settings = store.settings.get();
+  const step = run.steps[stepIndex('render')];
+  const token = step?.startedAt ?? null;
+  const entries = chapterPanels(store, chapter.id, manga.readingDirection);
+  if (entries.length === 0) throw new PermanentError('Nothing to render: the chapter has no panels yet (the scripts step creates them)');
+  const ids = entries.map((e) => e.panel.id);
+  const current = (): Panel[] => ids.map((id) => store.panels.require(id));
+  const withoutImage = (among?: ReadonlySet<string>): string[] =>
+    current().filter((p) => p.activeImageId === null && (among === undefined || among.has(p.id))).map((p) => p.id);
+  const pendingWith = (leftovers: Leftovers): Panel[] =>
+    current().filter((p) => !renderedSince(store, p, token) || leftovers.hasGenerate(p.id));
+  const gate = renderGate(step?.output); // set: this dispatch is the Continue of that stop
+  const previewed = new Set(entries.filter((e) => e.isCover || e.pageNumber === 1).map((e) => e.panel.id));
+
+  if (gate === null && run.input.previewFirst === false) {
+    const todo = pendingWith(new Leftovers(liveJobs(store, run.id)));
+    const estimateSeconds = estimateRender(store, settings, manga, todo);
+    if (estimateSeconds > settings.episode.confirmRenderMinutes * 60) {
+      return { ...NOTHING_RENDERED, failedPanelIds: [], confirm: true, panels: todo.length, estimateSeconds };
+    }
+  }
+
+  await ensurePortraits(deps, ctx, run, manga.id, current());
+  // Panels rendered since this step started are done; one with an unfinished job of an earlier attempt is adopted (F11).
+  const leftovers = new Leftovers(liveJobs(store, run.id));
+  const todo = pendingWith(leftovers);
+  const label = (panels: Panel[], what: string): string => `${what} · est. ${formatEstimate(estimateRender(store, settings, manga, panels))}`;
+
+  if (gate === null && run.input.previewFirst === true) {
+    const rest = todo.filter((p) => !previewed.has(p.id));
+    if (rest.length > 0) {
+      const now = todo.filter((p) => previewed.has(p.id));
+      const phase = await renderPanels(
+        deps, ctx, run, current, now, leftovers, label(now, `Rendering page 1 and the cover: ${now.length} panels`), new Set(),
+      );
+      return {
+        ...phase, failedPanelIds: withoutImage(previewed), preview: true, remainingPanels: rest.length,
+        estimateSeconds: estimateRender(store, settings, manga, rest),
+      };
+    }
+  }
+
+  // F14: the Continue after the preview never reviews a previewed panel it does not render again: the user checked that
+  // page, and the preview's last review round may have re-rendered it without a review. The rest of the chapter is
+  // reviewed as usual, so a Continue resumed after a restart still adopts its review jobs (F11).
+  const todoIds = new Set(todo.map((p) => p.id));
+  const checked = gate === 'preview' ? new Set([...previewed].filter((id) => !todoIds.has(id))) : new Set<string>();
+  const phase = await renderPanels(deps, ctx, run, current, todo, leftovers, label(todo, `Rendering ${todo.length} panels`), checked);
+  return { ...phase, failedPanelIds: withoutImage() };
 }

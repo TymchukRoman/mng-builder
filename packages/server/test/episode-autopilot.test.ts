@@ -37,7 +37,7 @@ async function setup(server: M4TestServer, pages: number) {
   // Left to the premise, as the New chapter dialog does when its Title is blank (M4 final M6).
   const chapter = (await server.api<Chapter>('POST', `/api/mangas/${manga.id}/chapters`, { title: CHAPTER_TITLE_FROM_PREMISE })).body;
   const run = (await server.api<EpisodeRun>('POST', `/api/chapters/${chapter.id}/episode`, {
-    input: { prompt: 'Айко знаходить кота під дощем', characterIds: [aiko.id], pages }, mode: 'autopilot',
+    input: { prompt: 'Айко знаходить кота під дощем', characterIds: [aiko.id], pages, previewFirst: false }, mode: 'autopilot',
   })).body;
   return { manga, chapter, run };
 }

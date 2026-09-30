@@ -1,7 +1,7 @@
 import { getEventListeners, getMaxListeners } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ZodError } from 'zod';
-import { CHAPTER_TITLE_FROM_PREMISE, readingOrder, type EpisodeInput, type NewCharacterDraft, type OutlineOutput, type ImageGeneratePayload, type Job, type LlmStepPayload, type ServerEvent } from '@manga/shared';
+import { CHAPTER_TITLE_FROM_PREMISE, readingOrder, type EpisodeInput, type NewCharacterDraft, type OutlineOutput, type ImageGeneratePayload, type Job, type LlmStepPayload, type ServerEvent, stepIndex } from '@manga/shared';
 import { EPISODE_FAKE_RESPONSES } from '../src/dev/fake-episode.js';
 import { FAKE_RESPONSES } from '../src/dev/fake-responses.js';
 import { createPage, NeedsConfirmError } from '../src/domain/pages.js';
@@ -973,5 +973,82 @@ describe("EpisodeRunner — a Ukrainian book's prompts must be English (Roman's 
     for (const { panel } of chapterPanels(lib.store, chapter.id, manga.readingDirection)) {
       expect(lib.store.panels.require(panel.id).prompt.scene).toBe(ROMAN_SCENE);
     }
+  });
+});
+
+describe('EpisodeRunner — render stops (W1 Q2, C2)', () => {
+  it('the preview stop waits even in autopilot; Continue renders the rest in the same step and finishes', async () => {
+    const { chapter, input } = world();
+    const { runner, queue } = rig();
+    const run = runner.start(chapter.id, { ...input, previewFirst: true }, 'autopilot');
+    await queue.idle();
+    let r = runner.get(run.id);
+    const render = r.steps[stepIndex('render')]!;
+    expect([r.status, r.currentStep, render.status]).toEqual(['awaiting-review', stepIndex('render'), 'awaiting-review']);
+    expect(render.output).toMatchObject({ preview: true, remainingPanels: 2 });
+    runner.approve(run.id);
+    await queue.idle();
+    r = runner.get(run.id);
+    expect(r.status).toBe('done');
+    expect(r.steps[stepIndex('render')]!.startedAt).toBe(render.startedAt);
+    expect(queue.jobs('llm.step').filter((j) => (j.payload as { step?: string }).step === 'render')).toHaveLength(2);
+    for (const page of storyPages(lib.store, chapter.id)) {
+      expect(lib.store.panels.listByPage(page.id).every((p) => p.activeImageId !== null)).toBe(true);
+    }
+  });
+
+  it('re-running the render step at the preview asks for the preview again, with a new token', async () => {
+    const { chapter, input } = world();
+    const { runner, queue } = rig();
+    const run = runner.start(chapter.id, { ...input, previewFirst: true }, 'autopilot');
+    await queue.idle();
+    const token = runner.get(run.id).steps[stepIndex('render')]!.startedAt;
+    runner.rerun(run.id, 'render', false);
+    await queue.idle();
+    const step = runner.get(run.id).steps[stepIndex('render')]!;
+    expect(step.status).toBe('awaiting-review');
+    expect(step.output).toMatchObject({ preview: true });
+    expect(step.startedAt).not.toBe(token);
+  });
+
+  it('the size stop waits in autopilot too, and Continue finishes', async () => {
+    lib.store.settings.patch({ episode: { confirmRenderMinutes: 1 } });
+    const { chapter, input } = world();
+    const { runner, queue } = rig();
+    const run = runner.start(chapter.id, { ...input, previewFirst: false }, 'autopilot');
+    await queue.idle();
+    expect(runner.get(run.id).steps[stepIndex('render')]!.output).toMatchObject({ confirm: true });
+    runner.approve(run.id);
+    await queue.idle();
+    expect(runner.get(run.id).status).toBe('done');
+  });
+
+  it('"Run to end" at the preview continues the render and runs to the end', async () => {
+    const { chapter, input } = world();
+    const { runner, queue } = rig();
+    const run = runner.start(chapter.id, { ...input, previewFirst: true }, 'autopilot');
+    await queue.idle();
+    expect(runner.get(run.id).steps[stepIndex('render')]!.output).toMatchObject({ preview: true });
+    runner.autopilot(run.id);
+    await queue.idle();
+    expect(runner.get(run.id).status).toBe('done');
+  });
+
+  it('in review mode, Continue at the preview then waits at the finished render like any review point', async () => {
+    const { chapter, input } = world();
+    const { runner, queue } = rig();
+    const run = runner.start(chapter.id, { ...input, previewFirst: true }, 'autopilot'); // autopilot picks the portraits
+    await queue.idle();
+    lib.store.episodes.update(run.id, { mode: 'review' });
+    expect(runner.get(run.id).steps[stepIndex('render')]!.output).toMatchObject({ preview: true });
+    runner.approve(run.id); // Continue
+    await queue.idle();
+    const r = runner.get(run.id);
+    const render = r.steps[stepIndex('render')]!;
+    expect([r.status, r.currentStep, render.status]).toEqual(['awaiting-review', stepIndex('render'), 'awaiting-review']);
+    expect(render.output).not.toHaveProperty('preview');
+    runner.approve(run.id); // accepts the render
+    await queue.idle();
+    expect(runner.get(run.id).currentStep).toBe(stepIndex('lettering'));
   });
 });

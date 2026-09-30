@@ -1,7 +1,7 @@
 import { setMaxListeners } from 'node:events';
 import {
   BreakdownOutputSchema, EPISODE_ACTIVE_STATUSES as ACTIVE, EDIT_NEEDS_PENDING_NEXT, EDIT_TOO_LATE_MESSAGE, EDITABLE_STEPS, EPISODE_STEPS, OutlineOutputSchema, PremiseOutputSchema, PromptsOutputSchema,
-  REVIEW_POINTS, STEP_TASK, ScriptsOutputSchema, panelIds, stepIndex,
+  REVIEW_POINTS, STEP_TASK, ScriptsOutputSchema, panelIds, renderGate, stepIndex,
   type Chapter, type EpisodeInput, type EpisodeRun, type EpisodeStepName, type ImageGeneratePayload, type Job, type LlmStepPayload,
 } from '@manga/shared';
 import { deletePage } from '../../domain/delete.js';
@@ -86,6 +86,7 @@ export class EpisodeRunner {
     if (run.status !== 'awaiting-review' || run.steps[idx]?.status !== 'awaiting-review') {
       throw new ConflictError('nothing to approve: the run is not waiting for review');
     }
+    if (renderGate(run.steps[idx]!.output) !== null) return this.continueRender(run, idx);
     const saved = this.save(run, { status: 'running', steps: patchStep(run.steps, idx, { status: 'done' }) });
     try {
       this.accept(saved, idx);
@@ -94,6 +95,16 @@ export class EpisodeRunner {
       throw err;
     }
     return this.get(runId);
+  }
+
+  /**
+   * W1 Q2/C2: Continue at the preview or size stop. The same step renders the rest: it keeps its token, so the panels
+   * rendered so far are skipped, and it keeps the stop as its output, so the driver does not stop again.
+   */
+  private continueRender(run: EpisodeRun, idx: number): EpisodeRun {
+    this.save(run, { status: 'running', steps: patchStep(run.steps, idx, { status: 'pending', finishedAt: null }) });
+    this.dispatch(run.id);
+    return this.get(run.id);
   }
 
   /** "Run to end": no more review points; approves the step that is waiting, if any. */
@@ -279,7 +290,8 @@ export class EpisodeRunner {
 
   private complete(runId: string, idx: number, output: unknown): void {
     const run = this.get(runId);
-    const pause = REVIEW_POINTS.has(EPISODE_STEPS[idx]!) && run.mode === 'review';
+    // W1 Q2/C2: the render step's preview and size stops wait for the user in both modes.
+    const pause = renderGate(output) !== null || (REVIEW_POINTS.has(EPISODE_STEPS[idx]!) && run.mode === 'review');
     const steps = patchStep(run.steps, idx, { status: pause ? 'awaiting-review' : 'done', output, error: null, finishedAt: nowIso() });
     const saved = this.save(run, pause ? { steps, status: 'awaiting-review' } : { steps });
     if (!pause) this.accept(saved, idx);

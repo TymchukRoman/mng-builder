@@ -2,8 +2,8 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import {
-  EDITABLE_STEPS, OutlineOutputSchema, PremiseOutputSchema, PromptsOutputSchema, STEP_TASK,
-  REVIEW_AVG_SECONDS, TYPICAL_PANELS_PER_PAGE, breakdownSchemaFor, estimateChapter, estimateReviewSeconds, estimateSeconds, formatChapterEstimate, formatEstimate, isEnglishScene, outlineSchemaFor, promptsSchemaFor, sameName,
+  EDITABLE_STEPS, OutlineOutputSchema, PremiseOutputSchema, PromptsOutputSchema, RenderOutputSchema, STEP_TASK,
+  REVIEW_AVG_SECONDS, TYPICAL_PANELS_PER_PAGE, breakdownSchemaFor, estimateChapter, estimateReviewSeconds, estimateSeconds, formatChapterEstimate, formatEstimate, isEnglishScene, outlineSchemaFor, promptsSchemaFor, renderGate, sameName,
   scriptsSchemaFor, stepIndex,
   type PanelScriptDraft,
 } from '../src/episode.js';
@@ -260,5 +260,17 @@ describe('chapter estimate (W1 C2)', () => {
     const noReview = { ...DEFAULT_SETTINGS, review: { autoInEpisode: false, rounds: 2 } };
     expect(estimateChapter(2, noReview)).toEqual({ panels: 9, seconds: 237 });
     expect(formatChapterEstimate(1, noReview)).toBe('1 page ≈ 5 panels ≈ 2 min');
+  });
+});
+
+describe('renderGate (W1 Q2, C2)', () => {
+  const base = { jobs: [], reviewed: 0, flagged: 0, rounds: 0 };
+  it('names the stop of a render output; a finished render and old outputs are none', () => {
+    expect(renderGate({ ...base, failedPanelIds: [], preview: true, remainingPanels: 4, estimateSeconds: 120 })).toBe('preview');
+    expect(renderGate({ ...base, failedPanelIds: [], confirm: true, panels: 40, estimateSeconds: 4000 })).toBe('confirm');
+    expect(renderGate({ ...base, failedPanelIds: ['pn_a'] })).toBeNull();
+    expect(renderGate(base)).toBeNull(); // stored before W1: failedPanelIds defaults to []
+    expect(RenderOutputSchema.parse(base).failedPanelIds).toEqual([]);
+    expect(renderGate(null)).toBeNull();
   });
 });
