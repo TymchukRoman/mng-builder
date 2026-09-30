@@ -1,8 +1,8 @@
 // packages/server/src/workflows/episode/context.ts
 import {
   BreakdownOutputSchema, MAX_NEW_CHARACTERS, OutlineOutputSchema, PRESET_NAMES, PremiseOutputSchema, presetPanelCount,
-  type BreakdownPage, type Character, type ColorMode, type EpisodeRun, type Language, type Manga, type OutlineScene, type Panel,
-  type PremiseOutput, type PresetInfo, type Settings,
+  type BreakdownPage, type Chapter, type Character, type ColorMode, type EpisodeRun, type Language, type Manga, type OutlineScene, type Panel,
+  type PremiseOutput, type PresetInfo, type ScriptsOutput, type Settings,
 } from '@manga/shared';
 import { orderRefs, panelCharacters, refImages } from '../../handlers/context.js';
 import { RECIPES } from '../../imaging/recipes/index.js';
@@ -14,10 +14,17 @@ import { requireOutput, type LlmStepName } from './steps.js';
 
 export const LANGUAGE_NAME: Record<Language, string> = { en: 'English', uk: 'Ukrainian' };
 
+/** W1 Q1: the story memory is kept small, for the local engine's context window. */
+export const STORY_SO_FAR_LIMIT = 3000;
+export const PREVIOUS_PAGE_LIMIT = 800;
+export const PREVIOUS_CHAPTERS_LIMIT = 10;
+
 export interface CharacterBrief { name: string; role: string; personality: string; speechStyle: string }
+/** W1 Q1: an earlier chapter as the next chapter's premise and outline see it; `synopsis` is its summary when it has one. */
+export interface ChapterBrief { number: number; title: string; synopsis: string }
 export interface PremiseContext {
   step: 'premise'; language: Language; manga: { title: string; synopsis: string };
-  request: { prompt: string; tone: string; pages: number }; characters: CharacterBrief[];
+  request: { prompt: string; tone: string; pages: number }; characters: CharacterBrief[]; previousChapters: ChapterBrief[];
 }
 /**
  * `otherCharacterNames`: the manga's characters outside this run's cast, so no new character takes one of their names (Task 5 M1).
@@ -25,7 +32,7 @@ export interface PremiseContext {
  */
 export interface OutlineContext {
   step: 'outline'; language: Language; pages: number; request: { prompt: string; tone: string }; premise: PremiseOutput;
-  characters: CharacterBrief[]; otherCharacterNames: string[];
+  characters: CharacterBrief[]; otherCharacterNames: string[]; previousChapters: ChapterBrief[];
 }
 /** `request` is the user's own wording, so an explicit panel count or layout in it reaches the step that picks them. */
 export interface BreakdownContext {
@@ -36,6 +43,8 @@ export interface BreakdownContext {
 export interface ScriptsContext {
   step: 'scripts'; language: Language; premise: PremiseOutput; scenes: Array<OutlineScene & { idx: number }>;
   pages: Array<BreakdownPage & { page: number }>; pageRange: { first: number; last: number; total: number }; characters: CharacterBrief[];
+  /** W1 Q1: the pages earlier chunks wrote (storyDigest); absent in the first chunk. */
+  storySoFar?: string;
 }
 /**
  * F2 (I2): no shot/angle enums, only the readable `camera` wording, because the code adds the framing itself.
@@ -48,11 +57,58 @@ export interface PromptsPanelBrief {
 /** `panels` are the panels to write: the whole chapter, or one page of it (F18). */
 export interface PromptsContext {
   step: 'prompts'; colorMode: ColorMode; premise: { title: string; setting: string; tone: string }; panels: PromptsPanelBrief[];
+  /** W1 Q1: the previous page's actions (pageActions), for visual continuity; absent on page 1 and the cover. */
+  previousPage?: string;
 }
-export type StepContext = PremiseContext | OutlineContext | BreakdownContext | ScriptsContext | PromptsContext;
+/** W1 Q1: the context of the chapter summary call (summary.ts). */
+export interface SummaryContext {
+  step: 'summary'; language: Language; chapter: { number: number; title: string; synopsis: string }; story: string;
+}
+export type StepContext = PremiseContext | OutlineContext | BreakdownContext | ScriptsContext | PromptsContext | SummaryContext;
 
 /** Never includes appearanceTags: the story model must not rewrite a character's look (spec §6.3). */
 const brief = (c: Character): CharacterBrief => ({ name: c.name, role: c.role, personality: c.personality, speechStyle: c.speechStyle });
+
+const clip = (text: string, limit: number): string => (text.length <= limit ? text : `${text.slice(0, limit - 1)}…`);
+
+/**
+ * W1 Q1: pages already written, compact. Per page, its panels' actions (one line each) with each panel's dialogue under it as
+ * "speaker: text" (narration and sfx name their kind). Whole pages are kept from the most recent back while they fit `limit`;
+ * a single page longer than `limit` is clipped.
+ */
+export function storyDigest(pages: ScriptsOutput['pages'], firstPage: number, limit = STORY_SO_FAR_LIMIT): string {
+  const blocks = pages.map((page, i) => [
+    `Page ${firstPage + i}:`,
+    ...page.panels.flatMap((p) => [`- ${p.action}`, ...p.dialogue.map((d) => `  ${d.speaker ?? d.kind}: ${d.text}`)]),
+  ].join('\n'));
+  const kept: string[] = [];
+  let size = 0;
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const block = blocks[i]!;
+    const cost = block.length + (kept.length > 0 ? 1 : 0);
+    if (size + cost > limit) {
+      if (kept.length === 0) kept.push(clip(block, limit));
+      break;
+    }
+    kept.unshift(block);
+    size += cost;
+  }
+  return kept.join('\n');
+}
+
+/** W1 Q1: a page's panel actions on one line, capped (the prompts step's `previousPage`). */
+export function pageActions(panels: ReadonlyArray<{ action: string }>, limit = PREVIOUS_PAGE_LIMIT): string {
+  return clip(panels.map((p) => p.action.trim()).filter((a) => a !== '').join(' / '), limit);
+}
+
+/** W1 Q1: the manga's chapters numbered before `chapter`, oldest first, the last PREVIOUS_CHAPTERS_LIMIT. */
+export function previousChapters(store: Store, chapter: Chapter): ChapterBrief[] {
+  return store.chapters.listByManga(chapter.mangaId)
+    .filter((c) => c.number < chapter.number)
+    .sort((a, b) => a.number - b.number)
+    .slice(-PREVIOUS_CHAPTERS_LIMIT)
+    .map((c) => ({ number: c.number, title: c.title, synopsis: c.summary.trim() !== '' ? c.summary : c.synopsis }));
+}
 
 /** Stands in for a portrait that is not rendered yet: ensurePortraits and the review gate provide one before render (F3). */
 const ASSUMED_PORTRAIT = 'assumed-portrait';
@@ -88,12 +144,14 @@ export function buildStepContext(store: Store, run: EpisodeRun, step: LlmStepNam
       return {
         step, language: manga.language, manga: { title: manga.title, synopsis: manga.synopsis },
         request: { prompt: run.input.prompt, tone: run.input.tone, pages: run.input.pages }, characters: chosen.map(brief),
+        previousChapters: previousChapters(store, chapter),
       };
     case 'outline':
       return {
         step, language: manga.language, pages: run.input.pages, request: { prompt: run.input.prompt, tone: run.input.tone },
         premise: requireOutput(run, 'premise', PremiseOutputSchema), characters: chosen.map(brief),
         otherCharacterNames: all.filter((c) => !chosen.includes(c)).map((c) => c.name),
+        previousChapters: previousChapters(store, chapter),
       };
     case 'breakdown': {
       const { scenes } = requireOutput(run, 'outline', OutlineOutputSchema);

@@ -9,6 +9,7 @@ Rules:
 - "synopsis": 2–4 sentences covering the beginning, the middle and the end.
 - "tone": 2–5 comma-separated words, for example "tense, melancholic".
 - "setting": one or two sentences about place, time of day, season and atmosphere.
+- "previousChapters" (may be empty) are this manga's earlier chapters, oldest first. This chapter follows them: keep names, facts and open threads consistent, and do not retell them.
 
 Reply with only a JSON object of exactly this shape, with no prose and no code fences:
 {"title": string, "synopsis": string, "tone": string, "setting": string}

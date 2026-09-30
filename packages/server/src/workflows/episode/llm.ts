@@ -36,10 +36,11 @@ export async function executeLlmStep(
   const requests = stepRequests(deps.store, run, step);
   const answers: unknown[] = [];
   try {
-    for (const { name, task, system, prompt, schema, progress, relaxed } of requests) {
+    for (const { name, task, system, prompt, schema, progress, relaxed, promptFor } of requests) {
       ctx.progress(progress);
+      const sent = promptFor ? promptFor(answers) : prompt; // W1 Q1: a later scripts chunk sees the pages written before it
       try {
-        answers.push(await engine.completeJson({ name, task, system, prompt, schema, signal: ctx.signal, onProgress: (label) => ctx.progress(label) }));
+        answers.push(await engine.completeJson({ name, task, system, prompt: sent, schema, signal: ctx.signal, onProgress: (label) => ctx.progress(label) }));
       } catch (err) {
         // Still invalid after the correction round: a prompts answer whose only fault is a non-English scene is kept,
         // and the prompts effect writes those scenes from the cast (Roman's Ukrainian run).

@@ -2,9 +2,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ZodError } from 'zod';
 import { OutlineOutputSchema, type EpisodeRun, type ScriptsOutput } from '@manga/shared';
+import { EPISODE_FAKE_RESPONSES } from '../src/dev/fake-episode.js';
+import { ScriptedEngine } from '../src/engines/scripted.js';
 import { jsonSchemaOf } from '../src/engines/structured.js';
+import { EventBus } from '../src/events/bus.js';
+import type { JobContext } from '../src/jobs/index.js';
 import { createCoverPage, createPage } from '../src/domain/pages.js';
 import { chapterPanels } from '../src/workflows/episode/chapter.js';
+import { materializeScripts } from '../src/workflows/episode/effects.js';
+import { executeLlmStep } from '../src/workflows/episode/llm.js';
 import { buildStepContext, extractContext, templateVars, type PromptsContext, type ScriptsContext } from '../src/workflows/episode/context.js';
 import { loadStepPrompt, renderTemplate } from '../src/workflows/episode/prompts.js';
 import { SCRIPTS_PAGES_PER_CALL, combineAnswers, stepRequests } from '../src/workflows/episode/requests.js';
@@ -20,6 +26,16 @@ function scriptsRun(pages: number): EpisodeRun {
   const { manga, chapter } = seedEpisodeWorld(lib.store);
   seedCharacter(lib.store, manga.id, 'Aiko');
   return seedRun(lib.store, chapter.id, { input: { pages }, outputs: { premise: PREMISE, outline: outline(['Aiko']), breakdown: breakdown(pages) } });
+}
+
+/** A run whose outputs exist up to scripts, with its two story pages and the cover materialized from them. */
+function promptsRun(): EpisodeRun {
+  const { manga, chapter } = seedEpisodeWorld(lib.store);
+  seedCharacter(lib.store, manga.id, 'Aiko');
+  const bd = breakdown(2);
+  const sc = scripts(bd, 'Aiko');
+  materializeScripts({ store: lib.store, bus: new EventBus() }, chapter.id, { breakdown: bd, scripts: sc, premise: PREMISE });
+  return seedRun(lib.store, chapter.id, { outputs: { premise: PREMISE, outline: outline(['Aiko']), breakdown: bd, scripts: sc } });
 }
 
 const issues = (r: { success: boolean; error?: { issues: Array<{ message: string }> } }): string[] => (r.error?.issues ?? []).map((i) => i.message);
@@ -156,5 +172,38 @@ describe('stepRequests', () => {
     const run = scriptsRun(2);
     expect(() => combineAnswers(lib.store, run, 'premise', [PREMISE, PREMISE])).toThrow('step premise makes one call, got 2 answers');
     expect(combineAnswers(lib.store, run, 'premise', [PREMISE])).toEqual(PREMISE);
+  });
+});
+
+describe('story memory in requests (W1 Q1)', () => {
+  it("a later scripts chunk carries storySoFar from the earlier chunks' answers; the first has none", () => {
+    const run = scriptsRun(6);
+    const [first, second] = stepRequests(lib.store, run, 'scripts');
+    expect(first!.promptFor).toBeUndefined();
+    expect(extractContext<ScriptsContext>(first!.prompt).storySoFar).toBeUndefined();
+    const answer = { pages: scripts(breakdown(6), 'Aiko').pages.slice(0, 4) };
+    const ctx = extractContext<ScriptsContext>(second!.promptFor!([answer]));
+    expect(ctx.storySoFar).toContain('Page 4:\n- Page 4 panel 1\n  Aiko: Line 4.1');
+    expect(ctx.pages.map((p) => p.page)).toEqual([5, 6]);
+  });
+
+  it('executeLlmStep sends each chunk the story written by the chunks before it', async () => {
+    const run = scriptsRun(6);
+    const engine = new ScriptedEngine('claude', EPISODE_FAKE_RESPONSES);
+    const ctx = { job: { lane: 'claude' }, signal: new AbortController().signal, progress: () => undefined } as unknown as JobContext;
+    await executeLlmStep({ store: lib.store, engines: { forLane: () => engine } }, ctx, run, 'scripts');
+    expect(engine.calls).toHaveLength(2);
+    expect(extractContext<ScriptsContext>(engine.calls[0]!.prompt).storySoFar).toBeUndefined();
+    expect(extractContext<ScriptsContext>(engine.calls[1]!.prompt).storySoFar).toMatch(/^Page 1:\n/);
+  });
+
+  it('a prompts request for page 2 carries page 1\'s actions as previousPage; page 1 and the cover carry none', () => {
+    const run = promptsRun();
+    const requests = stepRequests(lib.store, run, 'prompts');
+    const contexts = requests.map((r) => extractContext<PromptsContext>(r.prompt));
+    expect(contexts[0]!.previousPage).toBeUndefined();
+    expect(contexts[1]!.previousPage).toBe('Page 1 panel 1 / Page 1 panel 2');
+    expect(contexts.at(-1)!.panels[0]!.isCover).toBe(true);
+    expect(contexts.at(-1)!.previousPage).toBeUndefined();
   });
 });

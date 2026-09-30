@@ -6,8 +6,11 @@ export interface StepPrompt { system: string; user: string }
 
 const SPLIT = '<!-- user -->';
 
-/** src/prompts/episode/<step>.md (F28: M2's loadPrompt with a sub-folder, which caches the file), split into its system and user parts. */
-export function loadStepPrompt(step: LlmStepName): StepPrompt {
+/**
+ * src/prompts/episode/<step>.md (F28: M2's loadPrompt with a sub-folder, which caches the file), split into its system and user parts.
+ * 'summary' is the chapter summary written when a run finishes (W1 Q1).
+ */
+export function loadStepPrompt(step: LlmStepName | 'summary'): StepPrompt {
   const text = loadPrompt(step, 'episode').replace(/\r\n/g, '\n');
   const at = text.indexOf(SPLIT);
   if (at < 0) throw new Error(`Episode prompt ${step}.md has no "${SPLIT}" line`);

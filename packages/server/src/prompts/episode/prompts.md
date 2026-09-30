@@ -13,6 +13,7 @@ Rules:
 - Never ask for text of any kind: no words, letters, captions, signs, speech bubbles or sound effects. Do not use the words "manga" or "comic".
 - "negative" is optional: only panel-specific things to avoid, as tags (for example "extra people" when the panel shows exactly one person). Leave it out when there is nothing specific.
 - The panel with "isCover": true is the chapter cover: one striking illustration of the main characters facing the reader, with calm, simple space in the top third for the title.
+- "previousPage", when present, is what the page before showed. Keep places, light and clothing consistent with it.
 
 Reply with only a JSON object of exactly this shape, with no prose and no code fences, with exactly one entry for every panelId in the context:
 {"panels": [{"panelId": string, "scene": string, "negative": string}]}

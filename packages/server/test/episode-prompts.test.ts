@@ -8,7 +8,7 @@ import { withJsonInstruction } from '../src/engines/structured.js';
 import { ConflictError } from '../src/errors.js';
 import { chapterPanels } from '../src/workflows/episode/chapter.js';
 import {
-  buildStepContext, contextBlock, extractContext, templateVars,
+  PREVIOUS_PAGE_LIMIT, STORY_SO_FAR_LIMIT, buildStepContext, contextBlock, extractContext, pageActions, storyDigest, templateVars,
   type BreakdownContext, type OutlineContext, type PremiseContext, type PromptsContext,
 } from '../src/workflows/episode/context.js';
 import { loadPrompt } from '../src/prompts/load.js';
@@ -284,5 +284,41 @@ describe('validationSchema', () => {
     const run = seedRun(lib.store, chapter.id, { outputs: { premise: PREMISE } });
     expect(() => validationSchema(lib.store, run, 'breakdown', { source: 'llm' })).toThrow(ConflictError);
     expect(() => validationSchema(lib.store, run, 'breakdown', { source: 'llm' })).toThrow('step outline has no output yet');
+  });
+});
+
+describe('story memory (W1 Q1)', () => {
+  it('storyDigest: each page\'s actions one line each, its dialogue as "speaker: text", the most recent pages kept', () => {
+    const sc = scripts(breakdown(2), 'Aiko');
+    expect(storyDigest(sc.pages, 1)).toBe([
+      'Page 1:', '- Page 1 panel 1', '  Aiko: Line 1.1', '- Page 1 panel 2', '  Aiko: Line 1.2',
+      'Page 2:', '- Page 2 panel 1', '  Aiko: Line 2.1', '- Page 2 panel 2', '  Aiko: Line 2.2',
+    ].join('\n'));
+    expect(storyDigest(scripts(breakdown(1), null).pages, 5)).toContain('  narration: Narration 1.1');
+    const long = storyDigest(scripts(breakdown(200), 'Aiko').pages, 1);
+    expect(long.length).toBeLessThanOrEqual(STORY_SO_FAR_LIMIT);
+    expect(long.endsWith('  Aiko: Line 200.2')).toBe(true);
+    expect(long).not.toContain('Page 1:\n');
+  });
+
+  it('pageActions joins actions and caps them', () => {
+    expect(pageActions([{ action: 'Aiko runs.' }, { action: 'The cat hides.' }])).toBe('Aiko runs. / The cat hides.');
+    expect(pageActions([{ action: 'x'.repeat(2000) }]).length).toBe(PREVIOUS_PAGE_LIMIT);
+  });
+
+  it('premise and outline see the earlier chapters by number, the summary over the synopsis, at most the last 10', () => {
+    const { manga, chapter } = seedEpisodeWorld(lib.store);
+    lib.store.chapters.update(chapter.id, { number: 12 });
+    for (let n = 1; n <= 11; n++) {
+      lib.store.chapters.create({ mangaId: manga.id, number: n, title: `C${n}`, synopsis: `syn ${n}`, coverPageId: null, status: 'ready', order: n, summary: n === 11 ? 'what happened in 11' : '' });
+    }
+    lib.store.chapters.create({ mangaId: manga.id, number: 13, title: 'Later', synopsis: 'later', coverPageId: null, status: 'draft', order: 13 });
+    const run = seedRun(lib.store, chapter.id, { outputs: { premise: PREMISE } });
+    for (const step of ['premise', 'outline'] as const) {
+      const ctx = buildStepContext(lib.store, run, step) as { previousChapters: Array<{ number: number; title: string; synopsis: string }> };
+      expect(ctx.previousChapters.map((c) => c.number)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+      expect(ctx.previousChapters.at(-1)).toEqual({ number: 11, title: 'C11', synopsis: 'what happened in 11' });
+      expect(ctx.previousChapters[0]).toEqual({ number: 2, title: 'C2', synopsis: 'syn 2' });
+    }
   });
 });

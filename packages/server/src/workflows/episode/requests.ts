@@ -4,7 +4,9 @@ import {
   PromptsOutputSchema, STEP_TASK, ScriptsOutputSchema, promptsSchemaFor, scriptsSchemaFor, type EpisodeRun, type Task,
 } from '@manga/shared';
 import type { Store } from '../../store/index.js';
-import { buildStepContext, templateVars, type PromptsPanelBrief, type StepContext } from './context.js';
+import {
+  buildStepContext, pageActions, storyDigest, templateVars, type PromptsContext, type PromptsPanelBrief, type ScriptsContext, type StepContext,
+} from './context.js';
 import { normalizeLlmAnswer } from './normalize.js';
 import { loadStepPrompt, renderTemplate } from './prompts.js';
 import { STEP_PROGRESS, type LlmStepName } from './steps.js';
@@ -35,16 +37,23 @@ export interface StepRequest {
    * their cast instead, so a non-English scene never fails the run.
    */
   relaxed?: z.ZodType<unknown>;
+  /**
+   * W1 Q1 (scripts chunks after the first): this call's prompt given the answers of the calls before it, whose pages
+   * become the context's `storySoFar`. `prompt` is the same prompt without it. executeLlmStep uses this when set.
+   */
+  promptFor?: (previous: readonly unknown[]) => string;
 }
 
 /**
  * The calls a step makes, in order. premise, outline and breakdown: one call. scripts: one call per
  * SCRIPTS_PAGES_PER_CALL pages, each with the same context but only its pages. prompts: one call per page, the
- * cover last (F18). Feed the answers, in the same order, to `combineAnswers`.
+ * cover last (F18). Feed the answers, in the same order, to `combineAnswers`. W1 Q1: a scripts chunk after the first sees the
+ * pages the earlier chunks wrote (`promptFor`), and a story page's prompts call sees the page before it (`previousPage`).
  */
 export function stepRequests(store: Store, run: EpisodeRun, step: LlmStepName): StepRequest[] {
   const ctx = buildStepContext(store, run, step);
   const template = loadStepPrompt(step);
+  const userPrompt = (c: StepContext): string => renderTemplate(template.user, templateVars(store, run, c));
   const request = (c: StepContext, schema: z.ZodType<unknown>, progress: string, relaxed?: z.ZodType<unknown>): StepRequest => {
     const vars = templateVars(store, run, c);
     const filled: string[] = [];
@@ -55,7 +64,7 @@ export function stepRequests(store: Store, run: EpisodeRun, step: LlmStepName): 
       return answer.value;
     }, inner);
     return {
-      name: `episode.${step}`, task: STEP_TASK[step]!, system: renderTemplate(template.system, vars), prompt: renderTemplate(template.user, vars),
+      name: `episode.${step}`, task: STEP_TASK[step]!, system: renderTemplate(template.system, vars), prompt: userPrompt(c),
       schema: normalized(schema), progress, filled, ...(relaxed ? { relaxed: normalized(relaxed) } : {}),
     };
   };
@@ -67,11 +76,19 @@ export function stepRequests(store: Store, run: EpisodeRun, step: LlmStepName): 
       const pages = ctx.pages.slice(at, at + SCRIPTS_PAGES_PER_CALL);
       const first = at + 1;
       const last = at + pages.length;
-      out.push(request(
-        { ...ctx, pages, pageRange: { first, last, total } },
+      const chunk: ScriptsContext = { ...ctx, pages, pageRange: { first, last, total } };
+      const req = request(
+        chunk,
         scriptsSchemaFor({ panelCounts: pages.map((p) => p.panelCount), knownNames: names, lenient: true, pageOffset: at }),
         total <= SCRIPTS_PAGES_PER_CALL ? STEP_PROGRESS.scripts : `Writing scripts (pages ${first}–${last} of ${total})…`,
-      ));
+      );
+      out.push(at === 0 ? req : {
+        ...req,
+        promptFor: (previous) => {
+          const written = previous.flatMap((a) => ScriptsOutputSchema.parse(a).pages);
+          return userPrompt({ ...chunk, storySoFar: storyDigest(written, 1) });
+        },
+      });
     }
     return out;
   }
@@ -83,10 +100,13 @@ export function stepRequests(store: Store, run: EpisodeRun, step: LlmStepName): 
       else groups.push([panel]);
     }
     const storyPages = groups.filter((g) => !g[0]!.isCover).length;
-    return groups.map((panels) => {
+    return groups.map((panels, g) => {
       const panelIds = panels.map((p) => p.panelId);
+      const before = groups[g - 1];
+      const previousPage = !panels[0]!.isCover && before !== undefined && !before[0]!.isCover ? pageActions(before) : '';
+      const c: PromptsContext = { ...ctx, panels, ...(previousPage !== '' ? { previousPage } : {}) };
       return request(
-        { ...ctx, panels },
+        c,
         promptsSchemaFor({ panelIds, englishScenes: true }),
         panels[0]!.isCover ? 'Writing image prompts (cover)…' : `Writing image prompts (page ${panels[0]!.page} of ${storyPages})…`,
         promptsSchemaFor({ panelIds }),
