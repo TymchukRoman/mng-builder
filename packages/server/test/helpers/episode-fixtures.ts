@@ -83,3 +83,15 @@ export function scripts(bd: BreakdownOutput, speaker: string | null): ScriptsOut
     })),
   };
 }
+
+/** A breakdown with one page per preset (its own panel count), e.g. breakdownOf(['2-rows', '2x2']). */
+export function breakdownOf(presets: string[]): BreakdownOutput {
+  return {
+    pages: presets.map((layoutPreset, i) => ({ sceneIdx: [Math.min(i, 1)], panelCount: presetPanelCount(layoutPreset), pacing: 'steady', layoutPreset })),
+  };
+}
+
+/** Like `scripts`, but with the given panel count per page (an answer that ignores the breakdown's counts). */
+export function scriptsOf(panelCounts: number[], speaker: string | null): ScriptsOutput {
+  return scripts({ pages: panelCounts.map((panelCount) => ({ sceneIdx: [0], panelCount, pacing: 'steady', layoutPreset: 'splash' })) }, speaker);
+}

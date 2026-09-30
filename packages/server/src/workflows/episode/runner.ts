@@ -230,14 +230,15 @@ export class EpisodeRunner {
     const fresh = this.deps.store.episodes.get(run.id);
     const now = fresh?.steps[idx];
     if (!fresh || !now || fresh.status !== 'running' || now.status !== 'running' || now.startedAt !== token) return { skipped: true };
+    let stored: unknown;
     try {
-      this.applyResult(fresh, payload.step, output);
+      stored = this.applyResult(fresh, payload.step, output);
     } catch (err) {
       // An LLM answer the effect cannot use (e.g. no usable scene for a panel): fail like an invalid answer.
       throw err instanceof InvalidOutputError ? rawOutputError(err) : err;
     }
     try {
-      this.complete(fresh.id, idx, output);
+      this.complete(fresh.id, idx, stored);
     } catch (err) {
       this.failRun(fresh.id, err); // the step may already be saved done: show the error instead of hanging (review M1)
       throw err;
@@ -258,17 +259,22 @@ export class EpisodeRunner {
     return executeLlmStep(this.deps, ctx, run, name);
   }
 
-  /** premise → chapter, scripts → pages and panels, prompts → panel prompts (finished like M2's panel-prompt, F2). */
-  private applyResult(run: EpisodeRun, name: EpisodeStepName, output: unknown): void {
+  /**
+   * premise → chapter, scripts → pages and panels, prompts → panel prompts (finished like M2's panel-prompt, F2).
+   * Returns the output the step stores: the answer, except scripts, which store what was materialized (a page's panels
+   * beyond the largest layout folded), so the stored output always fits the chapter's pages.
+   */
+  private applyResult(run: EpisodeRun, name: EpisodeStepName, output: unknown): unknown {
     const fx = this.effectDeps();
     if (name === 'premise') applyPremise(fx, run.chapterId, PremiseOutputSchema.parse(output), premiseTitles(this.deps.store, run.chapterId));
     if (name === 'scripts') {
-      materializeScripts(fx, run.chapterId, {
+      return materializeScripts(fx, run.chapterId, {
         breakdown: requireOutput(run, 'breakdown', BreakdownOutputSchema), scripts: ScriptsOutputSchema.parse(output),
         premise: requireOutput(run, 'premise', PremiseOutputSchema),
-      });
+      }).scripts;
     }
     if (name === 'prompts') applyPrompts(fx, run.chapterId, PromptsOutputSchema.parse(output), { source: 'llm' });
+    return output;
   }
 
   private complete(runId: string, idx: number, output: unknown): void {

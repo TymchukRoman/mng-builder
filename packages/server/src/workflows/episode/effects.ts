@@ -14,6 +14,7 @@ import { finishScene } from '../../prompts/scene.js';
 import type { Store } from '../../store/index.js';
 import { chapterPanels, storyPages } from './chapter.js';
 import { panelStyle } from './context.js';
+import { MAX_PRESET_PANELS, fitPreset, foldPanels } from './fit.js';
 
 export interface EffectDeps { store: Store; bus: EventBus }
 type Position = PanelScript['characters'][number]['position'];
@@ -144,12 +145,16 @@ function prepareCover(
 }
 
 /**
- * Step 4 (spec §8): "Materializes Pages and Panels" — all or nothing. Names the manga lacks are dropped (see
- * draftToScript), with one server-log warning for the step that lists them.
+ * Step 4 (spec §8): "Materializes Pages and Panels" — all or nothing. An LLM answer is fitted, never refused, for
+ * details the model may get wrong (one server-log warning each per step):
+ * - names the manga lacks are dropped (see draftToScript);
+ * - a page whose script has another panel count than the breakdown gets a layout with that many panels (fitPreset),
+ *   after panels beyond the largest layout are folded into its last one (foldPanels). The stored breakdown is unchanged.
+ * Returns the scripts as materialized (folded), which the step stores, so a later edit of them fits the pages.
  */
 export function materializeScripts(
   { store, bus }: EffectDeps, chapterId: string, input: { breakdown: BreakdownOutput; scripts: ScriptsOutput; premise: PremiseOutput },
-): { pageIds: string[]; coverPageId: string } {
+): { pageIds: string[]; coverPageId: string; scripts: ScriptsOutput } {
   const chapter = store.chapters.require(chapterId);
   const manga = store.mangas.require(chapter.mangaId);
   if (storyPages(store, chapterId).length > 0) {
@@ -162,14 +167,18 @@ export function materializeScripts(
   }
   const hadCover = chapter.coverPageId !== null && store.pages.get(chapter.coverPageId) !== null;
   const characters = store.characters.listByManga(manga.id);
+  const fitted = input.breakdown.pages.map((bp, i) => {
+    const panels = foldPanels(input.scripts.pages[i]!.panels, MAX_PRESET_PANELS);
+    return { planned: bp.layoutPreset, preset: fitPreset(bp.layoutPreset, panels.length), panels };
+  });
+  const scripts: ScriptsOutput = { pages: fitted.map((f) => ({ panels: f.panels })) };
   const dropped: string[] = [];
   const result = store.tx(() => {
-    const pageIds = input.breakdown.pages.map((bp, i) => {
-      const detail = createPage(store, chapterId, bp.layoutPreset);
+    const pageIds = fitted.map(({ preset, panels: drafts }, i) => {
+      const detail = createPage(store, chapterId, preset);
       const slots = readingOrder(detail.page.layout, manga.readingDirection);
-      const drafts = input.scripts.pages[i]?.panels ?? [];
       if (slots.length !== drafts.length) {
-        throw new ValidationError(`page ${i + 1}: layout "${bp.layoutPreset}" has ${slots.length} panels but the script has ${drafts.length}`);
+        throw new ValidationError(`page ${i + 1}: layout "${preset}" has ${slots.length} panels but the script has ${drafts.length}`);
       }
       slots.forEach((panelId, j) => {
         const { script, refCharacterIds, dropped: names } = draftToScript(drafts[j]!, characters);
@@ -178,8 +187,12 @@ export function materializeScripts(
       });
       return detail.page.id;
     });
-    return { pageIds, cover: prepareCover(store, chapter, manga, input.premise, input.scripts, characters) };
+    return { pageIds, cover: prepareCover(store, chapter, manga, input.premise, scripts, characters) };
   });
+  const relaid = fitted.flatMap((f, i) => (f.preset === f.planned ? [] : [`page ${i + 1} ("${f.planned}" -> "${f.preset}", ${f.panels.length} panels)`]));
+  if (relaid.length > 0) {
+    console.warn(`[manga] episode scripts: chapter ${chapterId}: the script's panel count differs from the breakdown, so the layout changed on ${relaid.join(', ')}`);
+  }
   if (dropped.length > 0) {
     console.warn(`[manga] episode scripts: chapter ${chapterId} names characters the manga does not have; they stay unattributed extras (no cast, refs or bubble tail): ${distinctNames(dropped).join(', ')}`);
   }
@@ -193,7 +206,7 @@ export function materializeScripts(
   } else if (result.cover.panelId !== null) {
     emitEntity(bus, 'panel', result.cover.panelId, 'updated', manga.id);
   }
-  return { pageIds: result.pageIds, coverPageId: result.cover.pageId };
+  return { pageIds: result.pageIds, coverPageId: result.cover.pageId, scripts };
 }
 
 /** A user edit of the scripts output after materialization: rewrite the panel scripts in place (every name must be known). */

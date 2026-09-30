@@ -50,7 +50,7 @@ export function stepRequests(store: Store, run: EpisodeRun, step: LlmStepName): 
       const last = at + pages.length;
       out.push(request(
         { ...ctx, pages, pageRange: { first, last, total } },
-        scriptsSchemaFor({ panelCounts: pages.map((p) => p.panelCount), knownNames: names, lenientNames: true, pageOffset: at }),
+        scriptsSchemaFor({ panelCounts: pages.map((p) => p.panelCount), knownNames: names, lenient: true, pageOffset: at }),
         total <= SCRIPTS_PAGES_PER_CALL ? STEP_PROGRESS.scripts : `Writing scripts (pages ${first}–${last} of ${total})…`,
       ));
     }

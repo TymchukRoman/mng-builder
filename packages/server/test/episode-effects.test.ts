@@ -2,7 +2,7 @@
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CreateFrameSchema, readingOrder, type ScriptsOutput, type ServerEvent } from '@manga/shared';
+import { CreateFrameSchema, buildPreset, panelIds, readingOrder, type LayoutNode, type ScriptsOutput, type ServerEvent } from '@manga/shared';
 import { createFrame } from '../src/domain/frames.js';
 import { createCoverPage, createPage } from '../src/domain/pages.js';
 import { InvalidOutputError } from '../src/engines/errors.js';
@@ -10,7 +10,8 @@ import { ConflictError, ValidationError } from '../src/errors.js';
 import { EventBus } from '../src/events/bus.js';
 import { storyPages } from '../src/workflows/episode/chapter.js';
 import { applyPremise, applyPrompts, applyScripts, createOutlineCharacters, materializeScripts } from '../src/workflows/episode/effects.js';
-import { PREMISE, TWO_PANEL_PRESET, breakdown, scripts, seedEpisodeWorld } from './helpers/episode-fixtures.js';
+import { fitPreset, foldPanels } from '../src/workflows/episode/fit.js';
+import { PREMISE, TWO_PANEL_PRESET, breakdown, breakdownOf, scripts, scriptsOf, seedEpisodeWorld } from './helpers/episode-fixtures.js';
 import { openTestLibrary, type TestLibrary } from './helpers/library.js';
 import { seedCharacter } from './helpers/seed.js';
 
@@ -100,6 +101,39 @@ describe('premise and outline effects', () => {
     expect(created[0]).toMatchObject({ role: 'supporting', appearanceTags: '1girl, yellow raincoat', refs: {} });
     expect(lib.store.characters.listByManga(manga.id).map((c) => c.name).sort()).toEqual(['Aiko', 'Mika']);
     expect(entityEvents()).toEqual(['character:created']);
+  });
+});
+
+const shape = (n: LayoutNode): unknown => (n.type === 'panel' ? '_' : [n.dir, n.ratio, shape(n.a), shape(n.b)]);
+
+describe('fitPreset and foldPanels', () => {
+  it('keeps the preset whose count fits; otherwise picks the same family, then a default per count', () => {
+    expect(fitPreset('2x2', 4)).toBe('2x2');
+    expect(fitPreset('big-top-3', 4)).toBe('big-top-3');
+    expect(fitPreset('3-rows', 2)).toBe('2-rows');
+    expect(fitPreset('2-rows', 4)).toBe('4-rows');
+    expect(fitPreset('2-rows', 1)).toBe('splash');
+    expect(fitPreset('big-top-2', 4)).toBe('big-top-3');
+    expect(fitPreset('big-top-3', 3)).toBe('big-top-2');
+    expect([1, 2, 3, 4, 5, 6].map((n) => fitPreset('cinematic-3', n))).toEqual(['splash', '2-rows', 'cinematic-3', '2x2', '5-stagger', '2x3']);
+    expect(fitPreset('4-rows', 5)).toBe('5-stagger');
+  });
+
+  it('folds the panels from the 6th on into the 6th: actions joined with " Then ", characters united by name, dialogue in order, its own camera', () => {
+    const base = scriptsOf([8], null).pages[0]!.panels;
+    const panels = base.map((p, i) => ({
+      ...p, shot: i === 5 ? 'close' as const : 'wide' as const,
+      characters: [{ name: i % 2 === 0 ? 'Aiko' : 'aiko', pose: 'p', expression: 'e', position: 'left' as const }, ...(i === 7 ? [{ name: 'Ren', pose: 'p', expression: 'e', position: 'right' as const }] : [])],
+    }));
+    const folded = foldPanels(panels, 6);
+    expect(folded).toHaveLength(6);
+    expect(folded.slice(0, 5)).toEqual(panels.slice(0, 5));
+    expect(folded[5]).toMatchObject({
+      action: 'Page 1 panel 6 Then Page 1 panel 7 Then Page 1 panel 8', shot: 'close', angle: 'eye',
+      characters: [{ name: 'aiko' }, { name: 'Ren' }],
+      dialogue: [{ text: 'Narration 1.6' }, { text: 'Narration 1.7' }, { text: 'Narration 1.8' }],
+    });
+    expect(foldPanels(panels.slice(0, 6), 6)).toEqual(panels.slice(0, 6));
   });
 });
 
@@ -203,16 +237,59 @@ describe('materializeScripts', () => {
     expect(storyPages(lib.store, chapter.id)).toHaveLength(1);
   });
 
-  it('rolls everything back when a page script does not fit its layout', () => {
+  it('rolls everything back when a step of it fails', () => {
     const { chapter } = world();
     const bd = breakdown(2);
-    const bad = scripts(bd, 'Aiko');
-    bad.pages[1]!.panels.push(bad.pages[1]!.panels[0]!);
-    expect(() => materializeScripts({ store: lib.store, bus }, chapter.id, { breakdown: bd, scripts: bad, premise: PREMISE }))
-      .toThrow(`page 2: layout "${TWO_PANEL_PRESET}" has 2 panels but the script has 3`);
+    const update = lib.store.panels.update.bind(lib.store.panels);
+    let calls = 0;
+    vi.spyOn(lib.store.panels, 'update').mockImplementation((id, patch) => {
+      if (++calls === 3) throw new Error('disk full');
+      return update(id, patch);
+    });
+    expect(() => materializeScripts({ store: lib.store, bus }, chapter.id, { breakdown: bd, scripts: scripts(bd, 'Aiko'), premise: PREMISE }))
+      .toThrow('disk full');
     expect(storyPages(lib.store, chapter.id)).toHaveLength(0);
     expect(lib.store.chapters.require(chapter.id).coverPageId).toBeNull();
     expect(entityEvents()).toEqual([]);
+  });
+
+  it('a page whose script has more or fewer panels than the breakdown gets a layout with that many panels, and one warning', () => {
+    const { chapter, manga } = world();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const bd = breakdownOf(['2-rows', '2x2', '3-rows', '5-stagger']);
+    const answer = scriptsOf([2, 5, 2, 3], 'Aiko');
+    const { scripts: stored } = materializeScripts({ store: lib.store, bus }, chapter.id, { breakdown: bd, scripts: answer, premise: PREMISE });
+    const pages = storyPages(lib.store, chapter.id);
+    expect(pages.map((p) => shape(p.layout))).toEqual(['2-rows', '5-stagger', '2-rows', '3-rows'].map((n) => shape(buildPreset(n, manga.readingDirection, () => 'x'))));
+    pages.forEach((page, i) => {
+      readingOrder(page.layout, manga.readingDirection).forEach((panelId, j) => {
+        expect(lib.store.panels.require(panelId).script.action).toBe(`Page ${i + 1} panel ${j + 1}`);
+      });
+    });
+    expect(stored).toEqual(answer); // nothing was folded
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]![0])).toBe(
+      `[manga] episode scripts: chapter ${chapter.id}: the script's panel count differs from the breakdown, so the layout changed on page 2 ("2x2" -> "5-stagger", 5 panels), page 3 ("3-rows" -> "2-rows", 2 panels), page 4 ("5-stagger" -> "3-rows", 3 panels)`,
+    );
+  });
+
+  it('a page script with more panels than any layout holds is folded into 6 panels', () => {
+    const { chapter, manga } = world();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const bd = breakdownOf(['2x2']);
+    const answer = scriptsOf([8], 'Aiko');
+    const { scripts: stored } = materializeScripts({ store: lib.store, bus }, chapter.id, { breakdown: bd, scripts: answer, premise: PREMISE });
+    const page = storyPages(lib.store, chapter.id)[0]!;
+    expect(shape(page.layout)).toEqual(shape(buildPreset('2x3', manga.readingDirection, () => 'x')));
+    const panels = readingOrder(page.layout, manga.readingDirection).map((id) => lib.store.panels.require(id));
+    expect(panels.map((p) => p.script.action)).toEqual([
+      'Page 1 panel 1', 'Page 1 panel 2', 'Page 1 panel 3', 'Page 1 panel 4', 'Page 1 panel 5',
+      'Page 1 panel 6 Then Page 1 panel 7 Then Page 1 panel 8',
+    ]);
+    expect(panels[5]!.script.dialogue.map((d) => d.text)).toEqual(['Line 1.6', 'Line 1.7', 'Line 1.8']);
+    expect(panels[5]!.script.characters).toHaveLength(1);
+    expect(stored.pages[0]!.panels).toHaveLength(6); // the stored answer matches the page, so a later edit fits it
+    expect(panelIds(page.layout)).toHaveLength(6);
   });
 
   it('drops a character the manga lacks from the cast and refs, nulls its speaker, keeps its lines and the action, and warns once', () => {
@@ -278,6 +355,14 @@ describe('edits after materialization', () => {
     expect(entityEvents()).toEqual(['panel:updated', 'panel:updated']);
     expect(() => applyScripts({ store: lib.store, bus }, chapter.id, scripts(breakdown(2), 'Aiko')))
       .toThrow('the chapter has 1 pages but the scripts have 2; re-run the scripts step instead');
+  });
+
+  it('applyScripts (a user edit) refuses a page whose script has a different panel count', () => {
+    const { chapter } = world();
+    const bd = breakdown(1);
+    materializeScripts({ store: lib.store, bus }, chapter.id, { breakdown: bd, scripts: scripts(bd, 'Aiko'), premise: PREMISE });
+    expect(() => applyScripts({ store: lib.store, bus }, chapter.id, scriptsOf([3], 'Aiko')))
+      .toThrow('page 1 has 2 panels but its script has 3; re-run the scripts step instead');
   });
 
   it('applyScripts (a user edit) still refuses a character the manga lacks and changes nothing', () => {

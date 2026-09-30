@@ -51,14 +51,14 @@ describe('stepRequests', () => {
     ]);
   });
 
-  it('validates each scripts chunk with absolute page numbers in its messages', () => {
+  it('validates each scripts chunk: its page count strictly, with absolute page numbers; another panel count is fitted later', () => {
     const run = scriptsRun(10);
     const second = stepRequests(lib.store, run, 'scripts')[1]!;
     const whole = scripts(breakdown(10), 'Aiko');
     const chunk: ScriptsOutput = { pages: whole.pages.slice(4, 8) };
     expect(second.schema.safeParse(chunk).success).toBe(true);
     const short = { pages: chunk.pages.map((p, i) => (i === 1 ? { panels: p.panels.slice(0, 1) } : p)) };
-    expect(issues(second.schema.safeParse(short))).toEqual(['page 6 needs exactly 2 panels (from the breakdown), got 1']);
+    expect(second.schema.safeParse(short).success).toBe(true); // materialization gives page 6 a one-panel layout
     expect(issues(second.schema.safeParse({ pages: chunk.pages.slice(0, 3) }))).toEqual(['expected exactly 4 pages (pages 5–8 of the breakdown), got 3']);
   });
 

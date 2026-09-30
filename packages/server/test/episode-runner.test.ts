@@ -13,9 +13,10 @@ import type { JsonRequest, TextEngine } from '../src/engines/types.js';
 import { ConflictError, NotFoundError, ValidationError } from '../src/errors.js';
 import { EventBus } from '../src/events/bus.js';
 import { GpuArbiter, JobQueue } from '../src/jobs/index.js';
-import { storyPages } from '../src/workflows/episode/chapter.js';
+import { chapterPanels, storyPages } from '../src/workflows/episode/chapter.js';
+import { extractContext, type PromptsContext } from '../src/workflows/episode/context.js';
 import { EpisodeRunner } from '../src/workflows/episode/runner.js';
-import { PREMISE, STAMP, TWO_PANEL_PRESET, breakdown, outline, scripts, seedEpisodeWorld, seedRun } from './helpers/episode-fixtures.js';
+import { PREMISE, STAMP, TWO_PANEL_PRESET, breakdown, breakdownOf, outline, scripts, scriptsOf, seedEpisodeWorld, seedRun } from './helpers/episode-fixtures.js';
 import { FakeQueue, fakeImaging, fakeJobContext } from './helpers/fake-queue.js';
 import { openTestLibrary, type TestLibrary } from './helpers/library.js';
 import { seedCharacter } from './helpers/seed.js';
@@ -717,10 +718,12 @@ describe("EpisodeRunner — an adaptation's cast (Roman's Naruto run)", () => {
   const input = (): EpisodeInput => ({ prompt: 'Adapt any episode of Naruto to a short episode of manga', characterIds: [], pages: 2, tone: '' });
 
   /** Roman's failed run: the leaky outline passed (before this fix), Rogue Ninja exists, the scripts step failed on "Naruto". */
-  function failedRun() {
+  function failedRun(bd = breakdown(2)) {
     const { manga, chapter } = seedEpisodeWorld(lib.store);
     seedCharacter(lib.store, manga.id, 'Rogue Ninja', ROGUE.appearanceTags);
-    const seeded = seedRun(lib.store, chapter.id, { input: input(), outputs: { premise: PREMISE, outline: leakyOutline(), breakdown: breakdown(2) } });
+    const seeded = seedRun(lib.store, chapter.id, {
+      input: { ...input(), pages: bd.pages.length }, outputs: { premise: PREMISE, outline: leakyOutline(), breakdown: bd },
+    });
     const steps = seeded.steps.map((s) => (s.name === 'scripts'
       ? { ...s, status: 'failed' as const, error: 'unknown character "Naruto"; use one of: Rogue Ninja', startedAt: STAMP, finishedAt: STAMP }
       : s));
@@ -773,6 +776,32 @@ describe("EpisodeRunner — an adaptation's cast (Roman's Naruto run)", () => {
     expect(panel.script.dialogue.map((d) => [d.speakerId, d.text])).toEqual([[rogue.id, 'Line 1.1'], [null, 'Believe it!'], [null, 'Hmph.']]);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0]![0])).toContain('Naruto, Sasuke');
+  });
+
+  it('retrying scripts whose answer has other panel counts than the breakdown completes on fitted layouts, and prompts get their panels', async () => {
+    // Roman's second failure: "page 2 needs exactly 4 panels (from the breakdown), got 5; page 4 needs exactly 5 panels …, got 3".
+    const bd = breakdownOf(['2-rows', '2x2', '3-rows', '5-stagger']);
+    const { manga, chapter, run } = failedRun(bd);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { runner, queue, claude, local } = rig({ responses: { 'episode.scripts': () => scriptsOf([2, 5, 3, 3], 'Rogue Ninja') } });
+    runner.rerun(run.id, 'scripts', false);
+    await queue.idle();
+    expect(runner.get(run.id)).toMatchObject({ status: 'awaiting-review', currentStep: 3 });
+    const pages = storyPages(lib.store, chapter.id);
+    expect(pages.map((p) => readingOrder(p.layout, manga.readingDirection).length)).toEqual([2, 5, 3, 3]);
+    expect(runner.get(run.id).steps[2]!.output).toEqual(bd); // the stored breakdown stays as it was
+    // A user edit is checked against the pages it rewrites: the stored answer fits them, the breakdown's counts do not.
+    const stored = runner.get(run.id).steps[3]!.output;
+    runner.editOutput(run.id, 'scripts', stored);
+    expect(() => runner.editOutput(run.id, 'scripts', scriptsOf([2, 4, 3, 5], 'Rogue Ninja')))
+      .toThrow('page 2 needs exactly 5 panels (from its page layout), got 4');
+    runner.approve(run.id);
+    await queue.idle();
+    const asked = [...claude.calls, ...local.calls].filter((c) => c.name === 'episode.prompts')
+      .flatMap((c) => extractContext<PromptsContext>(c.prompt).panels.map((p) => p.panelId));
+    expect(asked.sort()).toEqual(chapterPanels(lib.store, chapter.id, manga.readingDirection).map((e) => e.panel.id).sort());
+    expect(asked).toHaveLength(2 + 5 + 3 + 3 + 1); // the story panels and the cover
+    expect(runner.get(run.id).steps[4]!.status).not.toBe('failed');
   });
 
   it('re-running the failed run from the outline gives the franchise cast real characters and portraits', async () => {

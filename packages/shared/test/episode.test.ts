@@ -120,14 +120,24 @@ describe('scriptsSchemaFor', () => {
     expect(r.data?.pages[0]?.panels[0]?.dialogue[0]?.speaker).toBe('Aiko');
   });
 
-  it('with lenientNames (an LLM answer), accepts unknown characters and speakers but keeps the panel counts strict', () => {
-    const lenient = scriptsSchemaFor({ panelCounts: [2], knownNames: ['Aiko'], lenientNames: true });
+  it('lenient (an LLM answer) accepts unknown characters and speakers and a panel count that differs; the page count stays strict', () => {
+    const lenient = scriptsSchemaFor({ panelCounts: [2, 2], knownNames: ['Aiko'], lenient: true });
     const stranger = panel({
       characters: [{ name: 'Naruto', pose: 'running', expression: 'grinning', position: 'left' }],
       dialogue: [{ speaker: 'Naruto', kind: 'shout', text: 'Believe it!' }],
     });
-    expect(lenient.safeParse({ pages: [{ panels: [stranger, panel()] }] }).success).toBe(true);
-    expect(issuesOf(lenient.safeParse({ pages: [{ panels: [stranger] }] }))).toEqual(['pages.0.panels: page 1 needs exactly 2 panels (from the breakdown), got 1']);
+    expect(lenient.safeParse({ pages: [{ panels: [stranger, panel()] }, { panels: [panel()] }] }).success).toBe(true);
+    expect(lenient.safeParse({ pages: [{ panels: [panel(), panel(), panel()] }, { panels: [panel(), panel()] }] }).success).toBe(true);
+    expect(issuesOf(lenient.safeParse({ pages: [{ panels: [stranger] }] }))).toEqual(['pages: expected exactly 2 pages (from the breakdown), got 1']);
+    const strict = scriptsSchemaFor({ panelCounts: [2, 2], knownNames: ['Aiko'] });
+    expect(issuesOf(strict.safeParse({ pages: [{ panels: [panel(), panel(), panel()] }, { panels: [panel(), panel()] }] })))
+      .toEqual(['pages.0.panels: page 1 needs exactly 2 panels (from the breakdown), got 3']);
+  });
+
+  it('names where the panel counts come from (a user edit of materialized pages checks their layouts)', () => {
+    const pagesSchema = scriptsSchemaFor({ panelCounts: [3], knownNames: ['Aiko'], panelSource: 'its page layout' });
+    expect(issuesOf(pagesSchema.safeParse({ pages: [{ panels: [panel(), panel()] }] })))
+      .toEqual(['pages.0.panels: page 1 needs exactly 3 panels (from its page layout), got 2']);
   });
 
   it('rejects unknown characters and speakers with the valid names listed', () => {

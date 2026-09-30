@@ -130,10 +130,14 @@ export interface ScriptsRules {
   panelCounts: number[];
   knownNames: string[];
   /**
-   * An LLM answer (true): a name outside knownNames is not an error; materialization drops it from the panel's cast and
-   * nulls its speaker, so one stray name never fails the step. A user edit (false) stays strict, so a typo is caught.
+   * An LLM answer (true): only the page count is checked (pages cannot be invented). A name outside knownNames is not an
+   * error (materialization drops it from the panel's cast and nulls its speaker), and neither is a page whose panel count
+   * differs from panelCounts (materialization picks a layout with that many panels). One stray detail never fails the
+   * step. A user edit (false) stays strict, so a typo or a missing panel is caught.
    */
-  lenientNames?: boolean;
+  lenient?: boolean;
+  /** Where panelCounts come from, for the messages: "the breakdown" (default) or, for an edit of materialized pages, "its page layout". */
+  panelSource?: string;
   /** For a chunk of the chapter (scripts run in page chunks): pages before it, so messages name absolute page numbers. */
   pageOffset?: number;
 }
@@ -148,12 +152,13 @@ export function scriptsSchemaFor(rules: ScriptsRules): z.ZodType<ScriptsOutput> 
       const source = offset === 0 ? 'from the breakdown' : `pages ${offset + 1}–${offset + want} of the breakdown`;
       ctx.addIssue({ code: 'custom', path: ['pages'], message: `expected exactly ${want} pages (${source}), got ${value.pages.length}` });
     }
+    if (rules.lenient) return;
+    const from = rules.panelSource ?? 'the breakdown';
     value.pages.forEach((page, i) => {
       const panels = rules.panelCounts[i];
       if (panels !== undefined && page.panels.length !== panels) {
-        ctx.addIssue({ code: 'custom', path: ['pages', i, 'panels'], message: `page ${offset + i + 1} needs exactly ${panels} panels (from the breakdown), got ${page.panels.length}` });
+        ctx.addIssue({ code: 'custom', path: ['pages', i, 'panels'], message: `page ${offset + i + 1} needs exactly ${panels} panels (from ${from}), got ${page.panels.length}` });
       }
-      if (rules.lenientNames) return;
       page.panels.forEach((p, j) => {
         p.characters.forEach((c, k) => {
           if (!known(c.name)) ctx.addIssue({ code: 'custom', path: ['pages', i, 'panels', j, 'characters', k, 'name'], message: `unknown character "${c.name}"; use one of: ${valid}` });
