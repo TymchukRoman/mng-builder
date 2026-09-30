@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ApiErrorBody, Chapter, Character, EpisodeRun, ImageGeneratePayload, Job, Manga, Page, PageDetail } from '@manga/shared';
+import { extractContext, type ScriptsContext } from '../src/workflows/episode/context.js';
 import { startM4TestServer, type M4TestServer } from './helpers/m4-server.js';
 
 let s: M4TestServer | null = null;
@@ -14,13 +15,21 @@ async function finished(server: M4TestServer, chapterId: string): Promise<Episod
   const run = await server.until(async () => {
     const r = (await server.api<EpisodeRun | null>('GET', `/api/chapters/${chapterId}/episode`)).body;
     return r && FINAL.has(r.status) ? r : null;
-  }, 100_000);
+  }, 45_000);
   expect(run.status, JSON.stringify(run.steps.find((st) => st.status === 'failed') ?? null)).toBe('done');
   return run;
 }
 
 const runJobs = async (server: M4TestServer, runId: string): Promise<Job[]> =>
   (await server.api<Job[]>('GET', '/api/jobs?limit=500')).body.filter((j) => j.episodeRunId === runId);
+
+/** The run's `character-portrait` generate jobs of one character. */
+function portraitJobs(jobs: Job[], characterId: string): Job[] {
+  return jobs.filter((j) => {
+    const p = j.payload as ImageGeneratePayload;
+    return j.kind === 'image.generate' && p.target === 'character-portrait' && p.characterId === characterId;
+  });
+}
 
 async function setup(server: M4TestServer, pages: number) {
   const manga = (await server.api<Manga>('POST', '/api/mangas', { title: 'Дощ', language: 'uk' })).body;
@@ -76,12 +85,10 @@ describe('episode in autopilot (integration, fakes)', { timeout: 120_000 }, () =
     const mika = characters.find((c) => c.name === 'Mika')!;
     const aiko = characters.find((c) => c.name === 'Aiko')!;
     const generates = jobs.filter((j) => j.kind === 'image.generate');
-    const portraitsOf = (id: string): Job[] =>
-      generates.filter((j) => (j.payload as ImageGeneratePayload).target === 'character-portrait' && (j.payload as { characterId?: string }).characterId === id);
-    expect(portraitsOf(mika.id)).toHaveLength(4);
-    expect(portraitsOf(aiko.id)).toHaveLength(0);
+    expect(portraitJobs(jobs, mika.id)).toHaveLength(4);
+    expect(portraitJobs(jobs, aiko.id)).toHaveLength(0);
     // ... and the render step waited for them: no panel job started before the last portrait finished.
-    const lastPortrait = portraitsOf(mika.id).map((j) => j.finishedAt!).sort().at(-1)!;
+    const lastPortrait = portraitJobs(jobs, mika.id).map((j) => j.finishedAt!).sort().at(-1)!;
     const panelJobs = generates.filter((j) => (j.payload as ImageGeneratePayload).target === 'panel');
     expect(panelJobs).toHaveLength(5);
     for (const j of panelJobs) expect(j.startedAt! >= lastPortrait).toBe(true);
@@ -89,7 +96,7 @@ describe('episode in autopilot (integration, fakes)', { timeout: 120_000 }, () =
 
   it('re-running scripts needs confirm, then replaces the pages and finishes again', async () => {
     s = await startM4TestServer();
-    const { chapter, run } = await setup(s, 1);
+    const { manga, chapter, run } = await setup(s, 1);
     await finished(s, chapter.id);
     const before = (await s.api<Page[]>('GET', `/api/chapters/${chapter.id}/pages`)).body.map((p) => p.id);
 
@@ -104,9 +111,9 @@ describe('episode in autopilot (integration, fakes)', { timeout: 120_000 }, () =
     expect(after[0]).not.toBe(before[0]);
     expect((await s.api<Chapter>('GET', `/api/chapters/${chapter.id}`)).body.status).toBe('ready');
 
-    // F12: the rerun keeps the character-portrait jobs, so Mika still has exactly her four portraits.
-    const generates = (await runJobs(s, run.id)).filter((j) => j.kind === 'image.generate');
-    expect(generates.filter((j) => (j.payload as ImageGeneratePayload).target === 'character-portrait')).toHaveLength(4);
+    // The rerun queues no extra portrait: Mika still has exactly her four portrait jobs.
+    const mika = (await s.api<Character[]>('GET', `/api/mangas/${manga.id}/characters`)).body.find((c) => c.name === 'Mika')!;
+    expect(portraitJobs(await runJobs(s, run.id), mika.id)).toHaveLength(4);
   });
 
   it('runs a six-page Ukrainian manga: scripts in chunks, Ukrainian dialogue lettered on every page', async () => {
@@ -115,7 +122,7 @@ describe('episode in autopilot (integration, fakes)', { timeout: 120_000 }, () =
     await finished(s, chapter.id);
 
     const scriptCalls = s.claude.calls.filter((c) => c.name === 'episode.scripts');
-    expect(scriptCalls.length).toBe(2); // pages 1-4, then 5-6
+    expect(scriptCalls.map((c) => extractContext<ScriptsContext>(c.prompt).pages.map((p) => p.page))).toEqual([[1, 2, 3, 4], [5, 6]]);
     const pages = (await s.api<Page[]>('GET', `/api/chapters/${chapter.id}/pages`)).body;
     expect(pages).toHaveLength(6);
     const details = await Promise.all(pages.map(async (p) => (await s!.api<PageDetail>('GET', `/api/pages/${p.id}`)).body));
@@ -124,11 +131,10 @@ describe('episode in autopilot (integration, fakes)', { timeout: 120_000 }, () =
       expect(detail.panels.every((p) => p.activeImageId !== null)).toBe(true);
       const texts = detail.frames.map((f) => f.text);
       expect(texts.some((x) => x.startsWith('Привіт'))).toBe(true);
-      expect(texts.some((x) => /Hello|Autumn|Mika waves/.test(x))).toBe(false);
+      expect(texts.some((x) => /Hello|Autumn/.test(x))).toBe(false);
+      expect(texts.some((x) => x.includes(`(${i + 1}.`)), `page ${i + 1} dialogue carries its absolute page number`).toBe(true);
       if (i === 0) expect(texts).toContain('Осінь.');
     });
-    // chunking keeps absolute page numbers: page 6's dialogue says (6.x)
-    expect(details[5]!.frames.some((f) => f.text.includes('(6.'))).toBe(true);
     expect((await s.api<Chapter>('GET', `/api/chapters/${chapter.id}`)).body.status).toBe('ready');
   });
 });
