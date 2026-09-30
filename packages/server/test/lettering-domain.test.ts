@@ -1,6 +1,6 @@
 // packages/server/test/lettering-domain.test.ts
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { computeRects, CreateFrameSchema } from '@manga/shared';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { computeRects, CreateFrameSchema, type Box } from '@manga/shared';
 import { createFrame } from '../src/domain/frames.js';
 import { letterPage } from '../src/domain/lettering.js';
 import { createCoverPage, createPage } from '../src/domain/pages.js';
@@ -9,6 +9,8 @@ import { openTestLibrary, type TestLibrary } from './helpers/library.js';
 import { seedCharacter, updatePanel } from './helpers/seed.js';
 
 let lib: TestLibrary;
+const overlaps = (a: Box, b: Box): boolean =>
+  a.x < b.x + b.w - 1e-9 && b.x < a.x + a.w - 1e-9 && a.y < b.y + b.h - 1e-9 && b.y < a.y + a.h - 1e-9;
 beforeEach(() => { lib = openTestLibrary(); });
 afterEach(() => { lib.close(); });
 
@@ -80,5 +82,44 @@ describe('letterPage', () => {
     const [title] = letterPage(lib.store, cover.page.id);
     lib.store.frames.delete(title!.id);
     expect(letterPage(lib.store, cover.page.id).map((f) => f.kind)).toEqual(['title']);
+  });
+
+  it('places new bubbles clear of frames already on the page', () => {
+    const { page, a } = letteredWorld();
+    const manual = createFrame(lib.store, page.id, CreateFrameSchema.parse({
+      kind: 'speech', text: 'By hand', panelId: a.id, box: { x: 0.02, y: 0.02, w: 0.3, h: 0.05 },
+    }));
+    const frames = letterPage(lib.store, page.id);
+    expect(frames.length).toBeGreaterThan(0);
+    for (const f of frames.filter((x) => x.panelId === a.id)) expect(overlaps(f.box, manual.box)).toBe(false);
+  });
+
+  it('letters cover dialogue around the title, inside the panel', () => {
+    const { manga, chapter } = letteredWorld();
+    const cover = createCoverPage(lib.store, manga.id, chapter.id);
+    const panel = cover.panels[0]!;
+    updatePanel(lib.store, panel.id, { dialogue: [
+      { speakerId: null, kind: 'narration', text: 'A quiet harbour town at the end of autumn, where the rain never quite stops and every alley hides a story waiting to be found by someone patient.' },
+      { speakerId: null, kind: 'sfx', text: 'SPLASH' },
+    ] });
+    const frames = letterPage(lib.store, cover.page.id);
+    const title = frames.find((f) => f.kind === 'title')!;
+    const rect = computeRects(cover.page.layout, manga.pageFormat)[0]!.rect;
+    expect(frames).toHaveLength(3);
+    expect(title.box.x).toBeGreaterThanOrEqual(rect.x);
+    expect(title.box.y).toBeGreaterThanOrEqual(rect.y);
+    expect(title.box.x + title.box.w).toBeLessThanOrEqual(rect.x + rect.w + 1e-9);
+    expect(title.box.y + title.box.h).toBeLessThanOrEqual(rect.y + rect.h + 1e-9);
+    for (const f of frames.filter((x) => x !== title)) expect(overlaps(f.box, title.box)).toBe(false);
+  });
+
+  it('leaves no frames behind when the title cannot be created', () => {
+    const { manga, chapter } = letteredWorld();
+    const cover = createCoverPage(lib.store, manga.id, chapter.id);
+    updatePanel(lib.store, cover.panels[0]!.id, { dialogue: [{ speakerId: null, kind: 'narration', text: 'Autumn.' }] });
+    const spy = vi.spyOn(lib.store.chapters, 'require').mockImplementation(() => { throw new Error('boom'); });
+    expect(() => letterPage(lib.store, cover.page.id)).toThrow('boom');
+    spy.mockRestore();
+    expect(lib.store.frames.listByPage(cover.page.id)).toEqual([]);
   });
 });

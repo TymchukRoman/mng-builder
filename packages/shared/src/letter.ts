@@ -141,7 +141,8 @@ export function autoLetter(input: AutoLetterInput): LetterFrame[] {
     const r = panel.rect;
     const area: Area = { left: r.x + ix, right: r.x + r.w - ix, top: r.y + iy, bottom: r.y + r.h - iy };
     const existing = input.existingFrames.filter((f) => f.panelId === id);
-    const occupied: Box[] = existing.map((f) => f.box);
+    // Every frame on the page is an obstacle (page-level and other panels' frames too); only the text match is per panel.
+    const occupied: Box[] = input.existingFrames.map((f) => f.box);
     const todo = panel.script.dialogue.filter((l) => !existing.some((f) => f.text === l.text));
     const sorted = [
       ...todo.filter((l) => l.kind === 'narration'),

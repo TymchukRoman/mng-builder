@@ -149,6 +149,15 @@ describe('autoLetter', () => {
     expect(overlap(frames[0]!.box, existing.box)).toBe(false);
     expect(frames[0]!.order).toBe(1);
   });
+
+  it('avoids every frame on the page as an obstacle, whatever its panelId', () => {
+    const blocker = { x: WIDE.x + IX, y: WIDE.y + IY, w: 0.3, h: 0.05 };
+    for (const panelId of [null, 'pn_other']) {
+      const frames = one(WIDE, script([speech('Hello there!')]), 'ltr', [{ panelId, text: 'not a line here', box: blocker, order: 0 }]);
+      expect(frames).toHaveLength(1);
+      expect(overlap(frames[0]!.box, blocker)).toBe(false);
+    }
+  });
 });
 
 describe('text insets shared with the UI bubble geometry', () => {
