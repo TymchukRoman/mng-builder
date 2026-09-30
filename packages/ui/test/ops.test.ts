@@ -211,6 +211,21 @@ describe('editor ops', () => {
     await ops.applyPreset('pg_1', '3-rows', true);
     expect(calls.map((c) => c.body)).toEqual([{ panelIdA: 'pn_a', panelIdB: 'pn_b' }, { preset: '3-rows', confirm: true }]);
   });
+  it('autoLetter posts without a body and stores the page it returns (the created frames)', async () => {
+    const lettered = makeDetail('pg_1', [makeFrame('tf_1'), makeFrame('tf_new', 'pg_1', { order: 1 })]);
+    const { ops, calls, page } = setup({ 'POST /api/pages/pg_1/auto-letter': () => lettered });
+    const detail = await ops.autoLetter('pg_1');
+    expect(calls).toEqual([{ method: 'POST', path: '/api/pages/pg_1/auto-letter', body: undefined }]);
+    expect(detail).toBe(lettered);
+    expect(page().frames.map((f) => f.id)).toEqual(['tf_1', 'tf_new']);
+  });
+
+  it('autoLetter rejects with the server error and leaves the cache alone', async () => {
+    const { ops, page } = setup({ 'POST /api/pages/pg_1/auto-letter': () => { throw new Error('page not found'); } });
+    await expect(ops.autoLetter('pg_1')).rejects.toThrow('page not found');
+    expect(page().frames.map((f) => f.id)).toEqual(['tf_1']);
+  });
+
   it('deleteFrame revert keeps the id map and the cache right when the order fix fails', async () => {
     const { ops, ids, page } = setup({
       'DELETE /api/frames/tf_1': () => ({ ok: true }),

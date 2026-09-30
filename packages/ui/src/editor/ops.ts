@@ -309,6 +309,17 @@ export function createOps({ api, ids, cache, format, onFrameError }: OpsDeps) {
       cache.setPage(detail);
       return detail;
     },
+
+    /**
+     * Barrier helper (not undoable, spec §9.3): the server adds a frame for every dialogue line of the page that has none yet,
+     * and answers with the page. The new frames have no client-side history to undo, so run it through history.barrier().
+     */
+    async autoLetter(pageId: string): Promise<PageDetail> {
+      await cache.cancel(pageId);
+      const detail = await api.post<PageDetail>(`/api/pages/${seg(pageId)}/auto-letter`);
+      cache.setPage(detail);
+      return detail;
+    },
   };
 }
 
