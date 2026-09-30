@@ -5,6 +5,7 @@ import type { Character, PanelScript } from '@manga/shared';
 import { CAMERA_TAGS, cameraSentence, cameraTags, cameraWording, stripCameraSentences, stripCameraTags } from '../src/prompts/camera.js';
 import { loadPrompt } from '../src/prompts/load.js';
 import { normalizeAppearanceTags, sanitizeSentences, sanitizeTags } from '../src/prompts/sanitize.js';
+import { finishScene } from '../src/prompts/scene.js';
 import { scriptBlock } from '../src/prompts/script-block.js';
 
 function character(id: string, name: string): Character {
@@ -136,5 +137,23 @@ describe('camera (I2: the script decides shot and angle, never the LLM)', () => 
 
   it('still drops a sentence that is framing only, once nothing usable is left after stripping (R2)', () => {
     expect(stripCameraSentences('Extreme close-up from a low angle.')).toBe('');
+  });
+});
+
+describe('finishScene (shared by M2 panel-prompt and the M4 prompts step)', () => {
+  it('sanitizes tags, strips the model framing and puts the script camera tags first', () => {
+    expect(finishScene('tags', 'close', 'low', 'solo, Upper Body, speech bubble, running, from above, rooftop, running'))
+      .toBe('close-up, from below, solo, running, rooftop');
+  });
+
+  it('sanitizes sentences, strips the model framing and opens with the script camera sentence', () => {
+    expect(finishScene('natural', 'medium', 'eye', 'Close-up of the character from picture 1 running through the rain. A speech bubble.'))
+      .toBe('Medium shot at eye level. the character from picture 1 running through the rain.');
+  });
+
+  it('returns null when nothing usable is left', () => {
+    expect(finishScene('tags', 'medium', 'eye', 'upper body, text, cowboy shot')).toBeNull();
+    expect(finishScene('natural', 'wide', 'high', 'A medium shot at eye level.')).toBeNull();
+    expect(finishScene('tags', 'medium', 'eye', ' , ; ')).toBeNull();
   });
 });
