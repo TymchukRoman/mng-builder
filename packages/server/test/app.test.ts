@@ -463,6 +463,37 @@ describe('Host and Origin guard (F13)', () => {
     }
   });
 
+  it('applies the Host guard to the static UI files and the SPA fallback, and serves no file outside the UI folder (@fastify/static 10)', async () => {
+    const dir = tempDir();
+    const outer = tempDir('manga-ui-');
+    const uiPath = join(outer.path, 'dist');
+    mkdirSync(join(uiPath, 'assets'), { recursive: true });
+    writeFileSync(join(uiPath, 'index.html'), '<!doctype html><title>Manga</title>');
+    writeFileSync(join(uiPath, 'assets', 'app.js'), 'console.log(1)');
+    writeFileSync(join(outer.path, 'manga-outside-secret.txt'), 'SECRET');
+    const server = await startServer({ config: { libraryPath: dir.path, port: 0 }, uiDir: uiPath });
+    const port = new URL(server.url).port;
+    try {
+      for (const url of ['/', '/assets/app.js', '/m/mg_abc']) {
+        const ok = await getWithHost(`${server.url}${url}`, `localhost:${port}`);
+        expect(ok.status, url).toBe(200);
+        const bad = await getWithHost(`${server.url}${url}`, 'evil.example');
+        expect([bad.status, JSON.parse(bad.body)], url).toEqual([403, { error: { code: 'forbidden', message: 'host evil.example is not allowed' } }]);
+      }
+      // Encoded traversal and a differently cased alias of a real file must never serve it (403 or 404 by platform).
+      for (const url of ['/%2e%2e/manga-outside-secret.txt', '/assets/%2e%2e/%2e%2e/manga-outside-secret.txt', '/assets/..%2f..%2fmanga-outside-secret.txt', '/ASSETS/APP.JS']) {
+        const res = await getWithHost(`${server.url}${url}`, `localhost:${port}`);
+        expect(res.status, url).not.toBe(200);
+        expect(res.body, url).not.toContain('SECRET');
+        expect(res.body, url).not.toContain('console.log(1)');
+      }
+    } finally {
+      await server.stop();
+      outer.cleanup();
+      dir.cleanup();
+    }
+  });
+
   it('rejects a non-GET/HEAD request whose Origin is foreign, and passes same-origin or Origin-less requests (G4)', async () => {
     const dir = tempDir();
     const server = await startServer({ config: { libraryPath: dir.path, port: 0 }, uiDir: null });
