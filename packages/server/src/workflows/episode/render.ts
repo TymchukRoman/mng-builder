@@ -1,4 +1,3 @@
-// packages/server/src/workflows/episode/render.ts
 import {
   estimateSeconds, formatEstimate, stepIndex,
   type Character, type EpisodeRun, type Image, type ImageGeneratePayload, type ImageGenerateResult, type ImageReviewPayload,
@@ -10,7 +9,7 @@ import type { Engines } from '../../engines/resolve.js';
 import { emitEntity, type EventBus } from '../../events/bus.js';
 import { panelCharacters, panelContext } from '../../handlers/context.js';
 import { enqueuePortraits } from '../../imaging/portraits.js';
-import { routeRecipe } from '../../imaging/route.js';
+import { promptStyleFor, routeRecipe, type PromptStyle } from '../../imaging/route.js';
 import { PermanentError, isTerminal, waitForJob, type JobContext, type JobQueue } from '../../jobs/index.js';
 import type { Store } from '../../store/index.js';
 import { chapterPanels } from './chapter.js';
@@ -22,41 +21,73 @@ export const TEXT_NEGATIVE = 'text, letters, words, writing';
 /** F14: an anatomy flag goes into the negative prompt; the reviewer's note names the defect, not the wanted result. */
 export const ANATOMY_NEGATIVE = 'bad anatomy, extra arms, extra limbs, bad hands';
 export interface RetryPatch { seed: number; recipe?: string; negativeExtra?: string; sceneSuffix?: string }
-/** What a retry needs to know about the flagged panel. */
-export interface RetryTarget { countTag: string; hasPortraitRefs: boolean }
+/** How many of a panel's cast are girls, boys and others (from the count tag in each character's appearanceTags). */
+export interface CastCount { girl: number; boy: number; other: number }
+/** What a retry needs to know about the flagged panel. `style` is the prompt style of the recipe the panel routes to. */
+export interface RetryTarget { cast: CastCount; hasPortraitRefs: boolean; style: PromptStyle }
 
 const MAX_COUNTED = 5;
+const NUMBER_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
 
-/**
- * The Danbooru people-count tag for a panel's cast (the M2 tag prompts' convention: `solo`, `2girls`, `1boy, 1girl`,
- * `multiple boys`, `no humans`). The gender is the count tag each character's appearanceTags starts with
- * (`1girl`/`1boy`/`1other`); anything else counts as other.
- */
-export function countTag(cast: Array<Pick<Character, 'appearanceTags'>>): string {
-  if (cast.length === 0) return 'no humans';
-  if (cast.length === 1) return 'solo';
-  const counts = { boy: 0, girl: 0, other: 0 };
+/** Genders come from the `1girl`/`1boy` tag each character's appearanceTags starts with; anything else counts as other. */
+export function castCount(cast: Array<Pick<Character, 'appearanceTags'>>): CastCount {
+  const count: CastCount = { girl: 0, boy: 0, other: 0 };
   for (const c of cast) {
     const tags = c.appearanceTags.split(',').map((t) => t.trim().toLowerCase());
-    counts[tags.includes('1girl') ? 'girl' : tags.includes('1boy') ? 'boy' : 'other'] += 1;
+    count[tags.includes('1girl') ? 'girl' : tags.includes('1boy') ? 'boy' : 'other'] += 1;
   }
+  return count;
+}
+
+const total = (c: CastCount): number => c.girl + c.boy + c.other;
+const numberWord = (n: number): string => NUMBER_WORDS[n] ?? String(n);
+
+/**
+ * The Danbooru people-count tag for the tags style (the M2 tag prompts' convention: `solo`, `2girls`, `1boy, 1girl`,
+ * `multiple boys`, `no humans`).
+ */
+export function countTag(count: CastCount): string {
+  const n = total(count);
+  if (n === 0) return 'no humans';
+  if (n === 1) return 'solo';
   return (['boy', 'girl', 'other'] as const)
-    .filter((kind) => counts[kind] > 0)
+    .filter((kind) => count[kind] > 0)
     .map((kind) => {
-      const n = counts[kind];
-      return n === 1 ? `1${kind}` : n <= MAX_COUNTED ? `${n}${kind}s` : `multiple ${kind}s`;
+      const k = count[kind];
+      return k === 1 ? `1${kind}` : k <= MAX_COUNTED ? `${k}${kind}s` : `multiple ${kind}s`;
     })
     .join(', ');
 }
 
-/** The retry facts of a panel: its script cast's count tag, and whether a referenced character has a portrait (F31). */
-export function retryTarget(store: Store, panel: Panel): RetryTarget {
-  const { refCharacters } = panelContext(store, panel.id);
+/** The people count as a sentence for the natural style (qwen/klein scenes are plain English sentences). */
+export function countSentence(count: CastCount): string {
+  const n = total(count);
+  if (n === 0) return 'No people.';
+  if (n === 1) return 'Exactly one person.';
+  const head = `Exactly ${numberWord(n)} people`;
+  if (count.other === n) return `${head}.`;
+  const nouns: Record<keyof CastCount, [string, string]> = { girl: ['girl', 'girls'], boy: ['boy', 'boys'], other: ['other person', 'other people'] };
+  const parts = (['girl', 'boy', 'other'] as const)
+    .filter((kind) => count[kind] > 0)
+    .map((kind) => `${numberWord(count[kind])} ${nouns[kind][count[kind] === 1 ? 0 : 1]}`);
+  const list = parts.length === 1 ? parts[0]! : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)!}`;
+  return `${head}: ${list}.`;
+}
+
+/**
+ * The retry facts of a panel: its script cast (the characters that exist in this manga, as panelCharacters keeps
+ * them), whether a referenced character has a portrait (F31), and the prompt style of the recipe it routes to.
+ */
+export function retryTarget(store: Store, settings: Settings, panel: Panel): RetryTarget {
+  const { manga, characters, refCharacters } = panelContext(store, panel.id);
   const cast = [...new Set(panel.script.characters.map((c) => c.characterId))]
-    .map((id) => store.characters.get(id) ?? { appearanceTags: '' });
+    .map((id) => store.characters.get(id))
+    .filter((c): c is Character => c !== null && c.mangaId === manga.id);
+  const route = routeRecipe({ settings, manga, panel, refCount: refCharacters.length, charCount: characters.length });
   return {
-    countTag: countTag(cast),
+    cast: castCount(cast),
     hasPortraitRefs: refCharacters.some((c) => c.refs.portrait !== undefined && store.images.get(c.refs.portrait) !== null),
+    style: promptStyleFor(route.recipe),
   };
 }
 
@@ -64,23 +95,27 @@ export function retryTarget(store: Store, panel: Panel): RetryTarget {
  * Spec §8 retry strategy, always with a new seed:
  * - identity → the drift recipe, only when the panel references a character with a portrait (F31: it needs refs);
  * - text → a stronger negative; anatomy → the anatomy negative (F14);
- * - character-count → the panel's people-count tag in the scene (F14);
+ * - character-count → the panel's people count in the scene (F14, amended): a tag for the tags style, a sentence for the
+ *   natural style, judged on the recipe the retry actually uses;
  * - script-mismatch / other → the reviewer's note in the scene (it states the wanted state).
  */
 export function retryPatch(issues: ReviewResult['issues'], settings: Settings, seed: number, target: RetryTarget): RetryPatch {
   const kinds = new Set(issues.map((i) => i.kind));
+  const recipe = kinds.has('identity') && target.hasPortraitRefs ? settings.routing.driftFallback : null;
+  const style = recipe !== null ? promptStyleFor(recipe) : target.style;
   const negatives = [kinds.has('text') ? TEXT_NEGATIVE : null, kinds.has('anatomy') ? ANATOMY_NEGATIVE : null]
     .filter((n): n is string => n !== null);
   const notes = issues
     .filter((i) => i.kind === 'script-mismatch' || i.kind === 'other')
     .map((i) => i.note.trim())
     .filter((n) => n.length > 0);
-  const scene = [...(kinds.has('character-count') ? [target.countTag] : []), ...notes];
+  const count = style === 'natural' ? countSentence(target.cast) : countTag(target.cast);
+  const scene = [...(kinds.has('character-count') ? [count] : []), ...notes];
   return {
     seed,
-    ...(kinds.has('identity') && target.hasPortraitRefs ? { recipe: settings.routing.driftFallback } : {}),
+    ...(recipe !== null ? { recipe } : {}),
     ...(negatives.length > 0 ? { negativeExtra: negatives.join(', ') } : {}),
-    ...(scene.length > 0 ? { sceneSuffix: scene.join(', ') } : {}),
+    ...(scene.length > 0 ? { sceneSuffix: scene.join(style === 'natural' ? ' ' : ', ') } : {}),
   };
 }
 
@@ -272,7 +307,7 @@ export async function runRenderStep(deps: DriverDeps, ctx: JobContext, run: Epis
       flagged += bad.length;
       const again = await generateAll(
         deps, ctx, run,
-        bad.map((b) => ({ panelId: b.panel.id, patch: retryPatch(b.review.issues, settings, newSeed(), retryTarget(store, b.panel)) })),
+        bad.map((b) => ({ panelId: b.panel.id, patch: retryPatch(b.review.issues, settings, newSeed(), retryTarget(store, settings, b.panel)) })),
         leftovers, jobIds, `Re-rendering ${bad.length} flagged panels (round ${round})`,
       );
       batch = current().filter((p) => again.done.has(p.id));

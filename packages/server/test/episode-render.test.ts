@@ -8,7 +8,8 @@ import { chapterPanels } from '../src/workflows/episode/chapter.js';
 import { materializeScripts } from '../src/workflows/episode/effects.js';
 import { runLetteringStep } from '../src/workflows/episode/lettering.js';
 import {
-  ANATOMY_NEGATIVE, TEXT_NEGATIVE, countTag, retryPatch, runRenderStep, type DriverDeps,
+  ANATOMY_NEGATIVE, TEXT_NEGATIVE, castCount, countSentence, countTag, retryPatch, retryTarget, runRenderStep,
+  type DriverDeps, type RetryTarget,
 } from '../src/workflows/episode/render.js';
 import { nowIso, patchStep } from '../src/workflows/episode/steps.js';
 import { PREMISE, breakdown, outline, scripts, seedEpisodeWorld, seedRun } from './helpers/episode-fixtures.js';
@@ -64,7 +65,8 @@ const portraitJobs = () => queue.jobs('image.generate').filter((j) => (j.payload
 
 describe('retryPatch', () => {
   const s = DEFAULT_SETTINGS;
-  const solo = { countTag: 'solo', hasPortraitRefs: true };
+  const oneGirl = { girl: 1, boy: 0, other: 0 };
+  const solo: RetryTarget = { cast: oneGirl, hasPortraitRefs: true, style: 'tags' };
 
   it('maps issue kinds to retry strategies, keeping defects out of the positive prompt (F14)', () => {
     expect(retryPatch([], s, 1, solo)).toEqual({ seed: 1 });
@@ -72,28 +74,60 @@ describe('retryPatch', () => {
     expect(retryPatch([{ kind: 'text', note: 'letters on wall' }], s, 3, solo)).toEqual({ seed: 3, negativeExtra: TEXT_NEGATIVE });
     expect(retryPatch([{ kind: 'anatomy', note: 'extra arm' }, { kind: 'script-mismatch', note: 'should be sitting' }], s, 4, solo))
       .toEqual({ seed: 4, negativeExtra: ANATOMY_NEGATIVE, sceneSuffix: 'should be sitting' });
-    expect(retryPatch([{ kind: 'identity', note: '' }, { kind: 'text', note: '' }, { kind: 'character-count', note: 'only one person' }], s, 5, solo))
-      .toEqual({ seed: 5, recipe: 'qwen-edit-ref', negativeExtra: TEXT_NEGATIVE, sceneSuffix: 'solo' });
     expect(retryPatch(
       [{ kind: 'anatomy', note: 'six fingers' }, { kind: 'text', note: 'sign' }, { kind: 'character-count', note: 'three people' }, { kind: 'other', note: ' rain is falling ' }],
-      s, 6, { countTag: '2girls', hasPortraitRefs: true },
+      s, 6, { cast: { girl: 2, boy: 0, other: 0 }, hasPortraitRefs: true, style: 'tags' },
     )).toEqual({ seed: 6, negativeExtra: `${TEXT_NEGATIVE}, ${ANATOMY_NEGATIVE}`, sceneSuffix: '2girls, rain is falling' });
   });
 
+  it('writes the people count as a sentence for a natural-style recipe (F14, amended)', () => {
+    const natural: RetryTarget = { cast: { girl: 1, boy: 1, other: 0 }, hasPortraitRefs: true, style: 'natural' };
+    expect(retryPatch([{ kind: 'character-count', note: 'three people' }, { kind: 'script-mismatch', note: 'She should be sitting.' }], s, 8, natural))
+      .toEqual({ seed: 8, sceneSuffix: 'Exactly two people: one girl and one boy. She should be sitting.' });
+  });
+
+  it('judges the style on the recipe the retry uses: the drift recipe writes sentences', () => {
+    expect(retryPatch([{ kind: 'identity', note: '' }, { kind: 'text', note: '' }, { kind: 'character-count', note: 'only one person' }], s, 5, solo))
+      .toEqual({ seed: 5, recipe: 'qwen-edit-ref', negativeExtra: TEXT_NEGATIVE, sceneSuffix: 'Exactly one person.' });
+    expect(retryPatch([{ kind: 'identity', note: '' }, { kind: 'character-count', note: 'x' }], s, 9, { ...solo, hasPortraitRefs: false }))
+      .toEqual({ seed: 9, sceneSuffix: 'solo' });
+  });
+
   it('keeps the recipe for an identity issue on a panel without referenced portraits (F31)', () => {
-    expect(retryPatch([{ kind: 'identity', note: 'not Aiko' }], s, 7, { countTag: 'solo', hasPortraitRefs: false })).toEqual({ seed: 7 });
+    expect(retryPatch([{ kind: 'identity', note: 'not Aiko' }], s, 7, { ...solo, hasPortraitRefs: false })).toEqual({ seed: 7 });
   });
 });
 
-describe('countTag', () => {
-  it('derives the Danbooru people count from the cast', () => {
-    const c = (appearanceTags: string) => ({ appearanceTags });
-    expect(countTag([])).toBe('no humans');
-    expect(countTag([c('1boy, glasses')])).toBe('solo');
-    expect(countTag([c('1girl'), c('1girl, tall')])).toBe('2girls');
-    expect(countTag([c('1girl'), c('1boy')])).toBe('1boy, 1girl');
-    expect(countTag([c('1girl'), c('1girl'), c('1boy'), c('')])).toBe('1boy, 2girls, 1other');
-    expect(countTag(Array.from({ length: 7 }, () => c('1boy')))).toBe('multiple boys');
+describe('people count', () => {
+  const c = (appearanceTags: string) => ({ appearanceTags });
+
+  it('derives the Danbooru people count tag from the cast', () => {
+    expect(countTag(castCount([]))).toBe('no humans');
+    expect(countTag(castCount([c('1boy, glasses')]))).toBe('solo');
+    expect(countTag(castCount([c('1girl'), c('1girl, tall')]))).toBe('2girls');
+    expect(countTag(castCount([c('1girl'), c('1boy')]))).toBe('1boy, 1girl');
+    expect(countTag(castCount([c('1girl'), c('1girl'), c('1boy'), c('')]))).toBe('1boy, 2girls, 1other');
+    expect(countTag(castCount(Array.from({ length: 7 }, () => c('1boy'))))).toBe('multiple boys');
+  });
+
+  it('writes the people count as a sentence', () => {
+    expect(countSentence(castCount([]))).toBe('No people.');
+    expect(countSentence(castCount([c('1boy')]))).toBe('Exactly one person.');
+    expect(countSentence(castCount([c('1girl'), c('1girl')]))).toBe('Exactly two people: two girls.');
+    expect(countSentence(castCount([c('1girl'), c('1boy'), c('')]))).toBe('Exactly three people: one girl, one boy and one other person.');
+    expect(countSentence(castCount([c(''), c('')]))).toBe('Exactly two people.');
+    expect(countSentence(castCount(Array.from({ length: 12 }, () => c('1girl'))))).toBe('Exactly 12 people: 12 girls.');
+  });
+
+  it('counts only script characters that exist in this manga, as the renderer does', () => {
+    const { manga, panelIds } = renderWorld();
+    const other = seedEpisodeWorld(lib.store, { mangaTitle: 'Elsewhere' });
+    const stranger = seedCharacter(lib.store, other.manga.id, 'Stranger', '1boy');
+    const panel = lib.store.panels.require(panelIds[0]!);
+    const extra = [stranger.id, 'ch_gone'].map((characterId) => ({ characterId, pose: '', expression: '', position: 'left' as const }));
+    const updated = lib.store.panels.update(panel.id, { script: { ...panel.script, characters: [...panel.script.characters, ...extra] } });
+    expect(manga.id).not.toBe(other.manga.id);
+    expect(retryTarget(lib.store, DEFAULT_SETTINGS, updated)).toEqual({ cast: { girl: 1, boy: 0, other: 0 }, hasPortraitRefs: true, style: 'tags' });
   });
 });
 
@@ -109,6 +143,39 @@ describe('runRenderStep', () => {
     expect(progress[0]).toMatch(/^Rendering 5 panels · est\. ~\d+ (s|min)$/);
     expect(queue.jobs('image.generate').every((j) => j.lane === 'gpu' && j.episodeRunId === run.id)).toBe(true);
     expect(queue.jobs('image.review').every((j) => j.lane === 'claude' && j.episodeRunId === run.id)).toBe(true);
+  });
+
+  it('reports the estimate before it queues any panel', async () => {
+    const { run } = renderWorld();
+    fakeImaging(lib.store, queue);
+    const seen: Array<[string, number]> = [];
+    const ctx = { ...stepContext(run), progress: (label: string) => { seen.push([label, queue.jobs('image.generate').length]); } };
+    await runRenderStep(deps(), ctx, run);
+    expect(seen[0]![0]).toMatch(/^Rendering 5 panels · est\. /);
+    expect(seen[0]![1]).toBe(0);
+  });
+
+  it('counts a failed review job as not flagged (review is advisory)', async () => {
+    const { run, panelIds } = renderWorld();
+    const out = await render(run, {
+      review: (_imageId, panelId) => { if (panelId === panelIds[0]) throw new Error('Claude quota'); return []; },
+    });
+    expect(out).toMatchObject({ reviewed: 4, flagged: 0, rounds: 0 });
+    expect(queue.jobs('image.review').filter((j) => j.status === 'failed')).toHaveLength(1);
+  });
+
+  it('keeps the first image and succeeds when a re-render in a review round fails', async () => {
+    const { run, panelIds } = renderWorld();
+    const target = panelIds[0]!;
+    let renders = 0;
+    const out = await render(run, {
+      review: (_imageId, panelId) => (panelId === target ? [{ kind: 'text', note: 'sign' }] : []),
+      beforePanel: (id) => { if (id === target && ++renders > 1) throw new Error('ComfyUI crashed'); },
+    });
+    const firstImage = (panelJobs(target)[0]!.result as { imageId: string }).imageId;
+    expect(out).toMatchObject({ reviewed: 5, flagged: 1, rounds: 1 });
+    expect(panelJobs(target).map((j) => j.status)).toEqual(['succeeded', 'failed']);
+    expect(lib.store.panels.require(target).activeImageId).toBe(firstImage);
   });
 
   it('reviews in batches and re-renders flagged panels with the strategy for their issues', async () => {
@@ -141,6 +208,21 @@ describe('runRenderStep', () => {
       },
     });
     expect(panelJobs(target).at(-1)!.payload).toEqual({ target: 'panel', panelId: target, seed: 777, sceneSuffix: 'solo' });
+  });
+
+  it('writes the people count as a sentence for a panel on a natural-style recipe', async () => {
+    const { run, panelIds } = renderWorld();
+    const target = panelIds[1]!;
+    lib.store.panels.update(target, { recipe: 'qwen-edit-ref' });
+    const seen = new Set<string>();
+    await render(run, {
+      review: (_imageId, panelId) => {
+        if (panelId !== target || seen.has(panelId)) return [];
+        seen.add(panelId);
+        return [{ kind: 'character-count', note: 'two girls instead of one' }];
+      },
+    });
+    expect(panelJobs(target).at(-1)!.payload).toEqual({ target: 'panel', panelId: target, seed: 777, sceneSuffix: 'Exactly one person.' });
   });
 
   it('stops after settings.review.rounds', async () => {

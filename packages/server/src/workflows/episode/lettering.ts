@@ -1,4 +1,3 @@
-// packages/server/src/workflows/episode/lettering.ts
 import type { EpisodeRun, LetteringOutput, Page } from '@manga/shared';
 import { letterPage } from '../../domain/lettering.js';
 import { emitEntity, type EventBus } from '../../events/bus.js';

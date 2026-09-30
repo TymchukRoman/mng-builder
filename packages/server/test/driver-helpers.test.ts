@@ -1,3 +1,4 @@
+import { getEventListeners } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { EventBus } from '../src/events/bus.js';
 import { SEED_MODULUS } from '../src/domain/seed.js';
@@ -20,9 +21,12 @@ const enqueue = () => queue.enqueue({ kind: 'image.generate', lane: 'gpu', paylo
 describe('waitForJob', () => {
   it('resolves with the finished job', async () => {
     const job = enqueue();
-    const waiting = waitForJob(queue, job.id, new AbortController().signal);
+    const { signal } = new AbortController();
+    const waiting = waitForJob(queue, job.id, signal);
+    expect(getEventListeners(signal, 'abort')).toHaveLength(1);
     queue.cancel(job.id);
     expect(await waiting).toMatchObject({ id: job.id, status: 'cancelled' });
+    expect(getEventListeners(signal, 'abort')).toEqual([]);
   });
 
   it('rejects with the abort reason while the job is still queued', async () => {
