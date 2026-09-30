@@ -3,8 +3,9 @@ import { useParams, useSearchParams } from 'react-router';
 import { isId } from '../lib/ids';
 import { PageView } from '../page/PageView';
 import { renderPageSize } from '../page/pageModel';
-import { useManga, usePageDetail } from '../queries';
+import { useManga } from '../queries';
 import { errorText } from '../ui/toasts';
+import { usePrintDetail } from './printDetail';
 import { renderOutcome } from './renderOutcome';
 import './render.css';
 
@@ -28,7 +29,7 @@ export function RenderPage(): JSX.Element {
   const { pageId } = useParams();
   const [search] = useSearchParams();
   const valid = isId(pageId, 'pg'); // I1: a crafted id never reaches a request; it fails like a missing page
-  const detail = usePageDetail(valid ? pageId : undefined);
+  const detail = usePrintDetail(valid ? pageId : undefined, search.get('hires') === '1');
   const manga = useManga(detail.data?.page.mangaId);
   const rootRef = useRef<HTMLDivElement>(null);
 

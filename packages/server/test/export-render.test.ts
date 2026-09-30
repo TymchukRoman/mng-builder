@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
-import { EMPTY_SCRIPT, type Chapter, type ExportRenderResult, type Job, type JobRef, type Manga, type PageDetail } from '@manga/shared';
+import { EMPTY_SCRIPT, type Chapter, type ExportRenderResult, type Image, type Job, type JobRef, type Manga, type PageDetail } from '@manga/shared';
 import { startM4TestServer, type M4TestServer } from './helpers/m4-server.js';
 
 const UI_DIR = fileURLToPath(new URL('../../ui/dist', import.meta.url));
@@ -35,7 +35,14 @@ async function job(server: M4TestServer, id: string): Promise<Job> {
 // (for example the Task 17 `?hires=1` print route); rebuild with `npm run build` before trusting it.
 describe.skipIf(!HAS_UI)(SUITE, { timeout: 180_000 }, () => {
   it('exports a page PNG at print size and a chapter PDF at 182×257 mm', async () => {
-    s = await startM4TestServer({ uiDir: UI_DIR });
+    // Every HTTP request the server sees (the browser's included); registered first so its hook covers all routes.
+    const requests: string[] = [];
+    s = await startM4TestServer({
+      uiDir: UI_DIR,
+      inspectModules: (modules) => {
+        modules.unshift({ name: 'request-probe', register: (app) => { app.addHook('onRequest', async (req) => { requests.push(req.url); }); } });
+      },
+    });
     const manga = (await s.api<Manga>('POST', '/api/mangas', { title: 'Export', language: 'uk' })).body;
     const chapter = (await s.api<Chapter>('POST', `/api/mangas/${manga.id}/chapters`, { title: 'Один' })).body;
     const page = (await s.api<PageDetail>('POST', `/api/chapters/${chapter.id}/pages`, { layoutPreset: '2-rows' })).body;
@@ -51,6 +58,20 @@ describe.skipIf(!HAS_UI)(SUITE, { timeout: 180_000 }, () => {
     const bytes = readFileSync(pngFile!);
     // F6: an element screenshot of [data-testid="page-view"], so its height is the PageView's (3035 at scale 1).
     expect([bytes.readUInt32BE(16), bytes.readUInt32BE(20)]).toEqual([PNG_WIDTH, PAGE_VIEW_HEIGHT]);
+
+    // Task 17 (C-1): the print route reads /print, so the browser fetched the upscaled child and never the original.
+    const browserRequests = [...requests];
+    const printed = (await s.api<PageDetail>('GET', `/api/pages/${page.page.id}/print`)).body;
+    const plain = (await s.api<PageDetail>('GET', `/api/pages/${page.page.id}`)).body;
+    const upscaledId = printed.panels.find((p) => p.id === panel.id)!.activeImageId!;
+    const original = plain.panels.find((p) => p.id === panel.id)!.activeImageId!;
+    expect(upscaledId).not.toBe(original);
+    expect((printed.images[upscaledId] as Image).source).toBe('upscaled');
+    expect((printed.images[upscaledId] as Image).parentImageId).toBe(original);
+    expect(browserRequests).toContain(`/api/pages/${page.page.id}/print`);
+    expect(browserRequests).not.toContain(`/api/pages/${page.page.id}`);
+    expect(browserRequests).toContain(`/files/images/${upscaledId}.png`);
+    expect(browserRequests).not.toContain(`/files/images/${original}.png`);
 
     const pdf = await job(s, (await s.api<JobRef>('POST', '/api/export', { target: { type: 'chapter', id: chapter.id }, format: 'pdf' })).body.jobId);
     expect(pdf.status, pdf.error ?? '').toBe('succeeded');
