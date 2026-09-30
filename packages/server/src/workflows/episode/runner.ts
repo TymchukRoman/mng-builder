@@ -38,6 +38,11 @@ function premiseTitles(store: Store, chapterId: string): string[] {
   });
 }
 
+/** W1 F24: a paused run moves only by resume or cancel; "Run to end" and a re-run would render behind the user's back. */
+function refusePaused(run: EpisodeRun): void {
+  if (run.status === 'paused') throw new ConflictError('the run is paused; resume or cancel it first');
+}
+
 const isPortraitJob = (job: Job): boolean =>
   job.kind === 'image.generate' && (job.payload as ImageGeneratePayload | null)?.target === 'character-portrait';
 
@@ -107,18 +112,52 @@ export class EpisodeRunner {
     return this.get(run.id);
   }
 
-  /** "Run to end": no more review points; approves the step that is waiting, if any. */
+  /** "Run to end": no more review points; approves the step that is waiting, if any. A paused run refuses it (F24). */
   autopilot(runId: string): EpisodeRun {
     const run = this.get(runId);
     if (!ACTIVE.has(run.status)) throw new ConflictError(`the run is ${run.status}`);
+    refusePaused(run);
     const saved = this.save(run, { mode: 'autopilot' });
     return saved.status === 'awaiting-review' ? this.approve(runId) : saved;
+  }
+
+  /**
+   * W1 C1: pause a rendering run. The step is saved paused first, with its token, so the step job's cancellation below
+   * never fails it (failStep only fails a running step). Then the driver's job is cancelled (it ends `cancelled`) and the
+   * run's queued image jobs (generate, review, portraits; also those waiting behind a paused gpu lane) are dropped; a
+   * running image finishes, and resume skips the panel it rendered. The chapter stays `generating`. A render waiting at
+   * its preview or size stop is not running, so it cannot be paused (nothing is working then).
+   */
+  pause(runId: string): EpisodeRun {
+    const run = this.get(runId);
+    const idx = run.currentStep;
+    if (run.status !== 'running' || EPISODE_STEPS[idx] !== 'render' || run.steps[idx]?.status !== 'running') {
+      throw new ConflictError('only a run that is rendering images can be paused');
+    }
+    const saved = this.save(run, { status: 'paused', steps: patchStep(run.steps, idx, { status: 'paused' }) });
+    const driver = this.findStepJob(run.id, 'render');
+    if (driver) this.deps.queue.cancel(driver.id);
+    for (const job of this.deps.store.jobs.listByEpisodeRun(run.id)) {
+      if (job.status === 'queued' && job.kind.startsWith('image.')) this.deps.queue.cancel(job.id);
+    }
+    return saved;
+  }
+
+  /** W1 C1: resume a paused run: the render step is dispatched again with its token kept, like a retry. */
+  resumeRun(runId: string): EpisodeRun {
+    const run = this.get(runId);
+    const idx = run.currentStep;
+    if (run.status !== 'paused' || run.steps[idx]?.status !== 'paused') throw new ConflictError(`the run is ${run.status}, not paused`);
+    this.save(run, { status: 'running', steps: patchStep(run.steps, idx, { status: 'pending', error: null }) });
+    this.dispatch(run.id);
+    return this.get(run.id);
   }
 
   cancel(runId: string): EpisodeRun {
     const run = this.get(runId);
     if (!ACTIVE.has(run.status)) throw new ConflictError(`the run is already ${run.status}`);
-    const steps = run.steps.map((s) => (s.status === 'running' ? { ...s, status: 'failed' as const, error: 'Cancelled', finishedAt: nowIso() } : s));
+    const steps = run.steps.map((s) => (s.status === 'running' || s.status === 'paused'
+      ? { ...s, status: 'failed' as const, error: 'Cancelled', finishedAt: nowIso() } : s));
     const saved = this.save(run, { steps, status: 'cancelled' });
     this.cancelJobs(run.id, { keepPortraits: false });
     this.setChapterStatus(run.chapterId, 'draft');
@@ -168,6 +207,7 @@ export class EpisodeRunner {
     const run = this.get(runId);
     const idx = stepIndex(name);
     if (store.episodes.latestByChapter(run.chapterId)?.id !== run.id) throw new ConflictError('only the latest run of a chapter can be re-run');
+    refusePaused(run);
     const target = run.steps[idx]!;
     if (idx > run.currentStep || target.status === 'pending') throw new ConflictError(`step ${name} has not run yet`);
     const pages = storyPages(store, run.chapterId);
@@ -193,7 +233,8 @@ export class EpisodeRunner {
   }
 
   /**
-   * After a restart (episodeModule.start), for the latest run of every chapter that is `running`: a pending current
+   * After a restart (episodeModule.start), for the latest run of every chapter that is `running` (a `paused` run waits
+   * for the user to resume it, W1 C1): a pending current
    * step is dispatched; a running one is re-attached to its unfinished job, or enqueued again when there is none;
    * a done one (the process stopped between completing it and moving on) is accepted. A run that throws while
    * moving on is failed, and the others still resume. Returns how many runs moved.

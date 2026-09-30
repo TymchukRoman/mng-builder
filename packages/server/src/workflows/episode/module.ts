@@ -20,7 +20,7 @@ export function episodeModule(deps: CoreDeps, services: Pick<M2Services, 'engine
     runner,
     register(app): void {
       registerLlmStep('episode', (ctx, payload) => runner.handleStepJob(ctx, payload));
-      registerEpisodeRoutes(app, { store: deps.store, bus: deps.bus, runner });
+      registerEpisodeRoutes(app, { store: deps.store, bus: deps.bus, queue: deps.queue, runner });
     },
     start(): void {
       runner.resume(); // startServer has run queue.recover(), so interrupted step jobs are already queued

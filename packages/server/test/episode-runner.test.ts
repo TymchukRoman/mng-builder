@@ -13,14 +13,16 @@ import { completeStructured } from '../src/engines/structured.js';
 import type { JsonRequest, TextEngine } from '../src/engines/types.js';
 import { ConflictError, NotFoundError, ValidationError } from '../src/errors.js';
 import { EventBus } from '../src/events/bus.js';
-import { GpuArbiter, JobQueue } from '../src/jobs/index.js';
+import { GpuArbiter, GpuBusyError, JobQueue } from '../src/jobs/index.js';
 import { chapterPanels, storyPages } from '../src/workflows/episode/chapter.js';
 import { extractContext, panelStyle, type PromptsContext } from '../src/workflows/episode/context.js';
+import { renderMissing } from '../src/workflows/episode/missing.js';
 import { EpisodeRunner } from '../src/workflows/episode/runner.js';
+import { patchStep } from '../src/workflows/episode/steps.js';
 import { PREMISE, STAMP, TWO_PANEL_PRESET, breakdown, breakdownOf, outline, scripts, scriptsOf, seedEpisodeWorld, seedRun } from './helpers/episode-fixtures.js';
 import { FakeQueue, fakeImaging, fakeJobContext } from './helpers/fake-queue.js';
 import { openTestLibrary, type TestLibrary } from './helpers/library.js';
-import { seedCharacter } from './helpers/seed.js';
+import { seedCharacter, seedImage } from './helpers/seed.js';
 
 let lib: TestLibrary;
 let bus: EventBus;
@@ -1066,5 +1068,224 @@ describe('EpisodeRunner — render stops (W1 Q2, C2)', () => {
     expect(lib.store.panels.require(broken!).activeImageId).toBeNull();
     expect(r.steps[stepIndex('lettering')]).toMatchObject({ status: 'done', output: { frames: expect.any(Number) as number } });
     expect((r.steps[stepIndex('lettering')]!.output as { frames: number }).frames).toBeGreaterThan(0);
+  });
+});
+
+describe('EpisodeRunner — pause and resume (W1 C1)', () => {
+  const RENDER = stepIndex('render');
+  const renderJobs = (queue: FakeQueue): Job[] => queue.jobs('llm.step').filter((j) => (j.payload as { step?: string }).step === 'render');
+  const panelJobs = (queue: FakeQueue): Job[] =>
+    queue.jobs('image.generate').filter((j) => (j.payload as ImageGeneratePayload).target === 'panel');
+  const panelOf = (job: Job): string => (job.payload as { panelId: string }).panelId;
+
+  /** Finishes the queued portrait jobs by hand, as the gpu lane would (imaging is off). */
+  function servePortraits(queue: FakeQueue): void {
+    for (const job of portraitJobs(queue).filter((j) => j.status === 'queued')) {
+      const c = lib.store.characters.require((job.payload as { characterId: string }).characterId);
+      queue.succeed(job.id, { imageId: seedImage(lib.store, c.mangaId, { type: 'character', id: c.id }, 'portrait').id });
+    }
+  }
+
+  /** Renders a panel the way the image.generate handler does, and returns the image id. */
+  function renderPanel(panelId: string): string {
+    const panel = lib.store.panels.require(panelId);
+    const image = seedImage(lib.store, lib.store.pages.require(panel.pageId).mangaId, { type: 'panel', id: panel.id }, null);
+    lib.store.panels.update(panel.id, { activeImageId: image.id });
+    return image.id;
+  }
+
+  /** An autopilot run at the render step with its panel image jobs queued (imaging off; the portraits are served by hand). */
+  async function rendering() {
+    const { chapter, input } = world();
+    const r = rig({ imaging: false });
+    const run = r.runner.start(chapter.id, input, 'autopilot');
+    await vi.waitFor(() => {
+      servePortraits(r.queue);
+      expect(panelJobs(r.queue).some((j) => j.status === 'queued')).toBe(true);
+    });
+    expect(r.runner.get(run.id).steps[RENDER]!.status).toBe('running');
+    return { ...r, chapter, run: r.runner.get(run.id) };
+  }
+
+  it('pause stops the driver, cancels the queued image jobs and keeps the token; the chapter stays generating', async () => {
+    const { runner, queue, run, chapter } = await rendering();
+    const token = run.steps[RENDER]!.startedAt;
+    events.length = 0;
+    const paused = runner.pause(run.id);
+    expect(paused.status).toBe('paused');
+    expect(paused.steps[RENDER]).toMatchObject({ status: 'paused', startedAt: token, error: null });
+    await queue.idle();
+    expect(renderJobs(queue).map((j) => j.status)).toEqual(['cancelled']);
+    expect(panelJobs(queue).length).toBeGreaterThan(0);
+    expect(panelJobs(queue).every((j) => j.status === 'cancelled')).toBe(true);
+    expect(runner.get(run.id).status).toBe('paused'); // the cancelled step job did not fail the step
+    expect(runner.get(run.id).steps[RENDER]).toMatchObject({ status: 'paused', output: null });
+    expect(lib.store.chapters.require(chapter.id).status).toBe('generating');
+    const runEvents = events.filter((e) => e.type === 'entity' && e.entity === 'episodeRun');
+    expect(runEvents).toHaveLength(1); // G2: the one row change is announced once
+  });
+
+  it('pause also cancels the image jobs waiting behind a paused gpu lane, a busy-requeued one included (W1 R2)', async () => {
+    const { chapter } = world();
+    const engines = new Engines({ settings: () => lib.store.settings.get(), claude: new ScriptedEngine('claude', {}), local: new ScriptedEngine('local', {}) });
+    const queue = new JobQueue({ store: lib.store, bus, gpu: new GpuArbiter(), pollMs: 10 });
+    let calls = 0;
+    queue.register('image.generate', async () => {
+      calls++;
+      throw new GpuBusyError('another app holds the GPU');
+    });
+    const runner = new EpisodeRunner({ store: lib.store, bus, queue, engines });
+    const seeded = seedRun(lib.store, chapter.id, { currentStep: 'render', mode: 'autopilot' });
+    const run = lib.store.episodes.update(seeded.id, { steps: patchStep(seeded.steps, RENDER, { status: 'running', startedAt: STAMP }) });
+    queue.start();
+    try {
+      const jobs = [0, 1].map((i) => queue.enqueue({ kind: 'image.generate', lane: 'gpu', payload: { target: 'panel', panelId: `pn_${i}` }, episodeRunId: run.id }));
+      await vi.waitFor(() => expect(queue.pauseOf('gpu')).not.toBeNull()); // the first one was put back and the lane paused
+      expect(jobs.map((j) => lib.store.jobs.require(j.id).status)).toEqual(['queued', 'queued']);
+      runner.pause(run.id);
+      expect(jobs.map((j) => lib.store.jobs.require(j.id).status)).toEqual(['cancelled', 'cancelled']);
+      queue.resumeLane('gpu');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(calls).toBe(1);
+    } finally {
+      runner.stop();
+      await queue.stop();
+    }
+  });
+
+  it('resume re-dispatches the render step with its token', async () => {
+    const { runner, queue, run } = await rendering();
+    const token = run.steps[RENDER]!.startedAt;
+    const cancelled = panelJobs(queue).length;
+    runner.pause(run.id);
+    await queue.idle();
+    const resumed = runner.resumeRun(run.id);
+    expect(resumed.status).toBe('running');
+    expect(resumed.steps[RENDER]).toMatchObject({ status: 'running', startedAt: token });
+    expect(renderJobs(queue).map((j) => j.status)).toEqual(['cancelled', expect.stringMatching(/queued|running/)]);
+    // Nothing was rendered before the pause, so every panel is queued again.
+    await vi.waitFor(() => expect(panelJobs(queue).filter((j) => j.status === 'queued')).toHaveLength(cancelled));
+  });
+
+  it('an image that finishes after the pause is kept, a late driver result is discarded, and resume renders only the rest (F5)', async () => {
+    lib.store.settings.patch({ review: { autoInEpisode: false } });
+    const { runner, queue, run } = await rendering();
+    const token = run.steps[RENDER]!.startedAt;
+    const [driver] = renderJobs(queue);
+    // A second driver of the same step that ignores the pause (like a handler that misses its abort): its result arrives
+    // after the pause and must not count.
+    const progress: string[] = [];
+    const late = runner.handleStepJob(fakeJobContext(lib.store, bus, queue, driver!, new AbortController().signal, progress), driver!.payload as LlmStepPayload);
+    await vi.waitFor(() => expect(progress.some((l) => l.startsWith('Rendering'))).toBe(true));
+    const [first, ...rest] = panelJobs(queue);
+    lib.store.jobs.update(first!.id, { status: 'running', startedAt: new Date().toISOString() }); // the gpu lane is rendering it
+    runner.pause(run.id);
+    expect(lib.store.jobs.require(first!.id).status).toBe('running'); // a running image finishes
+    expect(rest.map((j) => lib.store.jobs.require(j.id).status).every((s) => s === 'cancelled')).toBe(true);
+    const kept = renderPanel(panelOf(first!));
+    queue.succeed(first!.id, { imageId: kept });
+    expect(await late).toEqual({ skipped: true });
+    await queue.idle(); // the aborted driver unwinds
+    expect(await runner.handleStepJob(fakeJobContext(lib.store, bus, queue, driver!), driver!.payload as LlmStepPayload)).toEqual({ skipped: true });
+    let r = runner.get(run.id);
+    expect(r.status).toBe('paused');
+    expect(r.steps[RENDER]).toMatchObject({ status: 'paused', startedAt: token, output: null });
+
+    fakeImaging(lib.store, queue);
+    runner.resumeRun(run.id);
+    await queue.idle();
+    r = runner.get(run.id);
+    expect(r.status).toBe('done');
+    expect(r.steps[RENDER]).toMatchObject({ status: 'done', startedAt: token, output: { failedPanelIds: [] } });
+    expect(lib.store.panels.require(panelOf(first!)).activeImageId).toBe(kept);
+    const byPanel = new Map<string, string[]>();
+    for (const j of panelJobs(queue)) byPanel.set(panelOf(j), [...(byPanel.get(panelOf(j)) ?? []), j.status]);
+    expect(byPanel.get(panelOf(first!))).toEqual(['succeeded']); // rendered before the pause: never rendered again
+    for (const j of rest) expect(byPanel.get(panelOf(j))).toEqual(['cancelled', 'succeeded']);
+  });
+
+  it('refuses to pause a run that is not rendering, and to resume one that is not paused', () => {
+    const { chapter, input } = world();
+    const { runner } = rig({ auto: false });
+    const run = runner.start(chapter.id, input, 'autopilot'); // premise running
+    expect(() => runner.pause(run.id)).toThrow(ConflictError);
+    expect(() => runner.resumeRun(run.id)).toThrow(ConflictError);
+  });
+
+  it('refuses to pause at the preview stop: the render step is waiting, not running', async () => {
+    const { chapter, input } = world();
+    const { runner, queue } = rig();
+    const run = runner.start(chapter.id, { ...input, previewFirst: true }, 'autopilot');
+    await queue.idle();
+    expect(runner.get(run.id).steps[RENDER]!.status).toBe('awaiting-review');
+    expect(() => runner.pause(run.id)).toThrow(ConflictError);
+  });
+
+  it('a paused run refuses "Run to end", a re-run and an approve: only resume and cancel move it (F24)', async () => {
+    const { runner, queue, run } = await rendering();
+    runner.pause(run.id);
+    await queue.idle();
+    const before = queue.jobs().length;
+    expect(() => runner.autopilot(run.id)).toThrow(ConflictError);
+    expect(() => runner.rerun(run.id, 'render', false)).toThrow(ConflictError);
+    expect(() => runner.rerun(run.id, 'prompts', false)).toThrow(ConflictError);
+    expect(() => runner.approve(run.id)).toThrow(ConflictError);
+    expect(() => runner.pause(run.id)).toThrow(ConflictError);
+    expect(queue.jobs()).toHaveLength(before);
+    expect(runner.get(run.id)).toMatchObject({ status: 'paused', mode: 'autopilot' });
+    expect(runner.get(run.id).steps[RENDER]!.status).toBe('paused');
+  });
+
+  it('a restart leaves a paused run paused', async () => {
+    const { runner, queue, run, engines } = await rendering();
+    runner.pause(run.id);
+    await queue.idle();
+    const before = queue.jobs('llm.step').length;
+    const restarted = new EpisodeRunner({ store: lib.store, bus, queue: queue.asQueue(), engines });
+    expect(restarted.resume()).toBe(0);
+    expect(queue.jobs('llm.step')).toHaveLength(before);
+    expect(restarted.get(run.id).status).toBe('paused');
+    restarted.stop();
+  });
+
+  it('cancel ends a paused run and marks its paused step Cancelled', async () => {
+    const { runner, queue, run, chapter } = await rendering();
+    runner.pause(run.id);
+    await queue.idle();
+    const cancelled = runner.cancel(run.id);
+    expect(cancelled.status).toBe('cancelled');
+    expect(cancelled.steps[RENDER]).toMatchObject({ status: 'failed', error: 'Cancelled' });
+    expect(lib.store.chapters.require(chapter.id).status).toBe('draft');
+  });
+
+  it('at the preview stop, Continue adopts the jobs render-missing queued: one generate job per panel (F6)', async () => {
+    const { chapter, input } = world();
+    const { runner, queue } = rig();
+    const run = runner.start(chapter.id, { ...input, previewFirst: true }, 'autopilot');
+    await queue.idle();
+    expect(runner.get(run.id).steps[RENDER]!.output).toMatchObject({ preview: true, remainingPanels: 2 });
+    // The panel renders wait for release(), so the render-missing jobs are still unfinished when Continue starts.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    queue.on('image.generate', async (job) => {
+      await gate;
+      return { imageId: renderPanel(panelOf(job)) };
+    });
+    const refs = renderMissing(lib.store, queue.asQueue(), chapter.id);
+    expect(refs).toHaveLength(2);
+    expect(refs.every((ref) => lib.store.jobs.require(ref.jobId).episodeRunId === run.id)).toBe(true);
+    runner.approve(run.id); // Continue
+    await vi.waitFor(() => expect(renderJobs(queue).map((j) => j.status)).toEqual(['succeeded', 'running']));
+    await new Promise((resolve) => setTimeout(resolve, 20)); // the Continue's driver reaches its renders
+    release();
+    await queue.idle();
+    const r = runner.get(run.id);
+    expect(r.status).toBe('done');
+    const counts = new Map<string, number>();
+    for (const j of panelJobs(queue)) counts.set(panelOf(j), (counts.get(panelOf(j)) ?? 0) + 1);
+    const ids = chapterPanels(lib.store, chapter.id, lib.store.mangas.require(chapter.mangaId).readingDirection).map((e) => e.panel.id);
+    expect(ids.map((id) => counts.get(id))).toEqual(ids.map(() => 1));
+    // Adopted, not merely finished first: the step's own job list holds them.
+    expect((r.steps[RENDER]!.output as { jobs: string[] }).jobs).toEqual(expect.arrayContaining(refs.map((ref) => ref.jobId)));
   });
 });

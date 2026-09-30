@@ -246,6 +246,38 @@ describe('episode routes', { timeout: 90_000 }, () => {
     expect(jobs.map((j) => [j.id, j.status])).toEqual([[inserted.id, 'succeeded']]); // the same job ran, once, and no second one was queued
     expect(s.claude.calls.filter((c) => c.name === 'episode.premise')).toHaveLength(1);
   });
+
+  it('render-missing: GET lists the panels without an image, POST queues them and the list empties (W1 R1)', async () => {
+    s = await startM4TestServer();
+    const { chapter } = await chapterOn(s);
+    const page = (await s.api<PageDetail>('POST', `/api/chapters/${chapter.id}/pages`, { layoutPreset: TWO_PANEL_PRESET })).body.page;
+    const missing = (await s.api<{ panelIds: string[] }>('GET', `/api/chapters/${chapter.id}/render-missing`)).body;
+    expect(missing.panelIds).toHaveLength(2);
+    const refs = (await s.api<Array<{ jobId: string }>>('POST', `/api/chapters/${chapter.id}/render-missing`)).body;
+    expect(refs).toHaveLength(2);
+    await s.until(async () => (await s!.api<{ panelIds: string[] }>('GET', `/api/chapters/${chapter.id}/render-missing`)).body.panelIds.length === 0);
+    expect(page.id).toMatch(/^pg_/);
+  });
+
+  it('render-missing answers 409 while the episode has not rendered yet (W1 F8)', async () => {
+    s = await startM4TestServer();
+    const { chapter } = await chapterOn(s);
+    await s.api<EpisodeRun>('POST', `/api/chapters/${chapter.id}/episode`, { input: { prompt: 'A cat', pages: 1 } });
+    await runUntil(s, chapter.id, 'awaiting-review', 1);
+    const post = await s.api<ApiErrorBody>('POST', `/api/chapters/${chapter.id}/render-missing`);
+    expect([post.status, post.body.error.code]).toEqual([409, 'conflict']);
+  });
+
+  it('pause and resume answer 409 when the run is not rendering or not paused (W1 C1)', async () => {
+    s = await startM4TestServer();
+    const { chapter } = await chapterOn(s);
+    const run = (await s.api<EpisodeRun>('POST', `/api/chapters/${chapter.id}/episode`, { input: { prompt: 'A cat', pages: 1 } })).body;
+    await runUntil(s, chapter.id, 'awaiting-review', 1);
+    const pause = await s.api<ApiErrorBody>('POST', `/api/episodes/${run.id}/pause`);
+    expect([pause.status, pause.body.error.code]).toEqual([409, 'conflict']);
+    const resume = await s.api<ApiErrorBody>('POST', `/api/episodes/${run.id}/resume`);
+    expect([resume.status, resume.body.error.code]).toEqual([409, 'conflict']);
+  });
 });
 
 describe('episode steps and engines (F1, I1)', { timeout: 90_000 }, () => {
