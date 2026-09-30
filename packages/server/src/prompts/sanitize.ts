@@ -30,6 +30,32 @@ export function sanitizeSentences(text: string): string {
     .trim();
 }
 
+/** Chromatic colours only: black, white, grey/gray and silver are values a black-and-white page can show. */
+const COLOUR_WORDS = [
+  'red', 'reddish', 'orange', 'orangey', 'yellow', 'yellowish', 'green', 'greenish', 'blue', 'bluish', 'blueish', 'purple', 'purplish',
+  'violet', 'pink', 'pinkish', 'brown', 'brownish', 'cyan', 'magenta', 'teal', 'gold', 'golden', 'crimson', 'scarlet', 'amber',
+  'turquoise', 'indigo', 'lavender', 'maroon', 'emerald', 'azure', 'beige', 'blond', 'blonde',
+].join('|');
+/** An optional article before it (re-chosen for the next word), "light-blue", "blue-green", "red-haired", "gold-tinted". */
+const COLOUR_PHRASE = new RegExp(
+  `(\\b(?:an?)\\s+)?-?\\b(?:${COLOUR_WORDS})(?:-(?:${COLOUR_WORDS}))*(?:-(?:colou?red|tinted|toned|hued|haired|eyed))?\\b(?=[\\s,]*(\\w)?)`,
+  'gi',
+);
+
+/**
+ * F26 / Task 4 review M3: removes chromatic colour words from a black-and-white scene ("orange sky" rendered as colour
+ * in a B&W book, live M2). Works on tags and sentences alike; run sanitizeTags/sanitizeSentences after it to tidy the
+ * gaps. Words that only contain a colour ("greenhouse", "shredded") stay.
+ */
+export function stripColourWords(text: string): string {
+  return text.replace(COLOUR_PHRASE, (_match, article: string | undefined, next: string | undefined) => {
+    if (article === undefined) return '';
+    const an = next !== undefined && /^[aeiou]/i.test(next);
+    const first = article[0] === 'A' ? 'A' : 'a';
+    return `${first}${an ? 'n' : ''} `;
+  });
+}
+
 export function normalizeAppearanceTags(tags: string): string {
   return sanitizeTags(tags.toLowerCase());
 }

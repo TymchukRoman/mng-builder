@@ -6,7 +6,7 @@ import { orderRefs } from '../src/handlers/context.js';
 import { RECIPES } from '../src/imaging/recipes/index.js';
 import { CAMERA_TAGS, cameraSentence, cameraTags, cameraWording, stripCameraSentences, stripCameraTags } from '../src/prompts/camera.js';
 import { loadPrompt } from '../src/prompts/load.js';
-import { normalizeAppearanceTags, sanitizeSentences, sanitizeTags } from '../src/prompts/sanitize.js';
+import { normalizeAppearanceTags, sanitizeSentences, sanitizeTags, stripColourWords } from '../src/prompts/sanitize.js';
 import { finishScene } from '../src/prompts/scene.js';
 import { scriptBlock } from '../src/prompts/script-block.js';
 
@@ -55,6 +55,19 @@ describe('sanitizers', () => {
 
   it('normalizes appearance tags to lowercase unique tags', () => {
     expect(normalizeAppearanceTags('1girl, Silver Hair, twintails, silver hair, manga')).toBe('1girl, silver hair, twintails');
+  });
+
+  it('strips chromatic colour words for black-and-white books, never black, white, grey or silver (F26, Task 4 review M3)', () => {
+    expect(sanitizeTags(stripColourWords('1girl, Red umbrella, golden light, blue-green sea, orange, reddish glow, light-blue scarf')))
+      .toBe('1girl, umbrella, light, sea, glow, light scarf');
+    expect(sanitizeTags(stripColourWords('white dress, black cat, grey sky, gray coat, silver hair')))
+      .toBe('white dress, black cat, grey sky, gray coat, silver hair');
+    expect(sanitizeSentences(stripColourWords('An orange sky glows above a red-haired girl in a crimson coat and a black scarf.')))
+      .toBe('A sky glows above a girl in a coat and a black scarf.');
+    expect(sanitizeSentences(stripColourWords('A pink-eyed cat and an amber lamp; the teal door is closed.')))
+      .toBe('A cat and a lamp; the door is closed.');
+    // Look-alikes stay: words that only contain a colour.
+    expect(stripColourWords('shredded paper near the greenhouse, a blueprint, bored')).toBe('shredded paper near the greenhouse, a blueprint, bored');
   });
 });
 
