@@ -67,6 +67,27 @@ test('the Manga settings drawer opens on its container, so a stray Enter or Spac
   expect(errors.all()).toEqual([]);
 });
 
+test('closing the appearance-suggestion popover returns focus to its trigger, and the drawer stays open', async ({ page, request }) => {
+  const errors = collectErrors(page);
+  const { mangaId } = await seedManga(request, 'E2E popover focus');
+  expect((await request.post(`/api/mangas/${mangaId}/characters`, { data: { name: 'Aki', role: 'main' } })).ok()).toBe(true);
+  await page.goto(`/m/${mangaId}?tab=characters`);
+  await page.getByRole('button', { name: 'Edit Aki' }).click();
+  const drawer = page.getByRole('dialog', { name: 'Aki' });
+  const trigger = drawer.getByRole('button', { name: 'Suggest tags from a description (AI)' });
+  await trigger.click();
+  const popover = page.getByRole('dialog', { name: 'Describe the look' });
+  await expect(popover.getByLabel('Describe the look')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(popover).toBeHidden();
+  await expect(drawer).toBeVisible();
+  await expect(trigger).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(drawer).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Edit Aki' })).toBeFocused();
+  expect(errors.all()).toEqual([]);
+});
+
 const INJECTED = { status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'internal', message: 'Injected failure' } }) };
 
 test('a failed load says so and offers Retry, which recovers once the server answers (M1, M2)', async ({ page, request }) => {

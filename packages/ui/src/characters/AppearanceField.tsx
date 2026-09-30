@@ -48,9 +48,10 @@ export function AppearanceField({ character, onSave }: { character: Character; o
       </div>
       <AutoText multiline label="Appearance tags" value={character.appearanceTags} onSave={onSave} placeholder="1girl, silver hair, twintails, amber eyes" />
       {suggest.isPending && <StatusLoader label={job ? jobStatusLabel(job) : 'Asking the AI'} />}
+      {/* No autoFocus on the textarea: React would focus it before Popover records the trigger as the focus-return target. Popover focuses it itself. */}
       <Popover anchor={anchor} open={open} onClose={() => setOpen(false)} align="end" label="Describe the look" className="suggest-popover">
         <form className="stack" onSubmit={(e) => { e.preventDefault(); const d = description.trim(); if (d) suggest.mutate(d); }}>
-          <textarea className="textarea" aria-label="Describe the look" rows={3} maxLength={4000} autoFocus value={description}
+          <textarea className="textarea" aria-label="Describe the look" rows={3} maxLength={4000} value={description}
             placeholder="A tall girl with silver twin-tails and a red scarf" onChange={(e) => setDescription(e.target.value)} />
           <div className="form-actions">
             <IconButton type="submit" icon={Sparkles} tone="primary" label="Suggest tags" disabled={!description.trim()} />
