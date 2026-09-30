@@ -116,6 +116,11 @@ describe('step contexts', () => {
     expect(ctx.presets).toContainEqual({ name: TWO_PANEL_PRESET, panelCount: 2 });
   });
 
+  it('outline asks for the "no humans" count tag on an animal, so the retry count skips it (live smoke: a "cat, kitten" had none)', () => {
+    const { run } = fullWorld();
+    expect(renderedSystem(run, 'outline')).toContain('"no humans" for an animal or creature');
+  });
+
   it('breakdown sees the request, so an explicit panel count in it is honoured (live smoke: "exactly two panels" gave 5)', () => {
     const { run } = fullWorld();
     const ctx = buildStepContext(lib.store, run, 'breakdown') as BreakdownContext;
