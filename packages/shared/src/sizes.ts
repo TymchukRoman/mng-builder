@@ -29,3 +29,21 @@ export function printSizePx(format: PageFormat, scale = 1): { w: number; h: numb
     h: Math.round((format.heightMm / 25.4) * format.dpi * scale),
   };
 }
+
+/** Millimetres per typographic point (1 pt = 1/72 in): the one constant for the lettering estimate and the UI. */
+export const PT_TO_MM = 25.4 / 72;
+
+export interface SizePx { w: number; h: number }
+export interface Placement { left: number; top: number; width: number; height: number }
+
+/**
+ * Where a panel image sits (Task 13 review M2: one implementation for the UI's panels and the export's upscale plan):
+ * scaled to cover the panel (max of the two ratios), then by the user's zoom, centred and panned by `t` (fractions of
+ * the panel size).
+ */
+export function coverFit(panel: SizePx, image: SizePx, t: { scale: number; x: number; y: number }): Placement {
+  const base = Math.max(panel.w / image.w, panel.h / image.h);
+  const width = image.w * base * t.scale;
+  const height = image.h * base * t.scale;
+  return { width, height, left: (panel.w - width) / 2 + t.x * panel.w, top: (panel.h - height) / 2 + t.y * panel.h };
+}

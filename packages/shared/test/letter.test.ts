@@ -1,6 +1,7 @@
 // packages/shared/test/letter.test.ts
 import { describe, expect, it } from 'vitest';
-import { autoLetter, estimateTextBoxMm, PT_TO_MM, segmentsCross, wrapText, type ExistingFrame, type LetterFrame } from '../src/letter.js';
+import { autoLetter, estimateTextBoxMm, segmentsCross, wrapText, type ExistingFrame, type LetterFrame } from '../src/letter.js';
+import { PT_TO_MM } from '../src/sizes.js';
 import { DEFAULT_FONT_SIZE, FONT_FOR_KIND, NARRATION_PAD, TEXT_INSET } from '../src/fonts.js';
 import type { Rect } from '../src/layout/index.js';
 import { DEFAULT_PAGE_FORMAT, EMPTY_SCRIPT, type Box, type DialogueLine, type LayoutNode, type PanelScript, type ReadingDirection } from '../src/schemas.js';

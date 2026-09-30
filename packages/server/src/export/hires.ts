@@ -1,14 +1,15 @@
 // packages/server/src/export/hires.ts
-import { computeRects, printSizePx, type Image, type PageDetail, type PageFormat, type Panel } from '@manga/shared';
+import { computeRects, coverFit, printSizePx, type Image, type PageDetail, type PageFormat, type Panel } from '@manga/shared';
 import { pageDetail } from '../domain/pages.js';
 import type { Store } from '../store/index.js';
 
 export interface UpscalePlan { panelId: string; imageId: string; factor: 2 | 4 }
 
+/** The widest `upscaled` child; equal widths go to the oldest, then the lowest id, so the pick never varies (Task 13 review M4). */
 export function bestUpscaled(store: Store, panelId: string, parentImageId: string): Image | null {
   return store.images.listByOwner('panel', panelId)
     .filter((i) => i.source === 'upscaled' && i.parentImageId === parentImageId)
-    .sort((a, b) => b.width - a.width)[0] ?? null;
+    .sort((a, b) => b.width - a.width || a.createdAt.localeCompare(b.createdAt) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0] ?? null;
 }
 
 /** Spec §9.2: images printed under the format's dpi get one upscale, cached as an 'upscaled' child. */
@@ -23,8 +24,9 @@ export function planUpscales(store: Store, detail: PageDetail, format: PageForma
     if (!image || !rect || image.source === 'upscaled' || bestUpscaled(store, panel.id, image.id)) continue;
     // An image without a usable size cannot be planned (the UI falls back to plain CSS cover): no upscale is planned for it.
     if (!(Number.isFinite(image.width) && Number.isFinite(image.height) && image.width > 0 && image.height > 0)) continue;
-    // cover-fit, as the UI's `coverFit` renders it: scaled by max(panelW/imgW, panelH/imgH), then by the user's zoom
-    const need = Math.max((rect.w * px.w) / image.width, (rect.h * px.h) / image.height) * panel.imageTransform.scale;
+    // the printed size of the image, from the same `coverFit` the UI renders with (Task 13 review M2)
+    const placed = coverFit({ w: rect.w * px.w, h: rect.h * px.h }, { w: image.width, h: image.height }, panel.imageTransform);
+    const need = placed.width / image.width;
     if (!Number.isFinite(need) || need <= 1) continue;
     plans.push({ panelId: panel.id, imageId: image.id, factor: need <= 2 ? 2 : 4 });
   }

@@ -1,9 +1,8 @@
-import type { ImageTransform, PageFormat } from '@manga/shared';
+import { PT_TO_MM, type ImageTransform, type PageFormat, type Placement, type SizePx } from '@manga/shared';
 
-export const MM_PER_PT = 25.4 / 72;
+// One implementation for the editor and the export's upscale plan (Task 13 review M2), one pt→mm constant (Task 3).
+export { coverFit, type Placement, type SizePx } from '@manga/shared';
 
-export interface SizePx { w: number; h: number }
-export interface Placement { left: number; top: number; width: number; height: number }
 interface NormRect { x: number; y: number; w: number; h: number }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -22,18 +21,11 @@ export function pxPerMm(format: PageFormat, widthPx: number): number {
 }
 
 export function ptToPx(pt: number, pxPerMmValue: number): number {
-  return pt * MM_PER_PT * pxPerMmValue;
+  return pt * PT_TO_MM * pxPerMmValue;
 }
 
 export function rectPx(r: NormRect, size: SizePx): Placement {
   return { left: r.x * size.w, top: r.y * size.h, width: r.w * size.w, height: r.h * size.h };
-}
-
-export function coverFit(panel: SizePx, image: SizePx, t: ImageTransform): Placement {
-  const base = Math.max(panel.w / image.w, panel.h / image.h);
-  const width = image.w * base * t.scale;
-  const height = image.h * base * t.scale;
-  return { width, height, left: (panel.w - width) / 2 + t.x * panel.w, top: (panel.h - height) / 2 + t.y * panel.h };
 }
 
 export function panLimits(panelAspect: number, imageAspect: number, scale: number): { x: number; y: number } {

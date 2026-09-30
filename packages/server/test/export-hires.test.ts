@@ -1,9 +1,9 @@
 // packages/server/test/export-hires.test.ts
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { computeRects, printSizePx, type Image } from '@manga/shared';
+import { computeRects, printSizePx, type Image, type Panel } from '@manga/shared';
 import { createPage, pageDetail } from '../src/domain/pages.js';
 import { bestUpscaled, planUpscales, printDetail } from '../src/export/hires.js';
-import { seedEpisodeWorld } from './helpers/episode-fixtures.js';
+import { TWO_PANEL_PRESET, seedEpisodeWorld } from './helpers/episode-fixtures.js';
 import { openTestLibrary, type TestLibrary } from './helpers/library.js';
 import { seedImage } from './helpers/seed.js';
 
@@ -64,6 +64,37 @@ describe('printDetail', () => {
     expect(print.panels[0]!.activeImageId).toBe(wide.id);
     expect(print.images[wide.id]).toMatchObject({ width: 2048, source: 'upscaled' });
     expect(pageDetail(lib.store, page.id).panels[0]!.activeImageId).toBe(image.id);
+  });
+
+  it('keeps the panel\'s image transform: the upscale fills the same crop (Task 13 review M3)', () => {
+    const { page, panel, image } = splashWith([512, 512], 1.5);
+    lib.store.panels.update(panel.id, { imageTransform: { x: 0.1, y: -0.05, scale: 1.5 } });
+    const wide = addUpscaled(image, 2048);
+    const printed = printDetail(lib.store, page.id).panels[0]!;
+    expect(printed).toMatchObject({ activeImageId: wide.id, imageTransform: { x: 0.1, y: -0.05, scale: 1.5 } });
+  });
+
+  it('on a mixed page swaps only the panels that have an upscale (Task 13 review M3)', () => {
+    const { manga, chapter } = seedEpisodeWorld(lib.store);
+    const detail = createPage(lib.store, chapter.id, TWO_PANEL_PRESET);
+    const [a, b] = detail.panels as [Panel, Panel];
+    const small = seedImage(lib.store, manga.id, { type: 'panel', id: a.id }, null, [512, 512]);
+    const plain = seedImage(lib.store, manga.id, { type: 'panel', id: b.id }, null, [2048, 2048]);
+    lib.store.panels.update(a.id, { activeImageId: small.id });
+    lib.store.panels.update(b.id, { activeImageId: plain.id });
+    const up = addUpscaled(small, 2048);
+    const print = printDetail(lib.store, detail.page.id);
+    expect(print.panels.map((p) => p.activeImageId)).toEqual([up.id, plain.id]);
+    expect(Object.keys(print.images).sort()).toEqual([small.id, plain.id, up.id].sort());
+  });
+
+  it('picks among equally wide upscales deterministically: oldest, then lowest id (Task 13 review M4)', () => {
+    const { panel, image } = splashWith([512, 512]);
+    const twins = [addUpscaled(image, 2048), addUpscaled(image, 2048), addUpscaled(image, 2048)];
+    const expected = [...twins].sort((x, y) => x.createdAt.localeCompare(y.createdAt) || (x.id < y.id ? -1 : 1))[0]!;
+    expect(bestUpscaled(lib.store, panel.id, image.id)?.id).toBe(expected.id);
+    addUpscaled(image, 1024);
+    expect(bestUpscaled(lib.store, panel.id, image.id)?.id).toBe(expected.id);
   });
 });
 

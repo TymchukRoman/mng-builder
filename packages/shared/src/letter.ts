@@ -1,9 +1,9 @@
 // packages/shared/src/letter.ts
 import { DEFAULT_FONT_SIZE, FONT_FOR_KIND, NARRATION_PAD, TEXT_INSET } from './fonts.js';
 import { readingOrder, type Rect } from './layout/index.js';
+import { PT_TO_MM } from './sizes.js';
 import type { Box, DialogueLine, FrameKind, LayoutNode, PageFormat, PanelScript, ReadingDirection } from './schemas.js';
 
-export const PT_TO_MM = 25.4 / 72;
 /** Spec §9.3: the tail tip points at the speaker, 40 % down the panel. */
 export const TAIL_Y = 0.4;
 const CHAR_W_EM = 0.55;
