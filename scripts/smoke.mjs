@@ -28,7 +28,7 @@ const JOB_DEADLINE_MS = 10 * 60_000;
 // collision) would make the smoke test stale code against another library. Refuse before spawning anything.
 try {
   await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(2000) });
-  console.error(`A server already answers at ${base}: stop it (manga stop --url ${base}) or set SMOKE_PORT to a free port.`);
+  console.error(`Something already answers at ${base}: stop it, or set SMOKE_PORT to a free port.`);
   process.exit(1);
 } catch {
   // nothing listening: good
