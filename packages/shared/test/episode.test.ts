@@ -24,6 +24,13 @@ describe('premise and outline', () => {
     expect(PremiseOutputSchema.safeParse({ title: '', synopsis: 'A cat.', tone: '', setting: '' }).success).toBe(false);
   });
 
+  it('trims new character names and refuses a blank one (M4 final M1)', () => {
+    const scene = { summary: 'They meet', purpose: 'setup', location: 'street', characterNames: ['Aiko'] };
+    const draft = { role: 'supporting', personality: '', speechStyle: '', appearanceTags: '1girl' };
+    expect(OutlineOutputSchema.safeParse({ scenes: [scene], newCharacters: [{ ...draft, name: '   ' }] }).success).toBe(false);
+    expect(OutlineOutputSchema.parse({ scenes: [scene], newCharacters: [{ ...draft, name: ' Mika ' }] }).newCharacters[0]!.name).toBe('Mika');
+  });
+
   it('needs at least one scene and a valid role for new characters', () => {
     expect(OutlineOutputSchema.safeParse({ scenes: [], newCharacters: [] }).success).toBe(false);
     const scene = { summary: 'They meet', purpose: 'setup', location: 'street', characterNames: ['Aiko'] };
@@ -81,6 +88,12 @@ describe('scriptsSchemaFor', () => {
     const r = schema.safeParse({ pages: [{ panels: [blank, panel()] }] });
     expect(r.success).toBe(true);
     expect(r.data?.pages[0]?.panels[0]?.dialogue.map((d) => d.speaker)).toEqual([null, null]);
+  });
+
+  it('trims speaker names (M4 final M1)', () => {
+    const padded = panel({ dialogue: [{ speaker: '  Aiko ', kind: 'speech', text: 'Hi' }] });
+    const r = schema.safeParse({ pages: [{ panels: [padded, panel()] }] });
+    expect(r.data?.pages[0]?.panels[0]?.dialogue[0]?.speaker).toBe('Aiko');
   });
 
   it('rejects unknown characters and speakers with the valid names listed', () => {

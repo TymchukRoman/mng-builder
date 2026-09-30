@@ -491,6 +491,40 @@ describe('EpisodeRunner — restart safety', () => {
     ]);
   });
 
+  it('an error while approving fails the run visibly and the call still throws (M4 final M1)', async () => {
+    const { chapter, input } = world();
+    const { runner, queue } = portraitQueueDown({ auto: true });
+    const run = runner.start(chapter.id, input, 'review');
+    await queue.idle();
+    expect(runner.get(run.id).status).toBe('awaiting-review');
+    expect(() => runner.approve(run.id)).toThrow('portrait queue down');
+    const after = runner.get(run.id);
+    expect(after.status).toBe('failed');
+    expect(after.steps[1]).toMatchObject({ name: 'outline', status: 'failed', error: 'portrait queue down' });
+    expect(lib.store.chapters.require(chapter.id).status).toBe('draft');
+  });
+
+  it('an error while "run to end" approves fails the run visibly too (M4 final M1)', async () => {
+    const { chapter, input } = world();
+    const { runner, queue } = portraitQueueDown({ auto: true });
+    const run = runner.start(chapter.id, input, 'review');
+    await queue.idle();
+    expect(() => runner.autopilot(run.id)).toThrow('portrait queue down');
+    expect(runner.get(run.id)).toMatchObject({ status: 'failed', mode: 'autopilot' });
+    expect(lib.store.chapters.require(chapter.id).status).toBe('draft');
+  });
+
+  it('an outline edit with a whitespace-only new character name is refused at the edit (M4 final M1)', async () => {
+    const { chapter, input } = world();
+    const { runner, queue } = rig();
+    const run = runner.start(chapter.id, input, 'review');
+    await queue.idle();
+    const blank = { name: '   ', role: 'supporting' as const, personality: '', speechStyle: '', appearanceTags: '1girl' };
+    expect(() => runner.editOutput(run.id, 'outline', outline(['Aiko'], [blank]))).toThrow(ZodError);
+    runner.editOutput(run.id, 'outline', outline(['Aiko'], [{ ...blank, name: '  Mika  ' }]));
+    expect(runner.get(run.id).steps[1]!.output).toMatchObject({ newCharacters: [{ name: 'Mika' }] });
+  });
+
   it('a cancelled job whose handler ignores the abort cannot complete a retried step (M2)', async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });

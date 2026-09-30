@@ -27,8 +27,9 @@ export const OutlineSceneSchema = z.object({
   summary: z.string().min(1), purpose: z.string(), location: z.string(), characterNames: z.array(z.string().min(1)),
 });
 export type OutlineScene = z.infer<typeof OutlineSceneSchema>;
+/** Names are trimmed at the schema (M4 final M1): a whitespace-only name is refused where it is edited, not at approve. */
 export const NewCharacterDraftSchema = z.object({
-  name: z.string().min(1), role: CharacterRoleSchema, personality: z.string(), speechStyle: z.string(), appearanceTags: z.string().min(1),
+  name: z.string().trim().min(1), role: CharacterRoleSchema, personality: z.string(), speechStyle: z.string(), appearanceTags: z.string().min(1),
 });
 export type NewCharacterDraft = z.infer<typeof NewCharacterDraftSchema>;
 export const OutlineOutputSchema = z.object({
@@ -86,7 +87,7 @@ export const PanelCharacterDraftSchema = z.object({
   name: z.string().min(1), pose: z.string(), expression: z.string(), position: StagePositionSchema,
 });
 /** Models often emit "" (or whitespace) for a narration/sfx speaker; that means no speaker. */
-const SpeakerSchema = z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? null : v), z.string().min(1).nullable());
+const SpeakerSchema = z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? null : v), z.string().trim().min(1).nullable());
 export const DialogueDraftSchema = z.object({ speaker: SpeakerSchema, kind: DialogueKindSchema, text: z.string().min(1) });
 export const PanelScriptDraftSchema = z.object({
   action: z.string().min(1), shot: ShotSchema, angle: AngleSchema,

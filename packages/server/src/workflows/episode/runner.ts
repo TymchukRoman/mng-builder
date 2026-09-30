@@ -78,7 +78,12 @@ export class EpisodeRunner {
       throw new ConflictError('nothing to approve: the run is not waiting for review');
     }
     const saved = this.save(run, { status: 'running', steps: patchStep(run.steps, idx, { status: 'done' }) });
-    this.accept(saved, idx);
+    try {
+      this.accept(saved, idx);
+    } catch (err) {
+      this.failRun(runId, err); // the step is already saved done: show the error instead of hanging (M4 final M1)
+      throw err;
+    }
     return this.get(runId);
   }
 
