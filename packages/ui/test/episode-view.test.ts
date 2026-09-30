@@ -192,3 +192,10 @@ describe('step edits (review round 1)', () => {
     expect(calls).toEqual(['save']);
   });
 });
+
+it('a paused run reads "Rendering paused" in a paused chip', () => {
+  const r = run('paused', 5, 'paused');
+  expect(runLabel(r)).toBe('Rendering paused');
+  expect(statusChipClass('paused')).toBe('status-chip--paused');
+  expect(STEP_STATUS_TEXT.paused).toBe('paused');
+});

@@ -66,6 +66,15 @@ describe('optimistic settings patch', () => {
     expect(base.engine.tasks).toEqual({ review: 'local', story: 'claude' });
   });
 
+  it('merges the episode section per key and keeps it on other patches (W1)', () => {
+    const base = withTasks({});
+    const next = applySettingsPatch(base, { episode: { confirmRenderMinutes: 90 } });
+    expect(next.episode).toEqual({ confirmRenderMinutes: 90 });
+    expect(applySettingsPatch(next, { review: { rounds: 1 } }).episode).toEqual({ confirmRenderMinutes: 90 });
+    expect(applySettingsPatch(next, { episode: { confirmRenderMinutes: undefined } }).episode).toEqual({ confirmRenderMinutes: 90 });
+    expect(base.episode).toEqual({ confirmRenderMinutes: 45 });
+  });
+
   it('carries the first override in the second body when built from the optimistic cache', () => {
     const cache0 = withTasks({});
     const first = tasksPatch(cache0, 'story', 'local');

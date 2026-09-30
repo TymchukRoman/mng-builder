@@ -68,6 +68,7 @@ export function applySettingsPatch(base: Settings, patch: SettingsPatch): Settin
     ollama: mergeDefined(base.ollama, patch.ollama),
     review: mergeDefined(base.review, patch.review),
     routing: mergeDefined(base.routing, patch.routing),
+    episode: mergeDefined(base.episode, patch.episode),
   };
 }
 

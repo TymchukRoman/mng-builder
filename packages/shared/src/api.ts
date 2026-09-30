@@ -36,7 +36,7 @@ export const UpdateCharacterSchema = z.object({
   appearanceTags: z.string(), seed: z.number().int().min(0), recipe: z.string().nullable(),
 }).partial();
 export const CreateChapterSchema = z.object({ title: z.string().min(1), synopsis: z.string().default('') });
-export const UpdateChapterSchema = z.object({ title: z.string().min(1), synopsis: z.string(), number: z.number().int().min(1), status: ChapterStatusSchema }).partial();
+export const UpdateChapterSchema = z.object({ title: z.string().min(1), synopsis: z.string(), summary: z.string(), number: z.number().int().min(1), status: ChapterStatusSchema }).partial();
 export const CreatePageSchema = z.object({ layoutPreset: z.string().default('2x2'), index: z.number().int().min(0).optional() });
 export const ReorderSchema = z.object({ ids: z.array(IdSchema).min(1) });
 export const ApplyPresetSchema = z.object({ preset: z.string(), confirm: z.boolean().default(false) });
@@ -63,7 +63,11 @@ export const PickImageSchema = z.object({ imageId: IdSchema });
 export const GeneratePanelSchema = z.object({ recipe: z.string().optional(), seed: z.number().int().min(0).optional() });
 export const PortraitsSchema = z.object({ n: z.number().int().min(1).max(8).default(4) });
 export const SuggestAppearanceSchema = z.object({ description: z.string().min(1).max(4000) });
-export const StartEpisodeSchema = z.object({ input: EpisodeInputSchema, mode: z.enum(['review', 'autopilot']).default('review') });
+/** W1 Q2: an API start previews page 1 unless it says otherwise (the spec's default); a stored input without the key is off. */
+export const StartEpisodeSchema = z.object({
+  input: EpisodeInputSchema.extend({ previewFirst: z.boolean().default(true) }),
+  mode: z.enum(['review', 'autopilot']).default('review'),
+});
 export const StepOutputSchema = z.object({ output: z.unknown() });
 export const RerunStepSchema = z.object({ confirm: z.boolean().default(false) });
 export const ExportSchema = z.object({
@@ -79,3 +83,8 @@ export interface RecipeInfo { id: string; label: string; maxRefs: number; requir
 export interface ServiceState { ok: boolean; detail: string }
 export interface ServiceStatus { claude: ServiceState; ollama: ServiceState; comfy: ServiceState; queue: { queued: number; running: number; pausedLanes: Array<{ lane: Lane; until: string | null; reason: string }> } }
 export interface ApiErrorBody { error: { code: 'not_found' | 'validation' | 'conflict' | 'needs_confirm' | 'engine_unavailable' | 'forbidden' | 'internal'; message: string; details?: unknown } }
+
+/** POST /api/queue/gpu/pause|resume (W1 R2). */
+export interface QueueLanes { pausedLanes: ServiceStatus['queue']['pausedLanes'] }
+/** GET /api/chapters/:id/render-missing (W1 R1): the story and cover panels without an active image, cover last. */
+export interface MissingPanels { panelIds: string[] }

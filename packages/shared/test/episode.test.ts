@@ -3,10 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import {
   EDITABLE_STEPS, OutlineOutputSchema, PremiseOutputSchema, PromptsOutputSchema, STEP_TASK,
-  REVIEW_AVG_SECONDS, breakdownSchemaFor, estimateReviewSeconds, estimateSeconds, formatEstimate, isEnglishScene, outlineSchemaFor, promptsSchemaFor, sameName,
+  REVIEW_AVG_SECONDS, TYPICAL_PANELS_PER_PAGE, breakdownSchemaFor, estimateChapter, estimateReviewSeconds, estimateSeconds, formatChapterEstimate, formatEstimate, isEnglishScene, outlineSchemaFor, promptsSchemaFor, sameName,
   scriptsSchemaFor, stepIndex,
   type PanelScriptDraft,
 } from '../src/episode.js';
+import { DEFAULT_SETTINGS } from '../src/schemas.js';
 import { PRESET_NAMES, presetPanelCount } from '../src/layout/index.js';
 
 const TWO = PRESET_NAMES.find((n) => presetPanelCount(n) === 2)!;
@@ -244,5 +245,20 @@ describe('step tables and estimates', () => {
     expect(formatEstimate(3599)).toBe('~1 h');
     expect(formatEstimate(7170)).toBe('~2 h');
     expect(formatEstimate(0)).toBe('~0 s');
+  });
+});
+
+describe('chapter estimate (W1 C2)', () => {
+  it('is pages x 4.5 panels x the routed recipes, with the review rounds', () => {
+    expect(TYPICAL_PANELS_PER_PAGE).toBe(4.5);
+    // (anime 30 + anime-ref 32 + klein-ref 17) / 3 per panel; review 2 rounds (estimateReviewSeconds)
+    expect(estimateChapter(8, DEFAULT_SETTINGS)).toEqual({ panels: 36, seconds: 2199 });
+    expect(formatChapterEstimate(8, DEFAULT_SETTINGS)).toBe('8 pages ≈ 36 panels ≈ 37 min');
+  });
+
+  it('leaves the review out when episodes do not review, and says "page" for one', () => {
+    const noReview = { ...DEFAULT_SETTINGS, review: { autoInEpisode: false, rounds: 2 } };
+    expect(estimateChapter(2, noReview)).toEqual({ panels: 9, seconds: 237 });
+    expect(formatChapterEstimate(1, noReview)).toBe('1 page ≈ 5 panels ≈ 2 min');
   });
 });

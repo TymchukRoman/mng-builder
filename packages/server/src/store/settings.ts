@@ -11,6 +11,7 @@ export function mergeSettings(base: Settings, patch: SettingsPatch): Settings {
     ollama: { ...base.ollama, ...patch.ollama },
     review: { ...base.review, ...patch.review },
     routing: { ...base.routing, ...patch.routing },
+    episode: { ...base.episode, ...patch.episode },
   });
 }
 

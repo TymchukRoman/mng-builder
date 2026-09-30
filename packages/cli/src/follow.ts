@@ -1,9 +1,9 @@
 import { EPISODE_ACTIVE_STATUSES, type EpisodeRun, type Job } from '@manga/shared';
 import type { ApiClient } from './client.js';
 
-/** True when the run has stopped: waiting for review or ended. */
+/** True when the run has stopped: waiting for review, paused (W1 C1: it waits for the user too), or ended. */
 export function isSettled(run: EpisodeRun): boolean {
-  return run.status === 'awaiting-review' || !EPISODE_ACTIVE_STATUSES.has(run.status);
+  return run.status === 'awaiting-review' || run.status === 'paused' || !EPISODE_ACTIVE_STATUSES.has(run.status);
 }
 
 /** Resolves after `ms`, or at once (clearing its timer) when `signal` aborts. */

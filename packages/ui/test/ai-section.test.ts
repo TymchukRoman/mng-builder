@@ -21,7 +21,7 @@ describe('AI section model', () => {
     const body = toStartEpisode({ ...EMPTY_AI_INPUT, open: true, prompt: 'x', pages: 99 });
     expect(StartEpisodeSchema.parse(body).input.pages).toBe(30);
     expect(StartEpisodeSchema.parse(toStartEpisode({ ...EMPTY_AI_INPUT, open: true, prompt: 'x' }))).toEqual({
-      input: { prompt: 'x', pages: 8, tone: '', characterIds: [] }, mode: 'review',
+      input: { prompt: 'x', pages: 8, tone: '', characterIds: [], previewFirst: true }, mode: 'review',
     });
   });
 

@@ -49,7 +49,7 @@ export class ChapterRepo extends TableRepo<Chapter, NewChapter, ChapterPatch> {
     super(db, {
       table: 'chapters', entity: 'chapter', prefix: 'ch', schema: ChapterSchema, hasUpdatedAt: true, orderBy: 'ord, number, rowid',
       columns: {
-        id: 'id', mangaId: 'manga_id', number: 'number', title: 'title', synopsis: 'synopsis',
+        id: 'id', mangaId: 'manga_id', number: 'number', title: 'title', synopsis: 'synopsis', summary: 'summary',
         coverPageId: 'cover_page_id', status: 'status', order: 'ord', ...TIMESTAMPS,
       },
     }, now);

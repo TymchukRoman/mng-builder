@@ -6,7 +6,8 @@ import type {
 type NewEntity<T> = Omit<T, 'id' | 'createdAt' | 'updatedAt'> & { id?: string };
 export type NewManga = NewEntity<Manga>;
 export type NewCharacter = NewEntity<Character>;
-export type NewChapter = NewEntity<Chapter>;
+/** `summary` defaults to '' (W1 Q1), so creators that predate it need not pass it. */
+export type NewChapter = Omit<NewEntity<Chapter>, 'summary'> & { summary?: string };
 export type NewPage = NewEntity<Page>;
 export type NewPanel = NewEntity<Panel>;
 export type NewFrame = NewEntity<TextFrame>;

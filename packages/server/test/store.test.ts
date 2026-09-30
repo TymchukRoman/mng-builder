@@ -7,6 +7,7 @@ import { NotFoundError, StoreCorruptError } from '../src/errors.js';
 import { openDatabase, schemaVersion, type Db } from '../src/store/db.js';
 import { createEntityRepos, type EntityRepos } from '../src/store/entities.js';
 import { createLibraryFiles } from '../src/store/files.js';
+import { MIGRATIONS } from '../src/store/migrations.js';
 import { tempDir, type TempDir } from './helpers/tmp.js';
 
 let dir: TempDir;
@@ -56,13 +57,13 @@ describe('database', () => {
   it('runs in WAL mode with foreign keys on, at the latest schema version', () => {
     expect(db.pragma('journal_mode', { simple: true })).toBe('wal');
     expect(db.pragma('foreign_keys', { simple: true })).toBe(1);
-    expect(schemaVersion(db)).toBe(1);
+    expect(schemaVersion(db)).toBe(2);
   });
 
   it('migrates idempotently when reopened', () => {
     db.close();
     db = openDatabase(join(dir.path, 'library.sqlite'));
-    expect(schemaVersion(db)).toBe(1);
+    expect(schemaVersion(db)).toBe(2);
   });
 });
 
@@ -208,5 +209,29 @@ describe('library files', () => {
     expect(existsSync(files.exportsDir())).toBe(true);
     expect(() => files.abs('../outside.png')).toThrow(/outside the library/);
     expect(() => files.abs('')).toThrow(/outside the library/);
+  });
+});
+
+describe('migration 2 (W1 Q1: chapters.summary)', () => {
+  it('adds an empty summary to chapters written before it', () => {
+    db.close();
+    const file = join(dir.path, 'old.sqlite');
+    const old = new Database(file);
+    old.exec(MIGRATIONS[0]!.sql);
+    old.pragma('user_version = 1');
+    old.prepare(`INSERT INTO mangas VALUES ('mg_aaaaaaaaaa','M','','en','bw','rtl','{}','{}',NULL,'t','t')`).run();
+    old.prepare(`INSERT INTO chapters VALUES ('ch_aaaaaaaaaa','mg_aaaaaaaaaa',1,'One','',NULL,'draft',0,'t','t')`).run();
+    old.close();
+    db = openDatabase(file);
+    expect(schemaVersion(db)).toBe(2);
+    expect(db.prepare(`SELECT summary FROM chapters WHERE id = 'ch_aaaaaaaaaa'`).get()).toEqual({ summary: '' });
+  });
+
+  it('round-trips a summary; a chapter created without one has ""', () => {
+    const m = seedManga();
+    const ch = repos.chapters.create({ mangaId: m.id, number: 1, title: 'One', synopsis: '', coverPageId: null, status: 'draft', order: 0 });
+    expect(ch.summary).toBe('');
+    expect(repos.chapters.update(ch.id, { summary: 'Aiko found the cat.' }).summary).toBe('Aiko found the cat.');
+    expect(repos.chapters.require(ch.id).summary).toBe('Aiko found the cat.');
   });
 });

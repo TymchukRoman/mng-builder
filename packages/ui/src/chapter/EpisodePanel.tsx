@@ -15,13 +15,13 @@ import { qk } from '../queryKeys';
 import { ErrorState } from '../ui/ErrorState';
 import { IconButton } from '../ui/IconButton';
 import {
-  Braces, ChevronDown, ChevronRight, Circle, CircleCheck, CirclePause, CircleX, FastForward, LoaderCircle, Play, RotateCcw, Save, Square, X,
+  Braces, ChevronDown, ChevronRight, Circle, CircleCheck, CirclePause, CircleX, FastForward, LoaderCircle, Pause, Play, RotateCcw, Save, Square, X,
 } from '../ui/icons';
 import { Modal } from '../ui/Modal';
 import { StatusLoader } from '../ui/StatusLoader';
 import { pushToast } from '../ui/toasts';
 
-const STATUS_ICON = { pending: Circle, running: LoaderCircle, 'awaiting-review': CirclePause, done: CircleCheck, failed: CircleX } as const;
+const STATUS_ICON = { pending: Circle, running: LoaderCircle, 'awaiting-review': CirclePause, done: CircleCheck, failed: CircleX, paused: Pause } as const;
 
 /** Outside a chapter editor there is no history to protect. */
 const direct: Barrier = (fn) => fn();

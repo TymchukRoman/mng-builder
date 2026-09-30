@@ -147,4 +147,9 @@ CREATE TABLE settings (
 );
 `,
   },
+  {
+    version: 2,
+    // W1 Q1: the chapter summary an episode run writes when it finishes; older rows read as "".
+    sql: `ALTER TABLE chapters ADD COLUMN summary TEXT NOT NULL DEFAULT '';`,
+  },
 ];

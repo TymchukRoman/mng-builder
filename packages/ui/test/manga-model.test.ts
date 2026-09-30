@@ -4,7 +4,7 @@ import { applyMangaPatch, mangaBadges, pageSizeLabel, recipeOptions, sortChapter
 import { makeManga } from './fixtures';
 
 const chapter = (id: string, order: number, number: number): Chapter => ({
-  id, mangaId: 'mg_1', number, title: id, synopsis: '', coverPageId: null, status: 'draft', order, createdAt: '', updatedAt: '',
+  id, mangaId: 'mg_1', number, title: id, synopsis: '', summary: '', coverPageId: null, status: 'draft', order, createdAt: '', updatedAt: '',
 });
 
 describe('manga model', () => {

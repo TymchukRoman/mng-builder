@@ -10,7 +10,7 @@ export const STEP_LABEL: Record<EpisodeStepName, string> = {
 
 /** Tooltip wording for a step tab's status icon. */
 export const STEP_STATUS_TEXT: Record<StepStatus, string> = {
-  pending: 'not run yet', running: 'running', 'awaiting-review': 'waiting for review', done: 'done', failed: 'failed',
+  pending: 'not run yet', running: 'running', 'awaiting-review': 'waiting for review', done: 'done', failed: 'failed', paused: 'paused',
 };
 
 const WORKING: Record<EpisodeStepName, string> = {
@@ -34,6 +34,7 @@ export function runLabel(run: EpisodeRun): string {
     case 'failed': return `Failed at ${STEP_LABEL[step].toLowerCase()}`;
     case 'done': return 'Chapter ready';
     case 'cancelled': return 'Cancelled';
+    case 'paused': return 'Rendering paused';
   }
 }
 
@@ -115,6 +116,7 @@ export function statusChipClass(status: EpisodeRun['status']): string {
     case 'awaiting-review': return 'status-chip--generating';
     case 'failed':
     case 'cancelled': return 'status-chip--failed';
+    case 'paused': return 'status-chip--paused';
   }
 }
 

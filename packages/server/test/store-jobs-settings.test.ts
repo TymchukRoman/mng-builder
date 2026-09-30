@@ -110,6 +110,12 @@ describe('settings repo', () => {
     expect(store.settings.patch({ routing: { bwRefine: null } }).routing.bwRefine).toBeNull();
   });
 
+  it('merges the episode section and reads old stored settings with its default', () => {
+    expect(store.settings.get().episode).toEqual({ confirmRenderMinutes: 45 });
+    expect(store.settings.patch({ episode: { confirmRenderMinutes: 20 } }).episode.confirmRenderMinutes).toBe(20);
+    expect(store.settings.patch({ review: { rounds: 1 } }).episode.confirmRenderMinutes).toBe(20);
+  });
+
   it('persists across reopen and rejects invalid values', () => {
     store.settings.patch({ ollama: { textModel: 'qwen3:32b' } });
     store.close();

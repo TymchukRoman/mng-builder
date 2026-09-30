@@ -61,6 +61,8 @@ export type Character = z.infer<typeof CharacterSchema>;
 export const ChapterStatusSchema = z.enum(['draft', 'generating', 'ready']);
 export const ChapterSchema = z.object({
   id: IdSchema, mangaId: IdSchema, number: z.number().int().min(1), title: z.string().min(1), synopsis: z.string(),
+  /** W1 Q1: "what happened", written when an episode run finishes; the next chapters' premise and outline read it. */
+  summary: z.string().default(''),
   coverPageId: IdSchema.nullable(), status: ChapterStatusSchema, order: z.number().int().min(0), ...Timestamps,
 });
 export type Chapter = z.infer<typeof ChapterSchema>;
@@ -176,7 +178,7 @@ export const EpisodeStepNameSchema = z.enum(['premise', 'outline', 'breakdown', 
 export type EpisodeStepName = z.infer<typeof EpisodeStepNameSchema>;
 export const EPISODE_STEPS: EpisodeStepName[] = ['premise', 'outline', 'breakdown', 'scripts', 'prompts', 'render', 'lettering'];
 export const REVIEW_POINTS: ReadonlySet<EpisodeStepName> = new Set(['outline', 'scripts', 'render', 'lettering']);
-export const StepStatusSchema = z.enum(['pending', 'running', 'awaiting-review', 'done', 'failed']);
+export const StepStatusSchema = z.enum(['pending', 'running', 'awaiting-review', 'done', 'failed', 'paused']);
 export const EpisodeStepSchema = z.object({
   name: EpisodeStepNameSchema, status: StepStatusSchema, output: z.unknown().nullable(), error: z.string().nullable(),
   startedAt: z.string().nullable(), finishedAt: z.string().nullable(),
@@ -185,15 +187,18 @@ export type EpisodeStep = z.infer<typeof EpisodeStepSchema>;
 export const EpisodeInputSchema = z.object({
   prompt: z.string().min(1), characterIds: z.array(IdSchema).default([]),
   pages: z.number().int().min(1).max(30).default(8), tone: z.string().default(''),
+  /** W1 Q2: render the cover and page 1 first, then wait. Absent on runs stored before W1, which means off. */
+  previewFirst: z.boolean().optional(),
 });
 export type EpisodeInput = z.infer<typeof EpisodeInputSchema>;
-export const EpisodeRunStatusSchema = z.enum(['running', 'awaiting-review', 'done', 'failed', 'cancelled']);
+export const EpisodeRunStatusSchema = z.enum(['running', 'awaiting-review', 'done', 'failed', 'cancelled', 'paused']);
 /**
- * A live run (M4 final M10, the one definition): running, or waiting at a review point; the others have ended. The
+ * A live run (M4 final M10, the one definition): running, waiting at a review point, or paused (W1 C1: a paused run is
+ * live too, so a chapter still has one live run); the others have ended. The
  * server refuses a second live run per chapter, the UI shows the run controls, and the CLI's --wait stops at a review
  * point or an end.
  */
-export const EPISODE_ACTIVE_STATUSES: ReadonlySet<z.infer<typeof EpisodeRunStatusSchema>> = new Set(['running', 'awaiting-review']);
+export const EPISODE_ACTIVE_STATUSES: ReadonlySet<z.infer<typeof EpisodeRunStatusSchema>> = new Set(['running', 'awaiting-review', 'paused']);
 export const EpisodeRunSchema = z.object({
   id: IdSchema, chapterId: IdSchema, input: EpisodeInputSchema, mode: z.enum(['review', 'autopilot']),
   steps: z.array(EpisodeStepSchema), currentStep: z.number().int().min(0), status: EpisodeRunStatusSchema, ...Timestamps,
@@ -212,6 +217,7 @@ export const SettingsSchema = z.object({
   claude: z.object({ models: z.object({ story: z.string(), dialogue: z.string(), prompts: z.string(), review: z.string() }) }),
   ollama: z.object({ textModel: z.string(), visionModel: z.string() }),
   review: z.object({ autoInEpisode: z.boolean(), rounds: z.number().int().min(0).max(5) }),
+  episode: z.object({ confirmRenderMinutes: z.number().int().min(1).max(1440) }),
   routing: z.object({
     noChars: z.string(), oneChar: z.string(), multiChar: z.string(),
     bwRefine: z.string().nullable(), driftFallback: z.string(),
@@ -223,6 +229,7 @@ export const DEFAULT_SETTINGS: Settings = {
   claude: { models: { story: 'opus', dialogue: 'opus', prompts: 'sonnet', review: 'sonnet' } },
   ollama: { textModel: 'qwen3:14b', visionModel: 'qwen3-vl:8b' },
   review: { autoInEpisode: true, rounds: 2 },
+  episode: { confirmRenderMinutes: 45 },
   routing: { noChars: 'anime', oneChar: 'anime-ref', multiChar: 'klein-ref', bwRefine: null, driftFallback: 'qwen-edit-ref' },
 };
 /** Each top-level section is optional; within a section every key is optional. `engine.tasks` is replaced whole. */
@@ -232,6 +239,7 @@ export const SettingsPatchSchema = z.object({
   ollama: SettingsSchema.shape.ollama.partial().optional(),
   review: SettingsSchema.shape.review.partial().optional(),
   routing: SettingsSchema.shape.routing.partial().optional(),
+  episode: SettingsSchema.shape.episode.partial().optional(),
 });
 export type SettingsPatch = z.infer<typeof SettingsPatchSchema>;
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { EPISODE_STEPS, type EpisodeRun } from '@manga/shared';
 import { exportTargetType } from '../src/commands/export.js';
 import { formatRun, runLine } from '../src/episode-format.js';
-import { followRun } from '../src/follow.js';
+import { followRun, isSettled } from '../src/follow.js';
 
 const T = '2026-09-27T10:11:12.000Z';
 function run(status: EpisodeRun['status'], currentStep: number, stepStatus: EpisodeRun['steps'][number]['status'] = 'running'): EpisodeRun {
@@ -100,4 +100,9 @@ describe('followRun', () => {
     expect(final.status).toBe('running');
     expect([gets, sleeps]).toEqual([1, []]);
   });
+});
+
+it('--wait settles on a paused run (it waits for the user, like a review point)', () => {
+  expect(isSettled(run('paused', 5))).toBe(true);
+  expect(isSettled(run('running', 5))).toBe(false);
 });

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { PRESET_NAMES, presetPanelCount } from './layout/index.js';
 import {
   AngleSchema, CharacterRoleSchema, DialogueKindSchema, EPISODE_STEPS, ShotSchema, StagePositionSchema,
-  type EpisodeStepName, type Task,
+  type EpisodeStepName, type Settings, type Task,
 } from './schemas.js';
 
 /** Trim, collapse inner whitespace, lower-case (works for Cyrillic). */
@@ -288,4 +288,26 @@ export function formatEstimate(seconds: number): string {
   const h = Math.floor(mins / 60);
   const m = mins % 60;
   return m > 0 ? `~${h} h ${m} min` : `~${h} h`;
+}
+
+/** W1 C2: the panels a page typically gets (the breakdown prompt aims for 3–5 per page). */
+export const TYPICAL_PANELS_PER_PAGE = 4.5;
+
+/**
+ * W1 C2: the render time of a chapter not broken down yet: pages × TYPICAL_PANELS_PER_PAGE panels, each at the mean of the
+ * three routed recipes (no characters, one, several), plus the review rounds when episodes review their images.
+ */
+export function estimateChapter(pages: number, settings: Settings): { panels: number; seconds: number } {
+  const panels = Math.round(pages * TYPICAL_PANELS_PER_PAGE);
+  const { noChars, oneChar, multiChar } = settings.routing;
+  const perPanel = estimateSeconds([noChars, oneChar, multiChar]) / 3;
+  const render = panels * perPanel;
+  const rounds = settings.review.autoInEpisode ? settings.review.rounds : 0;
+  return { panels, seconds: Math.round(render + estimateReviewSeconds(render, panels, rounds)) };
+}
+
+/** "8 pages ≈ 36 panels ≈ 37 min" (the AI section and `manga episode start`). */
+export function formatChapterEstimate(pages: number, settings: Settings): string {
+  const { panels, seconds } = estimateChapter(pages, settings);
+  return `${pages} ${pages === 1 ? 'page' : 'pages'} ≈ ${panels} panels ≈ ${formatEstimate(seconds).replace(/^~/, '')}`;
 }

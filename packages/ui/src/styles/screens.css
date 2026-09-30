@@ -13,3 +13,4 @@
 .status-chip--generating { background: var(--accent-wash); color: var(--accent); }
 .status-chip--ready { background: color-mix(in oklab, var(--ok) 16%, transparent); color: var(--ok); }
 .status-chip--failed { background: var(--danger-wash); color: var(--danger); }
+.status-chip--paused { background: color-mix(in oklab, var(--warn) 16%, transparent); color: var(--warn); }
