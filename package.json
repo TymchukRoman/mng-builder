@@ -11,7 +11,7 @@
   },
   "scripts": {
     "build": "tsc --build && npm run build --workspace @manga/ui",
-    "typecheck": "tsc --build --force && npm run typecheck --workspace @manga/ui && tsc -p e2e",
+    "typecheck": "tsc --build --force && npm run typecheck --workspace @manga/ui && tsc -p e2e && tsc -p packages/shared/tsconfig.test.json && tsc -p packages/server/tsconfig.test.json && tsc -p packages/cli/tsconfig.test.json && tsc -p packages/ui/tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "tsc --build && concurrently -k -n tsc,server,ui -c gray,blue,magenta \"tsc --build --watch --preserveWatchOutput\" \"node --watch packages/server/dist/main.js\" \"npm run dev --workspace @manga/ui\"",
