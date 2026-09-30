@@ -119,6 +119,15 @@ describe('people count', () => {
     expect(countSentence(castCount(Array.from({ length: 12 }, () => c('1girl'))))).toBe('Exactly 12 people: 12 girls.');
   });
 
+  it('does not count a non-human character (a `no humans` cast member, e.g. a pet) as a person (live smoke)', () => {
+    const kitten = c('no humans, kitten, cat, small');
+    expect(castCount([c('1girl, short black hair'), kitten])).toEqual({ girl: 1, boy: 0, other: 0 });
+    expect(countSentence(castCount([c('1girl'), kitten]))).toBe('Exactly one person.');
+    expect(countTag(castCount([c('1girl'), kitten]))).toBe('solo');
+    expect(countTag(castCount([kitten]))).toBe('no humans');
+    expect(countSentence(castCount([c('No Humans, dog')]))).toBe('No people.');
+  });
+
   it('counts only script characters that exist in this manga, as the renderer does', () => {
     const { manga, panelIds } = renderWorld();
     const other = seedEpisodeWorld(lib.store, { mangaTitle: 'Elsewhere' });

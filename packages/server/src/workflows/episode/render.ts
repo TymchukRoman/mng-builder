@@ -29,11 +29,16 @@ export interface RetryTarget { cast: CastCount; hasPortraitRefs: boolean; style:
 const MAX_COUNTED = 5;
 const NUMBER_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
 
-/** Genders come from the `1girl`/`1boy` tag each character's appearanceTags starts with; anything else counts as other. */
+/**
+ * Genders come from the `1girl`/`1boy` tag each character's appearanceTags starts with; anything else counts as other.
+ * A `no humans` character (a pet, a creature) is not a person and is not counted: the live smoke's kitten turned a
+ * one-girl panel into "Exactly two people", and the retry drew a second girl.
+ */
 export function castCount(cast: Array<Pick<Character, 'appearanceTags'>>): CastCount {
   const count: CastCount = { girl: 0, boy: 0, other: 0 };
   for (const c of cast) {
     const tags = c.appearanceTags.split(',').map((t) => t.trim().toLowerCase());
+    if (tags.includes('no humans')) continue;
     count[tags.includes('1girl') ? 'girl' : tags.includes('1boy') ? 'boy' : 'other'] += 1;
   }
   return count;
