@@ -1,3 +1,4 @@
+import { setMaxListeners } from 'node:events';
 import {
   BreakdownOutputSchema, EDITABLE_STEPS, EPISODE_STEPS, OutlineOutputSchema, PremiseOutputSchema, PromptsOutputSchema,
   REVIEW_POINTS, STEP_TASK, ScriptsOutputSchema, panelIds, stepIndex,
@@ -41,7 +42,9 @@ export class EpisodeRunner {
   /** Aborted by stop(): releases every job watch (they would otherwise wait for jobs a shutdown re-queues). */
   private readonly lifetime = new AbortController();
 
-  constructor(private readonly deps: RunnerDeps) {}
+  constructor(private readonly deps: RunnerDeps) {
+    setMaxListeners(0, this.lifetime.signal); // one listener per watched step job (review M4)
+  }
 
   get(runId: string): EpisodeRun {
     return this.deps.store.episodes.require(runId);
@@ -148,7 +151,8 @@ export class EpisodeRunner {
   /**
    * After a restart (episodeModule.start), for the latest run of every chapter that is `running`: a pending current
    * step is dispatched; a running one is re-attached to its unfinished job, or enqueued again when there is none;
-   * a done one (the process stopped between completing it and moving on) is accepted. Returns how many runs moved.
+   * a done one (the process stopped between completing it and moving on) is accepted. A run that throws while
+   * moving on is failed, and the others still resume. Returns how many runs moved.
    */
   resume(): number {
     const { store } = this.deps;
@@ -158,19 +162,23 @@ export class EpisodeRunner {
         const run = store.episodes.latestByChapter(chapter.id);
         const step = run?.steps[run.currentStep];
         if (!run || run.status !== 'running' || !step) continue;
-        if (step.status === 'pending') {
-          this.dispatch(run.id);
-        } else if (step.status === 'running') {
-          const token = step.startedAt ?? this.stampToken(run, run.currentStep);
-          const job = this.findStepJob(run.id, step.name);
-          if (job) this.watch(run.id, step.name, token, job.id);
-          else this.enqueueStep(run.id, step.name, token);
-        } else if (step.status === 'done') {
-          this.accept(run, run.currentStep);
-        } else {
-          continue;
+        try {
+          if (step.status === 'pending') {
+            this.dispatch(run.id);
+          } else if (step.status === 'running') {
+            const token = step.startedAt ?? this.stampToken(run, run.currentStep);
+            const job = this.findStepJob(run.id, step.name);
+            if (job) this.watch(run.id, step.name, token, job.id);
+            else this.enqueueStep(run.id, step.name, token);
+          } else if (step.status === 'done') {
+            this.accept(run, run.currentStep);
+          } else {
+            continue;
+          }
+          resumed++;
+        } catch (err) {
+          this.failRun(run.id, err); // one bad run must not stop the server from starting (review M1)
         }
-        resumed++;
       }
     }
     return resumed;
@@ -185,6 +193,7 @@ export class EpisodeRunner {
     if (!run || !step || run.status !== 'running' || run.currentStep !== idx || step.status !== 'running') return { skipped: true };
     const token = step.startedAt;
     const output = await this.execute(ctx, run, payload.step);
+    if (ctx.signal.aborted) return { skipped: true }; // a cancelled job's result never counts, even if its token is reused by a retry (review M2)
     const fresh = this.deps.store.episodes.get(run.id);
     const now = fresh?.steps[idx];
     if (!fresh || !now || fresh.status !== 'running' || now.status !== 'running' || now.startedAt !== token) return { skipped: true };
@@ -194,7 +203,12 @@ export class EpisodeRunner {
       // An LLM answer the effect cannot use (e.g. no usable scene for a panel): fail like an invalid answer.
       throw err instanceof InvalidOutputError ? rawOutputError(err) : err;
     }
-    this.complete(fresh.id, idx, output);
+    try {
+      this.complete(fresh.id, idx, output);
+    } catch (err) {
+      this.failRun(fresh.id, err); // the step may already be saved done: show the error instead of hanging (review M1)
+      throw err;
+    }
     return { step: payload.step };
   }
 
@@ -279,18 +293,39 @@ export class EpisodeRunner {
 
   /** A failed or cancelled step job fails the step (and the run), unless the step was re-run meanwhile. */
   private watch(runId: string, name: EpisodeStepName, token: string, jobId: string): void {
-    waitForJob(this.deps.queue, jobId, this.lifetime.signal).then(
-      (job) => { if (job.status !== 'succeeded') this.failStep(runId, name, token, job.status === 'cancelled' ? 'Cancelled' : job.error ?? 'Step failed'); },
-      () => undefined, // the runner stopped
-    );
+    waitForJob(this.deps.queue, jobId, this.lifetime.signal)
+      .then(
+        (job) => { if (job.status !== 'succeeded') this.failStep(runId, name, token, job.id, job.status === 'cancelled' ? 'Cancelled' : job.error ?? 'Step failed'); },
+        () => undefined, // the runner stopped
+      )
+      .catch((err: unknown) => { console.error('[manga] episode runner:', err); }); // never an unhandled rejection (review M3)
   }
 
-  private failStep(runId: string, name: EpisodeStepName, token: string, error: string): void {
+  /**
+   * An unexpected error while moving a run on (review M1): its current step and the run fail with the message, and
+   * the chapter goes back to draft, so the stepper shows it and the user can retry. Never throws.
+   */
+  private failRun(runId: string, err: unknown): void {
+    try {
+      const run = this.deps.store.episodes.get(runId);
+      if (!run) return;
+      const error = err instanceof Error ? err.message : String(err);
+      this.save(run, { status: 'failed', steps: patchStep(run.steps, run.currentStep, { status: 'failed', error, finishedAt: nowIso() }) });
+      this.setChapterStatus(run.chapterId, 'draft');
+    } catch (inner) {
+      console.error('[manga] episode runner: could not fail run', runId, inner);
+    }
+  }
+
+  private failStep(runId: string, name: EpisodeStepName, token: string, jobId: string, error: string): void {
     if (this.stopped) return;
     const run = this.deps.store.episodes.get(runId);
     const idx = stepIndex(name);
     const step = run?.steps[idx];
     if (!run || !step || step.status !== 'running' || step.startedAt !== token) return;
+    // A retry keeps the token, so a cancelled job's late watch must not fail the retry's own job.
+    const live = this.findStepJob(runId, name);
+    if (live && live.id !== jobId) return;
     const status: EpisodeRun['status'] = run.status === 'running' ? 'failed' : run.status;
     this.save(run, { status, steps: patchStep(run.steps, idx, { status: 'failed', error, finishedAt: nowIso() }) });
     if (status === 'failed') this.setChapterStatus(run.chapterId, 'draft');

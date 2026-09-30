@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { getEventListeners, getMaxListeners } from 'node:events';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ZodError } from 'zod';
 import type { EpisodeInput, ImageGeneratePayload, Job, LlmStepPayload, ServerEvent } from '@manga/shared';
 import { EPISODE_FAKE_RESPONSES } from '../src/dev/fake-episode.js';
@@ -12,7 +13,7 @@ import { EventBus } from '../src/events/bus.js';
 import { GpuArbiter, JobQueue } from '../src/jobs/index.js';
 import { storyPages } from '../src/workflows/episode/chapter.js';
 import { EpisodeRunner } from '../src/workflows/episode/runner.js';
-import { PREMISE, TWO_PANEL_PRESET, seedEpisodeWorld, seedRun } from './helpers/episode-fixtures.js';
+import { PREMISE, TWO_PANEL_PRESET, outline, seedEpisodeWorld, seedRun } from './helpers/episode-fixtures.js';
 import { FakeQueue, fakeImaging, fakeJobContext } from './helpers/fake-queue.js';
 import { openTestLibrary, type TestLibrary } from './helpers/library.js';
 import { seedCharacter } from './helpers/seed.js';
@@ -26,7 +27,7 @@ beforeEach(() => {
   events = [];
   bus.on((e) => { events.push(e); });
 });
-afterEach(() => { lib.close(); });
+afterEach(() => { vi.restoreAllMocks(); lib.close(); });
 
 interface Rig { runner: EpisodeRunner; queue: FakeQueue; claude: ScriptedEngine; local: ScriptedEngine; engines: Engines }
 
@@ -57,6 +58,27 @@ function world() {
 const stepStatuses = (runId: string) => lib.store.episodes.require(runId).steps.map((s) => s.status);
 const portraitJobs = (queue: FakeQueue): Job[] =>
   queue.jobs('image.generate').filter((j) => (j.payload as ImageGeneratePayload).target === 'character-portrait');
+
+/** A rig whose queue refuses image.generate jobs, so accepting an outline with a new character throws (M1). */
+function portraitQueueDown(opts: { auto?: boolean } = {}) {
+  const engines = new Engines({
+    settings: () => lib.store.settings.get(), claude: new ScriptedEngine('claude', FAKE_RESPONSES), local: new ScriptedEngine('local', FAKE_RESPONSES),
+  });
+  const queue = new FakeQueue(lib.store);
+  const flaky = {
+    enqueue: (input: Parameters<FakeQueue['enqueue']>[0]) => {
+      if (input.kind === 'image.generate') throw new Error('portrait queue down');
+      return queue.enqueue(input);
+    },
+    cancel: (id: string) => queue.cancel(id),
+    waitFor: (id: string) => queue.waitFor(id),
+  };
+  const runner = new EpisodeRunner({ store: lib.store, bus, queue: flaky, engines });
+  if (opts.auto) {
+    queue.on('llm.step', (job, signal) => runner.handleStepJob(fakeJobContext(lib.store, bus, queue, job, signal), job.payload as LlmStepPayload));
+  }
+  return { runner, queue };
+}
 
 describe('EpisodeRunner — flow', () => {
   it('review mode stops at the outline, with the premise written to the chapter', async () => {
@@ -386,14 +408,19 @@ describe('EpisodeRunner — failure, retry, edit, rerun, cancel', () => {
 });
 
 describe('EpisodeRunner — restart safety', () => {
-  it('resume re-attaches to a queued step job instead of enqueueing a duplicate', () => {
+  it('resume re-attaches to a queued step job instead of enqueueing a duplicate, and that watch drives the step', async () => {
     const { chapter, input } = world();
     const first = rig({ auto: false });
     first.runner.start(chapter.id, input, 'review');
     expect(first.queue.jobs('llm.step')).toHaveLength(1);
+    first.runner.stop(); // the old process is gone: only the restarted runner watches the job
     const restarted = rig({ auto: false });
     expect(restarted.runner.resume()).toBe(1);
     expect(restarted.queue.jobs()).toEqual([]);
+    const [job] = first.queue.jobs('llm.step');
+    restarted.queue.fail(job!.id, 'engine gone');
+    await restarted.queue.idle();
+    expect(lib.store.episodes.latestByChapter(chapter.id)!.steps[0]).toMatchObject({ status: 'failed', error: 'engine gone' });
   });
 
   it('resume enqueues a pending current step and a running step whose job is gone', () => {
@@ -420,11 +447,83 @@ describe('EpisodeRunner — restart safety', () => {
     const { chapter, input } = world();
     const { runner, queue } = rig({ auto: false });
     const run = runner.start(chapter.id, input, 'review');
+    const lifetime = (runner as unknown as { lifetime: AbortController }).lifetime.signal;
+    expect(getEventListeners(lifetime, 'abort')).toHaveLength(1); // the step job's watch
+    expect(getMaxListeners(lifetime)).toBe(0); // many watched jobs never warn (review M4)
     runner.stop();
+    expect(lifetime.aborted).toBe(true);
+    expect(getEventListeners(lifetime, 'abort')).toHaveLength(0);
     const [job] = queue.jobs('llm.step');
     queue.fail(job!.id, 'server stopping');
     await queue.idle();
     expect(runner.get(run.id).steps[0]!.status).toBe('running'); // left for resume() after the restart
+  });
+
+  it('an error while moving a run on during resume fails that run and resumes the others (M1)', () => {
+    const bad = world();
+    lib.store.chapters.update(bad.chapter.id, { status: 'generating' });
+    const mika = { name: 'Mika', role: 'supporting' as const, personality: 'cheerful', speechStyle: 'short', appearanceTags: '1girl' };
+    const broken = seedRun(lib.store, bad.chapter.id, {
+      mode: 'autopilot', outputs: { premise: PREMISE, outline: outline(['Aiko'], [mika]) }, currentStep: 'outline',
+    });
+    const good = seedEpisodeWorld(lib.store, { mangaTitle: 'Second' });
+    const healthy = seedRun(lib.store, good.chapter.id);
+    const { runner, queue } = portraitQueueDown();
+    expect(runner.resume()).toBe(1);
+    expect(runner.get(broken.id)).toMatchObject({ status: 'failed' });
+    expect(runner.get(broken.id).steps[1]).toMatchObject({ status: 'failed', error: 'portrait queue down' });
+    expect(lib.store.chapters.require(bad.chapter.id).status).toBe('draft');
+    expect(runner.get(healthy.id).steps[0]!.status).toBe('running');
+    expect(queue.jobs('llm.step').map((j) => (j.payload as { runId: string }).runId)).toEqual([healthy.id]);
+  });
+
+  it('an error while accepting a finished step fails the run instead of leaving it running (M1)', async () => {
+    const { chapter, input } = world();
+    const { runner, queue } = portraitQueueDown({ auto: true });
+    const run = runner.start(chapter.id, input, 'autopilot');
+    await queue.idle();
+    const after = runner.get(run.id);
+    expect(after.status).toBe('failed');
+    expect(after.steps[1]).toMatchObject({ name: 'outline', status: 'failed', error: 'portrait queue down' });
+    expect(lib.store.chapters.require(chapter.id).status).toBe('draft');
+    expect(queue.jobs('llm.step').map((j) => [(j.payload as { step: string }).step, j.status])).toEqual([
+      ['premise', 'succeeded'], ['outline', 'failed'],
+    ]);
+  });
+
+  it('a cancelled job whose handler ignores the abort cannot complete a retried step (M2)', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const { chapter, input } = world();
+    const { runner, queue } = rig({
+      auto: false,
+      responses: { 'episode.premise': async (req) => { await gate; return EPISODE_FAKE_RESPONSES['episode.premise']!(req); } },
+    });
+    const run = runner.start(chapter.id, input, 'autopilot');
+    const token = runner.get(run.id).steps[0]!.startedAt;
+    const [old] = queue.jobs('llm.step');
+    const controller = new AbortController();
+    const pending = runner.handleStepJob(fakeJobContext(lib.store, bus, queue, old!, controller.signal), old!.payload as LlmStepPayload);
+    runner.cancel(run.id);
+    controller.abort(new Error('cancelled'));
+    const retried = runner.rerun(run.id, 'premise', false);
+    expect(retried.steps[0]).toMatchObject({ status: 'running', startedAt: token }); // a retry: same token as the cancelled job
+    release(); // the scripted engine checks the signal only before it answers, so the old handler still returns a value
+    await expect(pending).resolves.toEqual({ skipped: true });
+    expect(runner.get(run.id).steps[0]).toMatchObject({ status: 'running', output: null });
+    expect(lib.store.chapters.require(chapter.id).title).toBe('Draft');
+  });
+
+  it('an error inside a job watch is logged, not an unhandled rejection (M3)', async () => {
+    const { chapter, input } = world();
+    const { runner, queue } = rig({ auto: false });
+    runner.start(chapter.id, input, 'review');
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(lib.store.episodes, 'update').mockImplementation(() => { throw new Error('disk full'); });
+    const [job] = queue.jobs('llm.step');
+    queue.fail(job!.id, 'model overloaded'); // the watch's failStep -> save throws
+    await queue.idle();
+    expect(logged).toHaveBeenCalledWith('[manga] episode runner:', expect.objectContaining({ message: 'disk full' }));
   });
 
   it('a late result of a superseded job is discarded', async () => {
