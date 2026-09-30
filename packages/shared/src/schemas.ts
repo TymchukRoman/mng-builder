@@ -142,7 +142,8 @@ export const ReviewIssueKindSchema = z.enum(['character-count', 'identity', 'ana
 export type ReviewIssueKind = z.infer<typeof ReviewIssueKindSchema>;
 export const ReviewResultSchema = z.object({
   engine: z.enum(['claude', 'local']), pass: z.boolean(),
-  issues: z.array(z.object({ kind: ReviewIssueKindSchema, note: z.string() })), at: z.string(),
+  // `fix` (M4 final S1): the picture as it should be, for the retry prompt; reviews stored before it have none.
+  issues: z.array(z.object({ kind: ReviewIssueKindSchema, note: z.string(), fix: z.string().optional() })), at: z.string(),
 });
 export type ReviewResult = z.infer<typeof ReviewResultSchema>;
 export const ImageSchema = z.object({

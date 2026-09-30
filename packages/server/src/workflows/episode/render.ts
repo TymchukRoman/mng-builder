@@ -102,7 +102,9 @@ export function retryTarget(store: Store, settings: Settings, panel: Panel): Ret
  * - text → a stronger negative; anatomy → the anatomy negative (F14);
  * - character-count → the panel's people count in the scene (F14, amended): a tag for the tags style, a sentence for the
  *   natural style, judged on the recipe the retry actually uses;
- * - script-mismatch / other → the reviewer's note in the scene (it states the wanted state).
+ * - script-mismatch / other → the reviewer's `fix` in the scene: the wanted state only (M4 final S1). Its `note`
+ *   ("X instead of Y") is never used: in the positive prompt it asked for the defect again. A stored review without a
+ *   `fix` adds no scene text.
  */
 export function retryPatch(issues: ReviewResult['issues'], settings: Settings, seed: number, target: RetryTarget): RetryPatch {
   const kinds = new Set(issues.map((i) => i.kind));
@@ -112,7 +114,7 @@ export function retryPatch(issues: ReviewResult['issues'], settings: Settings, s
     .filter((n): n is string => n !== null);
   const notes = issues
     .filter((i) => i.kind === 'script-mismatch' || i.kind === 'other')
-    .map((i) => i.note.trim())
+    .map((i) => i.fix?.trim() ?? '')
     .filter((n) => n.length > 0);
   const count = style === 'natural' ? countSentence(target.cast) : countTag(target.cast);
   const scene = [...(kinds.has('character-count') ? [count] : []), ...notes];

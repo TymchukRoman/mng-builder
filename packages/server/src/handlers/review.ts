@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import {
   ReviewIssueKindSchema,
-  type Character, type ImageReviewPayload, type ImageReviewResult, type Panel, type ReviewResult,
+  type Character, type ImageReviewPayload, type ImageReviewResult, type Manga, type Panel, type ReviewResult,
 } from '@manga/shared';
 import type { JobContext } from '../jobs/index.js';
 import { loadPrompt } from '../prompts/load.js';
@@ -9,13 +9,23 @@ import { scriptBlock } from '../prompts/script-block.js';
 import { emitEntity, panelContext } from './context.js';
 import type { HandlerServices } from './types.js';
 
+/**
+ * `fix` (M4 final S1): the wanted picture as a short scene phrase, never the defect: an episode retry appends it to the
+ * positive prompt, where the note ("X instead of Y") would ask for the defect again. The JSON schema lists it as
+ * required; an answer without it still parses (empty).
+ */
 export const ReviewOutputSchema = z.object({
   pass: z.boolean(),
-  issues: z.array(z.object({ kind: ReviewIssueKindSchema, note: z.string().min(1) })),
+  issues: z.array(z.object({ kind: ReviewIssueKindSchema, note: z.string().min(1), fix: z.string().default('') })),
 });
 
-export function reviewRequest(panel: Panel | null, characters: Character[], referenceNames: string[]): string {
+/** M4 final S3: a black-and-white book prints in greys, so colour alone is never an issue there. */
+export const BW_REVIEW_NOTE =
+  'This book prints in black and white. Ignore colour differences (hair, eye, skin and fur colour, clothing colours): judge identity by hairstyle, face, outfit shapes and features only.';
+
+export function reviewRequest(panel: Panel | null, characters: Character[], referenceNames: string[], colorMode: Manga['colorMode']): string {
   const lines = [
+    ...(colorMode === 'bw' ? [BW_REVIEW_NOTE, ''] : []),
     panel
       ? scriptBlock(panel.script, characters)
       : `No panel script: this is a character reference image of ${characters.map((c) => c.name).join(', ') || 'a character'}. Check only character-count, identity, anatomy and text.`,
@@ -47,7 +57,7 @@ export async function reviewImage(ctx: JobContext, services: HandlerServices, p:
   ctx.progress(engine.name === 'claude' ? 'Reviewing with Claude' : 'Reviewing with the local model');
   const out = await engine.completeJson({
     name: 'review', task: 'review', system: loadPrompt('review'),
-    prompt: reviewRequest(pc?.panel ?? null, characters, references.map((r) => r.name)),
+    prompt: reviewRequest(pc?.panel ?? null, characters, references.map((r) => r.name), store.mangas.require(image.mangaId).colorMode),
     schema: ReviewOutputSchema, images: [store.files.abs(image.path), ...references.map((r) => r.path)],
     signal: ctx.signal, onProgress: (label) => ctx.progress(label),
   });

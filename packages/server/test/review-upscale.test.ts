@@ -1,7 +1,7 @@
 import { readdirSync } from 'node:fs';
 import { newId } from '@manga/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { reviewImage } from '../src/handlers/review.js';
+import { BW_REVIEW_NOTE, reviewImage } from '../src/handlers/review.js';
 import { upscaleImage } from '../src/handlers/upscale.js';
 import { InvalidOutputError } from '../src/engines/errors.js';
 import { ComfyClient } from '../src/imaging/comfy.js';
@@ -59,6 +59,25 @@ describe('image.review', () => {
     expect(call.prompt).toContain('- Picture 2: reference portrait of Aiko.');
     expect(events).toContainEqual({ type: 'entity', entity: 'image', id: image.id, op: 'updated', mangaId: manga.id });
     expect(events.filter((e) => e.type === 'entity' && e.entity === 'image' && e.op === 'updated')).toHaveLength(1);
+  });
+
+  it('tells the reviewer a black-and-white book ignores colour, and keeps the wanted-state fix (M4 final S1, S3)', async () => {
+    const fix = 'The kitten peeks out of a cardboard box.';
+    const services = handlerServices(lib.store, comfy, {
+      claude: { review: () => ({ pass: false, issues: [{ kind: 'script-mismatch', note: 'The kitten sits on the machine instead.', fix }] }) },
+    });
+    const { manga, panel, image } = panelWithAiko();
+    lib.store.mangas.update(manga.id, { colorMode: 'bw' });
+    const result = await reviewImage(jobContext(lib.store, 'image.review', {}).ctx, services, { imageId: image.id, panelId: panel.id });
+    expect(result.issues).toEqual([{ kind: 'script-mismatch', note: 'The kitten sits on the machine instead.', fix }]);
+    const bwPrompt = services.claude.calls[0]!.prompt;
+    expect(bwPrompt.startsWith(BW_REVIEW_NOTE)).toBe(true);
+    expect(bwPrompt).toContain('Ignore colour differences (hair, eye, skin and fur colour');
+
+    lib.store.mangas.update(manga.id, { colorMode: 'color' });
+    await reviewImage(jobContext(lib.store, 'image.review', {}).ctx, services, { imageId: image.id, panelId: panel.id });
+    expect(services.claude.calls[1]!.prompt).not.toContain('black and white');
+    expect(loadPrompt('review')).toContain('Describe only the wanted state, never the mistake');
   });
 
   it('uses the local engine for a review queued in the gpu lane (I1)', async () => {

@@ -14,4 +14,5 @@ Look at every picture before you answer. Report an issue only when you can see i
 - other: anything else that makes the image unusable, for example a blank, corrupted or cut-off image.
 
 Each note is one short sentence a person can act on, naming the character when relevant.
+Each issue also has a "fix": the picture as it should be, written as a short phrase for the image generator. Describe only the wanted state, never the mistake: no "instead of", "not", "should" or "but" (write "the kitten peeks out of a cardboard box", not "the kitten is on the machine instead of in the box"). For character-count, identity, anatomy and text, "fix" may be an empty string.
 Set "pass" to true only when nothing would make you regenerate the image. Minor style differences are not issues; an empty "issues" list goes with "pass": true.

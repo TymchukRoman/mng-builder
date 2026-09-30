@@ -72,18 +72,28 @@ describe('retryPatch', () => {
     expect(retryPatch([], s, 1, solo)).toEqual({ seed: 1 });
     expect(retryPatch([{ kind: 'identity', note: 'wrong hair' }], s, 2, solo)).toEqual({ seed: 2, recipe: 'qwen-edit-ref' });
     expect(retryPatch([{ kind: 'text', note: 'letters on wall' }], s, 3, solo)).toEqual({ seed: 3, negativeExtra: TEXT_NEGATIVE });
-    expect(retryPatch([{ kind: 'anatomy', note: 'extra arm' }, { kind: 'script-mismatch', note: 'should be sitting' }], s, 4, solo))
-      .toEqual({ seed: 4, negativeExtra: ANATOMY_NEGATIVE, sceneSuffix: 'should be sitting' });
+    expect(retryPatch([{ kind: 'anatomy', note: 'extra arm' }, { kind: 'script-mismatch', note: 'standing, should be sitting', fix: 'sitting' }], s, 4, solo))
+      .toEqual({ seed: 4, negativeExtra: ANATOMY_NEGATIVE, sceneSuffix: 'sitting' });
     expect(retryPatch(
-      [{ kind: 'anatomy', note: 'six fingers' }, { kind: 'text', note: 'sign' }, { kind: 'character-count', note: 'three people' }, { kind: 'other', note: ' rain is falling ' }],
+      [{ kind: 'anatomy', note: 'six fingers' }, { kind: 'text', note: 'sign' }, { kind: 'character-count', note: 'three people' }, { kind: 'other', note: 'dry street', fix: ' rain is falling ' }],
       s, 6, { cast: { girl: 2, boy: 0, other: 0 }, hasPortraitRefs: true, style: 'tags' },
     )).toEqual({ seed: 6, negativeExtra: `${TEXT_NEGATIVE}, ${ANATOMY_NEGATIVE}`, sceneSuffix: '2girls, rain is falling' });
   });
 
   it('writes the people count as a sentence for a natural-style recipe (F14, amended)', () => {
     const natural: RetryTarget = { cast: { girl: 1, boy: 1, other: 0 }, hasPortraitRefs: true, style: 'natural' };
-    expect(retryPatch([{ kind: 'character-count', note: 'three people' }, { kind: 'script-mismatch', note: 'She should be sitting.' }], s, 8, natural))
-      .toEqual({ seed: 8, sceneSuffix: 'Exactly two people: one girl and one boy. She should be sitting.' });
+    expect(retryPatch([{ kind: 'character-count', note: 'three people' }, { kind: 'script-mismatch', note: 'She stands.', fix: 'She sits on the bench.' }], s, 8, natural))
+      .toEqual({ seed: 8, sceneSuffix: 'Exactly two people: one girl and one boy. She sits on the bench.' });
+  });
+
+  it('puts only the wanted state in the scene, never the reviewer\'s "X instead of Y" note (M4 final S1)', () => {
+    const natural: RetryTarget = { ...solo, style: 'natural' };
+    const note = 'The kitten is perched on top of the vending machine instead of peeking from a box.';
+    expect(retryPatch([{ kind: 'script-mismatch', note, fix: 'The kitten peeks out of a cardboard box.' }], s, 1, natural))
+      .toEqual({ seed: 1, sceneSuffix: 'The kitten peeks out of a cardboard box.' });
+    // A review stored before `fix` existed (or an empty fix) adds no scene text: never the raw note.
+    expect(retryPatch([{ kind: 'script-mismatch', note }], s, 2, natural)).toEqual({ seed: 2 });
+    expect(retryPatch([{ kind: 'other', note, fix: '  ' }], s, 3, natural)).toEqual({ seed: 3 });
   });
 
   it('judges the style on the recipe the retry uses: the drift recipe writes sentences', () => {
