@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState, type JSX } from 'react';
 import type { EpisodeRun } from '@manga/shared';
-import { api, seg } from '../api';
+import { api } from '../api';
 import '../episode/episode.css';
 import { cx } from '../lib/cx';
 import { useCharacters } from '../queries';
 import { Field } from '../ui/Field';
 import { IconButton } from '../ui/IconButton';
-import { ChevronDown, ChevronRight, FastForward, Sparkles, Users } from '../ui/icons';
-import { EMPTY_AI_INPUT, parsePages, toStartEpisode, toggleId, type AiChapterInput } from './aiSection';
+import { FastForward, Sparkles, Users } from '../ui/icons';
+import { EMPTY_AI_INPUT, makeStart, parsePages, toggleId, type AiChapterInput } from './aiSection';
 
 export interface CreateChapterAiSectionProps {
   mangaId: string;
@@ -27,10 +27,7 @@ export function CreateChapterAiSection({ mangaId, onChange }: CreateChapterAiSec
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const set = (patch: Partial<AiChapterInput>): void => setValue((v) => ({ ...v, ...patch }));
 
-  useEffect(() => {
-    const body = toStartEpisode(value);
-    onChange(body ? async (chapterId) => { await api.post<EpisodeRun>(`/api/chapters/${seg(chapterId)}/episode`, body); } : null);
-  }, [value, onChange]);
+  useEffect(() => { onChange(makeStart(value, (path, body) => api.post<EpisodeRun>(path, body))); }, [value, onChange]);
 
   // Opening the section (never the initial render: it starts closed, so the Title keeps the dialog's focus) moves to the prompt.
   useEffect(() => { if (value.open) promptRef.current?.focus(); }, [value.open]);
@@ -38,16 +35,16 @@ export function CreateChapterAiSection({ mangaId, onChange }: CreateChapterAiSec
   const list = characters.data ?? [];
   return (
     <div className="ai-section" data-testid="ai-section">
-      <button type="button" className="ai-section__toggle" aria-expanded={value.open} onClick={() => set({ open: !value.open })}>
-        <Sparkles size={14} aria-hidden />
-        <span>Generate with AI</span>
-        {value.open ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}
-      </button>
+      <IconButton
+        icon={Sparkles} size="sm" label="Generate with AI" aria-expanded={value.open} className={cx(value.open && 'is-active')}
+        onClick={() => set({ open: !value.open })}
+      />
       {value.open && (
         <div className="stack ai-section__body">
-          <Field label="Episode prompt">
-            <textarea ref={promptRef} className="textarea" rows={3} value={value.prompt} placeholder="What happens in this chapter?" onChange={(e) => set({ prompt: e.target.value })} />
-          </Field>
+          <textarea
+            ref={promptRef} className="textarea" rows={3} aria-label="Episode prompt" value={value.prompt}
+            placeholder="What happens in this chapter?" onChange={(e) => set({ prompt: e.target.value })}
+          />
           <div className="row ai-section__row">
             <Field label="Pages" inline>
               <input
@@ -56,12 +53,14 @@ export function CreateChapterAiSection({ mangaId, onChange }: CreateChapterAiSec
                 onBlur={() => setPagesText(String(value.pages))}
               />
             </Field>
-            <Field label="Tone" inline>
-              <input className="input" value={value.tone} placeholder="optional" onChange={(e) => set({ tone: e.target.value })} />
-            </Field>
+            <div className="ai-section__tone">
+              <Field label="Tone" inline>
+                <input className="input" value={value.tone} placeholder="optional" onChange={(e) => set({ tone: e.target.value })} />
+              </Field>
+            </div>
             <IconButton
               icon={FastForward} size="sm" active={value.autopilot} tipSide="top"
-              label={value.autopilot ? 'Autopilot: on, runs every step without stopping' : 'Autopilot: off, stops at each review point'}
+              label="Autopilot"
               onClick={() => set({ autopilot: !value.autopilot })}
             />
           </div>

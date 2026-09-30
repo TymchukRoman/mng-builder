@@ -1,5 +1,6 @@
 import type { z } from 'zod';
 import type { StartEpisodeSchema } from '@manga/shared';
+import { seg } from '../api';
 
 export type StartEpisodeBody = z.input<typeof StartEpisodeSchema>;
 
@@ -30,4 +31,17 @@ export function toStartEpisode(v: AiChapterInput): StartEpisodeBody | null {
     input: { prompt, pages: clampPages(v.pages), tone: v.tone.trim(), characterIds: v.characterIds },
     mode: v.autopilot ? 'autopilot' : 'review',
   };
+}
+
+/**
+ * The function CreateChapterModal calls once the chapter exists: POST the episode start for that chapter (its id goes through `seg`,
+ * so an invalid id throws before anything is sent). null while the section is closed or has no prompt, which means a plain chapter.
+ */
+export function makeStart(
+  v: AiChapterInput,
+  post: (path: string, body: StartEpisodeBody) => Promise<unknown>,
+): ((chapterId: string) => Promise<void>) | null {
+  const body = toStartEpisode(v);
+  if (!body) return null;
+  return async (chapterId) => { await post(`/api/chapters/${seg(chapterId)}/episode`, body); };
 }

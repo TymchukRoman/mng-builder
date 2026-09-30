@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { StartEpisodeSchema } from '@manga/shared';
-import { EMPTY_AI_INPUT, clampPages, parsePages, toStartEpisode, toggleId } from '../src/chapter/aiSection';
+import { ApiError } from '../src/api';
+import { EMPTY_AI_INPUT, clampPages, makeStart, parsePages, toStartEpisode, toggleId } from '../src/chapter/aiSection';
 
 describe('AI section model', () => {
   it('starts nothing while closed or without a prompt', () => {
@@ -32,5 +33,45 @@ describe('AI section model', () => {
 
   it('reads typed pages: a cleared or unreadable field means the default, not 1', () => {
     expect([parsePages(''), parsePages('  '), parsePages('abc'), parsePages('12'), parsePages('0'), parsePages('7,4')]).toEqual([8, 8, 8, 12, 1, 7]);
+  });
+
+  describe('makeStart', () => {
+    const filled = { ...EMPTY_AI_INPUT, open: true, prompt: ' A cat ', pages: 3, tone: 'soft', characterIds: ['cr_a'], autopilot: true };
+
+    it('registers nothing while closed or without a prompt', () => {
+      const post = vi.fn();
+      expect(makeStart(EMPTY_AI_INPUT, post)).toBeNull();
+      expect(makeStart({ ...filled, open: false }, post)).toBeNull();
+      expect(makeStart({ ...filled, prompt: '  ' }, post)).toBeNull();
+      expect(post).not.toHaveBeenCalled();
+    });
+
+    it('posts the exact body to the chapter episode path', async () => {
+      const post = vi.fn(async () => ({}));
+      const start = makeStart(filled, post);
+      await start?.('ch_abc');
+      expect(post).toHaveBeenCalledTimes(1);
+      expect(post).toHaveBeenCalledWith('/api/chapters/ch_abc/episode', {
+        input: { prompt: 'A cat', pages: 3, tone: 'soft', characterIds: ['cr_a'] }, mode: 'autopilot',
+      });
+    });
+
+    it('encodes the id as one path segment', async () => {
+      const post = vi.fn(async (_path: string, _body: unknown) => ({}));
+      await makeStart(filled, post)?.('ch_a/../b?x');
+      expect(post.mock.calls[0]?.[0]).toBe('/api/chapters/ch_a%2F..%2Fb%3Fx/episode');
+    });
+
+    it('sends nothing for an invalid id: seg throws', async () => {
+      const post = vi.fn(async () => ({}));
+      await expect(makeStart(filled, post)?.('..')).rejects.toBeInstanceOf(ApiError);
+      await expect(makeStart(filled, post)?.('')).rejects.toBeInstanceOf(ApiError);
+      expect(post).not.toHaveBeenCalled();
+    });
+
+    it('lets a failing post reject, so the create flow can toast it', async () => {
+      const post = vi.fn(async () => { throw new Error('boom'); });
+      await expect(makeStart(filled, post)?.('ch_1')).rejects.toThrow('boom');
+    });
   });
 });
