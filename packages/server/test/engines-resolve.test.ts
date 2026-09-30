@@ -113,7 +113,9 @@ describe('errors and abort helpers', () => {
     expect(abortError(undefined).message).toBe('Cancelled');
   });
 
-  it('FAKE_RESPONSES covers the M2 request names', () => {
-    expect(Object.keys(FAKE_RESPONSES).sort()).toEqual(['appearance', 'panel-prompt', 'review']);
+  it('FAKE_RESPONSES covers the M2 and M4 request names', () => {
+    expect(Object.keys(FAKE_RESPONSES).sort()).toEqual([
+      'appearance', 'episode.breakdown', 'episode.outline', 'episode.premise', 'episode.prompts', 'episode.scripts', 'panel-prompt', 'review',
+    ]);
   });
 });
