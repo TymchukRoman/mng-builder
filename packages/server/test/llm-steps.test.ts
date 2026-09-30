@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { ENGLISH_SCENE_MESSAGE } from '@manga/shared';
 import { appearanceStep } from '../src/handlers/appearance.js';
 import { panelPromptStep } from '../src/handlers/panel-prompt.js';
 import { InvalidOutputError } from '../src/engines/errors.js';
+import { Engines } from '../src/engines/resolve.js';
+import { completeStructured } from '../src/engines/structured.js';
+import type { JsonRequest, TextEngine } from '../src/engines/types.js';
 import { ComfyClient } from '../src/imaging/comfy.js';
 import { PermanentError } from '../src/jobs/index.js';
 import { loadPrompt } from '../src/prompts/load.js';
@@ -110,8 +114,54 @@ describe('llm.step panel-prompt', () => {
     const payload = { type: 'panel-prompt' as const, panelId: panels[0]!.id };
     const err = await panelPromptStep(services)(jobContext(lib.store, 'llm.step', payload).ctx, payload).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(InvalidOutputError);
-    expect((err as InvalidOutputError).message).toBe('panel-prompt: the AI wrote no usable scene');
+    // It has no Latin letter, so the answer's English check already refuses it (and a real engine's correction round sees it).
+    expect((err as InvalidOutputError).message).toContain(ENGLISH_SCENE_MESSAGE);
     expect(lib.store.panels.require(panels[0]!.id).prompt.scene).toBe('');
+  });
+
+  it('keeps the English tags of a scene that mixes in Cyrillic (a Ukrainian book)', async () => {
+    const services = handlerServices(lib.store, comfy, { claude: { 'panel-prompt': () => ({ scene: 'Вельм, solo, smile, віз, rooftop' }) } });
+    const { panels } = seedManga(lib.store);
+    const payload = { type: 'panel-prompt' as const, panelId: panels[0]!.id };
+    await panelPromptStep(services)(jobContext(lib.store, 'llm.step', payload).ctx, payload);
+    expect(lib.store.panels.require(panels[0]!.id).prompt.scene).toBe('upper body, solo, smile, rooftop');
+  });
+
+  describe("a Ukrainian scene goes back through the engine's correction round (Roman's Вельм run)", () => {
+    const ROMAN_SCENE = 'Вельм, Вельм спокійно усміхається й піднімає долоню, наче дає слово, віз, мішки, сіре небо';
+    function correcting(answers: string[]) {
+      const asked: string[] = [];
+      const engine: TextEngine = {
+        name: 'claude',
+        health: async () => ({ ok: true, detail: 'test' }),
+        completeJson: <T>(req: JsonRequest<T>): Promise<T> => completeStructured(async ({ prompt }) => {
+          asked.push(prompt);
+          return JSON.stringify({ scene: answers.shift() });
+        }, req),
+      };
+      const base = handlerServices(lib.store, comfy);
+      return { asked, services: { ...base, engines: new Engines({ settings: () => lib.store.settings.get(), claude: engine, local: engine }) } };
+    }
+
+    it('and the corrected English scene is used', async () => {
+      const { asked, services } = correcting([ROMAN_SCENE, 'solo, smile, raised hand, cart']);
+      const { panels } = seedManga(lib.store);
+      const payload = { type: 'panel-prompt' as const, panelId: panels[0]!.id };
+      await panelPromptStep(services)(jobContext(lib.store, 'llm.step', payload).ctx, payload);
+      expect(asked).toHaveLength(2);
+      expect(asked[1]).toContain(`scene: ${ENGLISH_SCENE_MESSAGE}`);
+      expect(lib.store.panels.require(panels[0]!.id).prompt.scene).toBe('upper body, solo, smile, raised hand, cart');
+    });
+
+    it('and a scene still Ukrainian after it fails this one-panel action visibly, writing nothing', async () => {
+      const { services } = correcting([ROMAN_SCENE, ROMAN_SCENE]);
+      const { panels } = seedManga(lib.store);
+      const payload = { type: 'panel-prompt' as const, panelId: panels[0]!.id };
+      const err = await panelPromptStep(services)(jobContext(lib.store, 'llm.step', payload).ctx, payload).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(InvalidOutputError);
+      expect((err as InvalidOutputError).message).toContain(ENGLISH_SCENE_MESSAGE);
+      expect(lib.store.panels.require(panels[0]!.id).prompt.scene).toBe('');
+    });
   });
 
   it('rejects without crashing when the panel is deleted while the engine is writing the scene', async () => {

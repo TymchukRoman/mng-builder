@@ -11,6 +11,7 @@ import {
   buildStepContext, contextBlock, extractContext, templateVars,
   type BreakdownContext, type OutlineContext, type PremiseContext, type PromptsContext,
 } from '../src/workflows/episode/context.js';
+import { loadPrompt } from '../src/prompts/load.js';
 import { loadStepPrompt, renderTemplate } from '../src/workflows/episode/prompts.js';
 import { LLM_STEPS } from '../src/workflows/episode/steps.js';
 import { validationSchema } from '../src/workflows/episode/validation.js';
@@ -146,6 +147,15 @@ describe('step contexts', () => {
     // The request is the user's own wording ("Adapt any episode of Naruto…"), so the outline can tell an adaptation.
     const ctx = buildStepContext(lib.store, run, 'outline') as OutlineContext;
     expect(ctx.request).toEqual({ prompt: run.input.prompt, tone: run.input.tone });
+  });
+
+  it("every scene prompt asks for English even when the script is not, and never for names (Roman's Ukrainian Вельм run)", () => {
+    const { run } = fullWorld(); // a Ukrainian manga
+    expect(renderedSystem(run, 'prompts')).toContain('Write every "scene" in English only, even when the script, the names and the dialogue are in another language: translate what the panel shows.');
+    expect(renderedSystem(run, 'prompts')).toContain('never write character names');
+    for (const name of ['panel-prompt-tags', 'panel-prompt-natural'] as const) {
+      expect(loadPrompt(name)).toContain('English only, even when the script, the names and the dialogue are in another language: translate what the panel shows');
+    }
   });
 
   it('the outline drafts new characters without colours for a black-and-white manga only (M4 final S6)', () => {

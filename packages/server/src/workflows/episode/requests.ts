@@ -29,6 +29,12 @@ export interface StepRequest {
   progress: string;
   /** Prompts: the panels the last normalised answer of this call left without a scene, written from their script. */
   filled: string[];
+  /**
+   * Prompts: when an answer is still invalid after the correction round, it is accepted if it fits this looser schema
+   * (normalised the same way): only its English check failed, and the prompts effect writes those panels' scenes from
+   * their cast instead, so a non-English scene never fails the run.
+   */
+  relaxed?: z.ZodType<unknown>;
 }
 
 /**
@@ -39,18 +45,18 @@ export interface StepRequest {
 export function stepRequests(store: Store, run: EpisodeRun, step: LlmStepName): StepRequest[] {
   const ctx = buildStepContext(store, run, step);
   const template = loadStepPrompt(step);
-  const request = (c: StepContext, schema: z.ZodType<unknown>, progress: string): StepRequest => {
+  const request = (c: StepContext, schema: z.ZodType<unknown>, progress: string, relaxed?: z.ZodType<unknown>): StepRequest => {
     const vars = templateVars(store, run, c);
     const filled: string[] = [];
     const offered = c.step === 'prompts' ? { panels: c.panels } : {};
-    const normalized = z.preprocess((raw) => {
+    const normalized = (inner: z.ZodType<unknown>): z.ZodType<unknown> => z.preprocess((raw) => {
       const answer = normalizeLlmAnswer(step, raw, offered);
       filled.splice(0, filled.length, ...answer.filled);
       return answer.value;
-    }, schema);
+    }, inner);
     return {
       name: `episode.${step}`, task: STEP_TASK[step]!, system: renderTemplate(template.system, vars), prompt: renderTemplate(template.user, vars),
-      schema: normalized, progress, filled,
+      schema: normalized(schema), progress, filled, ...(relaxed ? { relaxed: normalized(relaxed) } : {}),
     };
   };
   if (ctx.step === 'scripts') {
@@ -77,11 +83,15 @@ export function stepRequests(store: Store, run: EpisodeRun, step: LlmStepName): 
       else groups.push([panel]);
     }
     const storyPages = groups.filter((g) => !g[0]!.isCover).length;
-    return groups.map((panels) => request(
-      { ...ctx, panels },
-      promptsSchemaFor({ panelIds: panels.map((p) => p.panelId) }),
-      panels[0]!.isCover ? 'Writing image prompts (cover)…' : `Writing image prompts (page ${panels[0]!.page} of ${storyPages})…`,
-    ));
+    return groups.map((panels) => {
+      const panelIds = panels.map((p) => p.panelId);
+      return request(
+        { ...ctx, panels },
+        promptsSchemaFor({ panelIds, englishScenes: true }),
+        panels[0]!.isCover ? 'Writing image prompts (cover)…' : `Writing image prompts (page ${panels[0]!.page} of ${storyPages})…`,
+        promptsSchemaFor({ panelIds }),
+      );
+    });
   }
   return [request(ctx, validationSchema(store, run, step, { source: 'llm' }), STEP_PROGRESS[step])];
 }

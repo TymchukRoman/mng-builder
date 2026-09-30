@@ -6,11 +6,11 @@ import {
 } from '@manga/shared';
 import { createCharacter } from '../../domain/characters.js';
 import { createCoverPage, createPage } from '../../domain/pages.js';
-import { InvalidOutputError } from '../../engines/errors.js';
+import { panelCharacters } from '../../handlers/context.js';
 import { ConflictError, ValidationError } from '../../errors.js';
 import { emitEntity, type EventBus } from '../../events/bus.js';
 import { stripColourWords } from '../../prompts/sanitize.js';
-import { finishScene } from '../../prompts/scene.js';
+import { fallbackScene, usableScene } from '../../prompts/scene.js';
 import type { Store } from '../../store/index.js';
 import { chapterPanels, storyPages } from './chapter.js';
 import { panelStyle } from './context.js';
@@ -239,8 +239,9 @@ export function applyScripts({ store, bus }: EffectDeps, chapterId: string, scri
 
 /**
  * Where a prompts output comes from (required, review M3, so every caller decides). `llm` (the step's own answer) is finished like M2's panel-prompt (F2): sanitised,
- * the model's framing replaced by the script's camera wording, chromatic colours dropped for a B&W book, and an
- * unusable scene fails naming the panel. `user` (an edit of the output) is stored verbatim.
+ * the model's framing replaced by the script's camera wording, chromatic colours dropped for a B&W book, only its
+ * English part kept, and a scene with nothing usable left written from the panel's cast (fallbackScene, one warning
+ * per step) instead of failing the run. `user` (an edit of the output) is stored verbatim.
  */
 export interface ApplyPromptsOptions { source: 'llm' | 'user' }
 
@@ -253,6 +254,7 @@ export function applyPrompts(
   const settings = store.settings.get();
   const names = store.characters.listByManga(manga.id).map((c) => c.name); // never strip "Amber" or "Violet" (review M1)
   const panels = new Map(chapterPanels(store, chapterId, manga.readingDirection).map((e) => [e.panel.id, e.panel]));
+  const fallbacks: string[] = [];
   store.tx(() => {
     for (const p of prompts.panels) {
       const panel = panels.get(p.panelId);
@@ -260,13 +262,22 @@ export function applyPrompts(
       let scene = p.scene;
       if (source === 'llm') {
         const { style } = panelStyle(store, settings, manga, panel);
-        const raw = manga.colorMode === 'bw' ? stripColourWords(p.scene, names) : p.scene;
-        const finished = finishScene(style, panel.script.shot, panel.script.angle, raw);
-        if (finished === null) throw new InvalidOutputError(`prompts: the AI wrote no usable scene for panel ${p.panelId}`, p.scene);
-        scene = finished;
+        const prepare = (raw: string): string => (manga.colorMode === 'bw' ? stripColourWords(raw, names) : raw);
+        const { shot, angle } = panel.script;
+        const finished = usableScene(style, shot, angle, prepare(p.scene));
+        if (finished !== null) {
+          scene = finished;
+        } else {
+          // No usable English scene (Roman's Ukrainian run, or only camera/forbidden words): written from the cast.
+          scene = fallbackScene(style, shot, angle, panelCharacters(store, panel, manga.id), panel.script.background, prepare);
+          fallbacks.push(p.panelId);
+        }
       }
       store.panels.update(p.panelId, { prompt: { scene, negative: p.negative ?? '' } });
     }
   });
+  if (fallbacks.length > 0) {
+    console.warn(`[manga] episode prompts: chapter ${chapterId}: no usable English scene for ${fallbacks.length} panel(s), so it is written from the cast: ${fallbacks.join(', ')}`);
+  }
   for (const id of new Set(prompts.panels.map((p) => p.panelId))) emitEntity(bus, 'panel', id, 'updated', manga.id);
 }

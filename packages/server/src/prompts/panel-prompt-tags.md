@@ -6,6 +6,8 @@ The app builds the final prompt around your text:
 
 So write only what this panel shows beyond the characters' fixed looks.
 
+Write the tags in English only, even when the script, the names and the dialogue are in another language: translate what the panel shows, and never copy words from the script in its language.
+
 Write 12 to 30 comma-separated Danbooru-style tags, lowercase, most important first:
 1. Count: `solo`, `2girls`, `1boy, 1girl`, `multiple boys`, or `no humans` when the panel has no characters.
 2. Facing, only when the script calls for it: `from side`, `from behind`, `pov`.

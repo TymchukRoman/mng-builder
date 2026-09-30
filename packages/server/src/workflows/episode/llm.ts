@@ -1,6 +1,7 @@
 import { ZodError } from 'zod';
 import type { EpisodeRun } from '@manga/shared';
 import { InvalidOutputError } from '../../engines/errors.js';
+import { parseAgainst } from '../../engines/structured.js';
 import type { Engines } from '../../engines/resolve.js';
 import { PermanentError, type JobContext } from '../../jobs/index.js';
 import type { Store } from '../../store/index.js';
@@ -35,9 +36,17 @@ export async function executeLlmStep(
   const requests = stepRequests(deps.store, run, step);
   const answers: unknown[] = [];
   try {
-    for (const { name, task, system, prompt, schema, progress } of requests) {
+    for (const { name, task, system, prompt, schema, progress, relaxed } of requests) {
       ctx.progress(progress);
-      answers.push(await engine.completeJson({ name, task, system, prompt, schema, signal: ctx.signal, onProgress: (label) => ctx.progress(label) }));
+      try {
+        answers.push(await engine.completeJson({ name, task, system, prompt, schema, signal: ctx.signal, onProgress: (label) => ctx.progress(label) }));
+      } catch (err) {
+        // Still invalid after the correction round: a prompts answer whose only fault is a non-English scene is kept,
+        // and the prompts effect writes those scenes from the cast (Roman's Ukrainian run).
+        const kept = err instanceof InvalidOutputError && relaxed ? parseAgainst(err.raw, relaxed) : null;
+        if (!kept?.ok) throw err;
+        answers.push(kept.data);
+      }
     }
   } catch (err) {
     throw err instanceof InvalidOutputError ? rawOutputError(err) : err;

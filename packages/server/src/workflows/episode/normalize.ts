@@ -1,5 +1,6 @@
 // packages/server/src/workflows/episode/normalize.ts
 import { AngleSchema, CharacterRoleSchema, DialogueKindSchema, ShotSchema, StagePositionSchema, withCountTag } from '@manga/shared';
+import { preferEnglish } from '../../prompts/scene.js';
 import type { PromptsPanelBrief } from './context.js';
 import type { LlmStepName } from './steps.js';
 
@@ -165,15 +166,27 @@ function repair(v: unknown, shape: Shape, depth: number): unknown {
   }
 }
 
-/** A scene for a panel the answer skipped, from its script; the prompts effect finishes it (camera, sanitising) like any other. */
+/**
+ * A scene for a panel the answer skipped, from its script (action and background, never the names: the pictures and
+ * count tags identify the characters); the prompts effect finishes it (camera, sanitising) like any other. A Ukrainian
+ * script keeps only its English part, or stays as written for the English check to send back.
+ */
 export function sceneFromScript(panel: PromptsPanelBrief): string {
-  const names = panel.characters.map((c) => c.name.trim()).filter((n) => n !== '');
   const action = panel.action.trim();
   const background = panel.background.trim();
-  if (panel.style === 'tags') return [...names, action.replace(/[.!?…]+$/, ''), background].filter((p) => p !== '').join(', ');
-  const sentence = action === '' || /[.!?…]$/.test(action) ? action : `${action}.`;
-  const lead = names.length > 0 ? `${names.join(' and ')}: ` : '';
-  return [`${lead}${sentence}`.trim(), background === '' ? '' : `Background: ${background}.`].filter((p) => p !== '').join(' ');
+  const raw = panel.style === 'tags'
+    ? [action.replace(/[.!?…]+$/, ''), background].filter((p) => p !== '').join(', ')
+    : [action === '' || /[.!?…]$/.test(action) ? action : `${action}.`, background === '' ? '' : `Background: ${background}.`].filter((p) => p !== '').join(' ');
+  return preferEnglish(raw);
+}
+
+/** Every entry's scene keeps its English part when it mixes in Cyrillic. */
+function englishScenes(value: unknown): unknown {
+  if (!isRecord(value) || !Array.isArray(value['panels'])) return value;
+  return {
+    ...value,
+    panels: value['panels'].map((e: unknown) => (isRecord(e) && typeof e['scene'] === 'string' ? { ...e, scene: preferEnglish(e['scene']) } : e)),
+  };
 }
 
 /** Prompts: only the offered panels, the first entry per panel, and a scene from the script for every panel left without one. */
@@ -223,7 +236,9 @@ export function normalizeLlmAnswer(step: LlmStepName, raw: unknown, ctx: Normali
   try {
     const value = repair(raw, STEP_SHAPES[step], 0);
     if (step === 'outline') return { value: fitOutlineCounts(value), filled: [] };
-    return step === 'prompts' && ctx.panels ? fitPrompts(value, ctx.panels) : { value, filled: [] };
+    if (step !== 'prompts') return { value, filled: [] };
+    const english = englishScenes(value);
+    return ctx.panels ? fitPrompts(english, ctx.panels) : { value: english, filled: [] };
   } catch {
     return { value: raw, filled: [] };
   }

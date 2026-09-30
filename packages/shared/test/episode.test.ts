@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import {
   EDITABLE_STEPS, OutlineOutputSchema, PremiseOutputSchema, PromptsOutputSchema, STEP_TASK,
-  REVIEW_AVG_SECONDS, breakdownSchemaFor, estimateReviewSeconds, estimateSeconds, formatEstimate, outlineSchemaFor, promptsSchemaFor, sameName,
+  REVIEW_AVG_SECONDS, breakdownSchemaFor, estimateReviewSeconds, estimateSeconds, formatEstimate, isEnglishScene, outlineSchemaFor, promptsSchemaFor, sameName,
   scriptsSchemaFor, stepIndex,
   type PanelScriptDraft,
 } from '../src/episode.js';
@@ -170,6 +170,19 @@ describe('scriptsSchemaFor with a pageOffset (a chunk of the chapter)', () => {
 
 describe('promptsSchemaFor', () => {
   const schema = promptsSchemaFor({ panelIds: ['pn_a', 'pn_b'] });
+
+  it('englishScenes (an LLM answer) flags a scene with Cyrillic or without Latin text, for the correction round', () => {
+    const english = promptsSchemaFor({ panelIds: ['pn_a', 'pn_b'], englishScenes: true });
+    const roman = 'Вельм, Вельм спокійно усміхається й піднімає долоню, наче дає слово, віз, мішки, сіре небо';
+    const answer = { panels: [{ panelId: 'pn_a', scene: roman }, { panelId: 'pn_b', scene: '1boy, smile' }] };
+    expect(issuesOf(english.safeParse(answer))).toEqual([
+      'panels.0.scene: scene must be English (Danbooru-style tags or plain English sentences as asked), with no Cyrillic and no character names',
+    ]);
+    expect(english.safeParse({ panels: [{ panelId: 'pn_a', scene: '...' }, { panelId: 'pn_b', scene: 'smile' }] }).success).toBe(false);
+    expect(schema.safeParse(answer).success).toBe(true); // a user edit is stored verbatim
+    expect(isEnglishScene('1boy, smile')).toBe(true);
+    expect(isEnglishScene('smile, віз')).toBe(false);
+  });
 
   it('accepts exactly one entry per panel id', () => {
     expect(schema.safeParse({ panels: [{ panelId: 'pn_b', scene: 'rain' }, { panelId: 'pn_a', scene: 'sun', negative: 'blur' }] }).success).toBe(true);

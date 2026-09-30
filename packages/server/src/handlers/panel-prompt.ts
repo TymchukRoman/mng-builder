@@ -1,17 +1,31 @@
 import { z } from 'zod';
+import { ENGLISH_SCENE_MESSAGE, isEnglishScene } from '@manga/shared';
 import { InvalidOutputError } from '../engines/errors.js';
 import { RECIPES } from '../imaging/recipes/index.js';
 import { promptStyleFor, routeRecipe, type PromptStyle } from '../imaging/route.js';
 import { PermanentError } from '../jobs/index.js';
 import type { LlmStepHandler } from '../jobs/llm-step.js';
 import { loadPrompt } from '../prompts/load.js';
-import { finishScene } from '../prompts/scene.js';
+import { finishScene, preferEnglish } from '../prompts/scene.js';
 import { scriptBlock } from '../prompts/script-block.js';
 import type { Store } from '../store/index.js';
 import { emitEntity, panelContext, pickRefs, type PanelContext } from './context.js';
 import type { HandlerServices } from './types.js';
 
 export const PanelPromptOutputSchema = z.object({ scene: z.string().min(1) });
+
+/**
+ * The schema the LLM's answer must meet: a scene that mixes in Cyrillic keeps its English part, and one with no usable
+ * English (a Ukrainian book's model following the Ukrainian script, Roman's Вельм run) goes back through the engine's
+ * correction round. Its JSON Schema is PanelPromptOutputSchema's.
+ */
+export const PanelPromptAnswerSchema: z.ZodType<z.infer<typeof PanelPromptOutputSchema>> = z.preprocess(
+  (v) => (typeof v === 'object' && v !== null && typeof (v as { scene?: unknown }).scene === 'string'
+    ? { ...v, scene: preferEnglish((v as { scene: string }).scene) } : v),
+  PanelPromptOutputSchema.superRefine((v, ctx) => {
+    if (!isEnglishScene(v.scene)) ctx.addIssue({ code: 'custom', path: ['scene'], message: ENGLISH_SCENE_MESSAGE });
+  }),
+);
 
 export function panelPromptRequest(store: Store, pc: PanelContext, recipeId: string, style: PromptStyle): string {
   const lines = [scriptBlock(pc.panel.script, pc.characters)];
@@ -43,7 +57,7 @@ export function panelPromptStep(services: HandlerServices): LlmStepHandler {
     ctx.progress('Writing the image prompt');
     const out = await engine.completeJson({
       name: 'panel-prompt', task: 'prompts', system: loadPrompt(style === 'tags' ? 'panel-prompt-tags' : 'panel-prompt-natural'),
-      prompt: panelPromptRequest(ctx.store, pc, recipe, style), schema: PanelPromptOutputSchema,
+      prompt: panelPromptRequest(ctx.store, pc, recipe, style), schema: PanelPromptAnswerSchema,
       signal: ctx.signal, onProgress: (label) => ctx.progress(label),
     });
     // I2: the script decides shot and angle (finishScene drops the model's framing and puts the script's first).

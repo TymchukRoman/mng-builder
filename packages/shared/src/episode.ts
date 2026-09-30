@@ -183,13 +183,29 @@ export const PromptsOutputSchema = z.object({
   })).min(1),
 });
 export type PromptsOutput = z.infer<typeof PromptsOutputSchema>;
-export interface PromptsRules { panelIds: string[] }
+export interface PromptsRules {
+  panelIds: string[];
+  /**
+   * An LLM answer's request (true): a scene with Cyrillic or without Latin text is an issue, so the correction round
+   * asks again (image models read only English; a Ukrainian book's model may follow the Ukrainian script). A user
+   * edit (false) is stored verbatim.
+   */
+  englishScenes?: boolean;
+}
+
+/** Image models read English only: a scene needs Latin letters and no Cyrillic. */
+export function isEnglishScene(text: string): boolean {
+  return !/\p{Script=Cyrillic}/u.test(text) && /[a-z]/i.test(text);
+}
+
+export const ENGLISH_SCENE_MESSAGE = 'scene must be English (Danbooru-style tags or plain English sentences as asked), with no Cyrillic and no character names';
 
 export function promptsSchemaFor(rules: PromptsRules): z.ZodType<PromptsOutput> {
   const allowed = new Set(rules.panelIds);
   return PromptsOutputSchema.superRefine((value, ctx) => {
     const seen = new Set<string>();
     value.panels.forEach((p, i) => {
+      if (rules.englishScenes && !isEnglishScene(p.scene)) ctx.addIssue({ code: 'custom', path: ['panels', i, 'scene'], message: ENGLISH_SCENE_MESSAGE });
       if (seen.has(p.panelId)) ctx.addIssue({ code: 'custom', path: ['panels', i, 'panelId'], message: `duplicate panelId "${p.panelId}"` });
       else if (!allowed.has(p.panelId)) ctx.addIssue({ code: 'custom', path: ['panels', i, 'panelId'], message: `unknown panelId "${p.panelId}"; use one of: ${rules.panelIds.join(', ')}` });
       seen.add(p.panelId);

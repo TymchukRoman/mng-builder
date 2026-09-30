@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CreateFrameSchema, buildPreset, panelIds, readingOrder, type LayoutNode, type ScriptsOutput, type ServerEvent } from '@manga/shared';
 import { createFrame } from '../src/domain/frames.js';
 import { createCoverPage, createPage } from '../src/domain/pages.js';
-import { InvalidOutputError } from '../src/engines/errors.js';
 import { ConflictError, ValidationError } from '../src/errors.js';
 import { EventBus } from '../src/events/bus.js';
 import { storyPages } from '../src/workflows/episode/chapter.js';
@@ -457,15 +456,38 @@ describe('applyPrompts', () => {
     expect(lib.store.panels.require(a.id).prompt.scene).toBe('upper body, 1girl, red umbrella');
   });
 
-  it('fails naming the panel when nothing usable is left, even after the colour strip, and writes nothing', () => {
-    const { chapter, a, b } = materialized();
-    const run = () => applyPrompts({ store: lib.store, bus }, chapter.id, {
+  it('writes a panel with nothing usable left (even after the colour strip) from its cast, and warns once, instead of failing', () => {
+    const { chapter, manga, a, b } = materialized();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    lib.store.characters.update(lib.store.characters.listByManga(manga.id)[0]!.id, { appearanceTags: '1girl, short black hair, school uniform' });
+    applyPrompts({ store: lib.store, bus }, chapter.id, {
       panels: [{ panelId: a.id, scene: '1girl, rain', negative: undefined }, { panelId: b.id, scene: 'red, golden, cowboy shot', negative: undefined }],
     }, LLM);
-    expect(run).toThrow(InvalidOutputError);
-    expect(run).toThrow(`prompts: the AI wrote no usable scene for panel ${b.id}`);
-    expect(lib.store.panels.require(a.id).prompt.scene).toBe('');
-    expect(entityEvents()).toEqual([]);
+    expect(lib.store.panels.require(a.id).prompt.scene).toBe('upper body, 1girl, rain');
+    // The cast's count and appearance tags; the script's background ("street") is English, so it is kept.
+    expect(lib.store.panels.require(b.id).prompt.scene).toBe('upper body, 1girl, solo, short black hair, school uniform, street');
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]![0])).toBe(`[manga] episode prompts: chapter ${chapter.id}: no usable English scene for 1 panel(s), so it is written from the cast: ${b.id}`);
+  });
+
+  it("Roman's Ukrainian scene is replaced by one from the cast; a mixed scene keeps its English part", () => {
+    const { chapter, a, b } = materialized();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    lib.store.panels.update(b.id, { script: { ...b.script, background: 'вулиця біля порту' } });
+    applyPrompts({ store: lib.store, bus }, chapter.id, {
+      panels: [
+        { panelId: a.id, scene: 'Вельм, smile, raised hand, віз', negative: undefined },
+        { panelId: b.id, scene: 'Вельм, Вельм спокійно усміхається й піднімає долоню, наче дає слово, віз, мішки, сіре небо', negative: undefined },
+      ],
+    }, LLM);
+    expect(lib.store.panels.require(a.id).prompt.scene).toBe('upper body, smile, raised hand');
+    expect(lib.store.panels.require(b.id).prompt.scene).toBe('upper body, 1other, solo'); // Aiko has no tags; the Ukrainian background is left out
+  });
+
+  it('a user edit is stored verbatim, a Cyrillic scene included', () => {
+    const { chapter, a } = materialized();
+    applyPrompts({ store: lib.store, bus }, chapter.id, { panels: [{ panelId: a.id, scene: 'Вельм, віз', negative: undefined }] }, { source: 'user' });
+    expect(lib.store.panels.require(a.id).prompt.scene).toBe('Вельм, віз');
   });
 
   it('stores user edits verbatim', () => {

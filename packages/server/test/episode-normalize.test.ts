@@ -119,17 +119,32 @@ describe('normalizeLlmAnswer: prompts', () => {
     expect(value).toEqual({
       panels: [
         { panelId: 'pn_a', scene: 'first' },
-        { panelId: 'pn_b', scene: 'Naruto and Sasuke: Naruto leaps over the gate. Background: village gate at dawn.' },
+        { panelId: 'pn_b', scene: 'Naruto leaps over the gate. Background: village gate at dawn.' },
         { panelId: 'pn_c', scene: 'Naruto leaps over the gate, village gate at dawn' },
       ],
     });
     expect(PromptsOutputSchema.safeParse(value).success).toBe(true);
   });
 
-  it('a tags panel lists its characters first; a panel with an empty scene is written from its script too', () => {
+  it('a panel with an empty scene is written from its script too, never with the character names', () => {
     const { value, filled } = normalizeLlmAnswer('prompts', { panels: [{ panelId: 'pn_a', scene: '  ' }] }, { panels: [brief('pn_a')] });
     expect(filled).toEqual(['pn_a']);
-    expect(value).toEqual({ panels: [{ panelId: 'pn_a', scene: 'Naruto, Sasuke, Naruto leaps over the gate, village gate at dawn' }] });
+    expect(value).toEqual({ panels: [{ panelId: 'pn_a', scene: 'Naruto leaps over the gate, village gate at dawn' }] });
+  });
+
+  it('keeps the English tags of a scene that mixes in Cyrillic, and leaves an all-Cyrillic scene to the English check', () => {
+    const roman = 'Вельм, Вельм спокійно усміхається й піднімає долоню, наче дає слово, віз, мішки, сіре небо';
+    const raw = { panels: [{ panelId: 'pn_a', scene: 'Вельм, 1boy, smile, raised hand, віз, sacks, grey sky' }, { panelId: 'pn_b', scene: roman }] };
+    const { value, filled } = normalizeLlmAnswer('prompts', raw, { panels: [brief('pn_a'), brief('pn_b')] });
+    expect(value).toEqual({ panels: [{ panelId: 'pn_a', scene: '1boy, smile, raised hand, sacks, grey sky' }, { panelId: 'pn_b', scene: roman }] });
+    expect(filled).toEqual([]);
+    // Without the offered panels too.
+    expect(normalizeLlmAnswer('prompts', { panels: [{ panelId: 'pn_a', scene: 'Вельм, smile' }] }).value).toEqual({ panels: [{ panelId: 'pn_a', scene: 'smile' }] });
+  });
+
+  it('a panel filled from a Ukrainian script keeps only its English part, or is left to the English check', () => {
+    const uk = brief('pn_a', { action: 'Вельм усміхається', background: 'вулиця біля порту' });
+    expect(normalizeLlmAnswer('prompts', { panels: [] }, { panels: [uk] }).value).toEqual({ panels: [{ panelId: 'pn_a', scene: 'Вельм усміхається, вулиця біля порту' }] });
   });
 
   it('without the offered panels it only fixes the fields', () => {

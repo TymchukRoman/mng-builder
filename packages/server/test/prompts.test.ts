@@ -7,7 +7,7 @@ import { RECIPES } from '../src/imaging/recipes/index.js';
 import { CAMERA_TAGS, cameraSentence, cameraTags, cameraWording, stripCameraSentences, stripCameraTags } from '../src/prompts/camera.js';
 import { loadPrompt } from '../src/prompts/load.js';
 import { normalizeAppearanceTags, sanitizeSentences, sanitizeTags, stripColourWords } from '../src/prompts/sanitize.js';
-import { finishScene } from '../src/prompts/scene.js';
+import { castScene, englishPart, fallbackScene, finishScene, isEnglishScene, usableScene } from '../src/prompts/scene.js';
 import { scriptBlock } from '../src/prompts/script-block.js';
 
 function character(id: string, name: string): Character {
@@ -203,6 +203,49 @@ describe('finishScene (shared by M2 panel-prompt and the M4 prompts step)', () =
     expect(finishScene('tags', 'medium', 'eye', 'upper body, text, cowboy shot')).toBeNull();
     expect(finishScene('natural', 'wide', 'high', 'A medium shot at eye level.')).toBeNull();
     expect(finishScene('tags', 'medium', 'eye', ' , ; ')).toBeNull();
+  });
+});
+
+const ROMAN_SCENE = 'Вельм, Вельм спокійно усміхається й піднімає долоню, наче дає слово, віз, мішки, сіре небо';
+
+describe('English scenes (a Ukrainian book: the scene must still be English)', () => {
+  it("isEnglishScene wants Latin letters and no Cyrillic; Roman's scene has none", () => {
+    expect(isEnglishScene('1boy, smile, cart, sacks')).toBe(true);
+    expect(isEnglishScene(ROMAN_SCENE)).toBe(false);
+    expect(isEnglishScene('smile, мішки')).toBe(false);
+    expect(isEnglishScene('123, ...')).toBe(false);
+  });
+
+  it('englishPart keeps the English tags and words of a mixed scene and drops every Cyrillic one', () => {
+    expect(englishPart('Вельм, smile, raised hand, віз, sacks, сіре небо')).toBe('smile, raised hand, sacks');
+    expect(englishPart('Вельм smiles and raises a hand near the віз.')).toBe('smiles and raises a hand near the.');
+    expect(englishPart(ROMAN_SCENE)).toBe('');
+    expect(englishPart('plain English, no change')).toBe('plain English, no change');
+  });
+
+  it('usableScene finishes an English scene, keeps the English part of a mixed one and gives up on the rest', () => {
+    expect(usableScene('tags', 'medium', 'eye', 'Вельм, smile, cart')).toBe('upper body, smile, cart');
+    expect(usableScene('tags', 'medium', 'eye', ROMAN_SCENE)).toBeNull();
+    expect(usableScene('tags', 'medium', 'eye', 'upper body, text')).toBeNull();
+  });
+
+  it('castScene builds the fallback from the cast: count and appearance tags, or a sentence; a background only when it is English', () => {
+    const man = { appearanceTags: '1boy, adult, short black hair, beard, travel cloak' };
+    const girl = { appearanceTags: '1girl, long brown hair' };
+    expect(castScene('tags', [man], 'вулиця біля порту')).toBe('1boy, solo, male focus, mature male, adult, short black hair, beard, travel cloak');
+    expect(castScene('tags', [man, girl], 'harbour street')).toBe('1boy, 1girl, mature male, adult, short black hair, beard, travel cloak, long brown hair, harbour street');
+    expect(castScene('natural', [man], 'harbour street'))
+      .toBe('Exactly one grown man. Appearance: mature male, adult, short black hair, beard, travel cloak. Background: harbour street.');
+    expect(castScene('tags', [], 'вулиця')).toBe('scenery, no humans');
+    expect(castScene('natural', [], 'вулиця')).toBe('An establishing view of the scene.');
+    expect(castScene('tags', [], 'harbour street')).toBe('scenery, no humans, harbour street');
+  });
+
+  it('fallbackScene puts the camera first, like every finished scene', () => {
+    const man = { appearanceTags: '1boy, short black hair' };
+    expect(fallbackScene('tags', 'close', 'low', [man], 'віз')).toBe('close-up, from below, 1boy, solo, male focus, short black hair');
+    expect(fallbackScene('natural', 'wide', 'eye', [], '')).toBe('Wide full-body shot at eye level. An establishing view of the scene.');
+    expect(fallbackScene('tags', 'medium', 'eye', [{ appearanceTags: 'no humans, cat, black fur, text' }], '')).toBe('upper body, no humans, cat, black fur');
   });
 });
 

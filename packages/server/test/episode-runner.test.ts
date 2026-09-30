@@ -6,6 +6,7 @@ import { EPISODE_FAKE_RESPONSES } from '../src/dev/fake-episode.js';
 import { FAKE_RESPONSES } from '../src/dev/fake-responses.js';
 import { createPage, NeedsConfirmError } from '../src/domain/pages.js';
 import { InvalidOutputError } from '../src/engines/errors.js';
+import { cameraSentence, cameraTags } from '../src/prompts/camera.js';
 import { Engines, relaneTextJobs } from '../src/engines/resolve.js';
 import { ScriptedEngine, type ScriptedResponse } from '../src/engines/scripted.js';
 import { completeStructured } from '../src/engines/structured.js';
@@ -14,7 +15,7 @@ import { ConflictError, NotFoundError, ValidationError } from '../src/errors.js'
 import { EventBus } from '../src/events/bus.js';
 import { GpuArbiter, JobQueue } from '../src/jobs/index.js';
 import { chapterPanels, storyPages } from '../src/workflows/episode/chapter.js';
-import { extractContext, type PromptsContext } from '../src/workflows/episode/context.js';
+import { extractContext, panelStyle, type PromptsContext } from '../src/workflows/episode/context.js';
 import { EpisodeRunner } from '../src/workflows/episode/runner.js';
 import { PREMISE, STAMP, TWO_PANEL_PRESET, breakdown, breakdownOf, outline, scripts, scriptsOf, seedEpisodeWorld, seedRun } from './helpers/episode-fixtures.js';
 import { FakeQueue, fakeImaging, fakeJobContext } from './helpers/fake-queue.js';
@@ -475,7 +476,8 @@ describe('EpisodeRunner — failure, retry, edit, rerun, cancel', () => {
     expect(error.split('only once')).toHaveLength(2);
   });
 
-  it('a prompts answer with no usable scene fails the step cleanly, naming the panel, with its raw output', async () => {
+  it('a prompts answer with no usable scene completes: that panel is written from its cast instead', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { chapter, input } = world();
     const { runner, queue } = rig({
       responses: {
@@ -487,13 +489,10 @@ describe('EpisodeRunner — failure, retry, edit, rerun, cancel', () => {
     });
     const run = runner.start(chapter.id, input, 'autopilot');
     await queue.idle();
-    const failed = runner.get(run.id);
-    expect(failed.status).toBe('failed');
-    expect(failed.steps[4]!.status).toBe('failed');
-    expect(failed.steps[4]!.error).toMatch(/^prompts: the AI wrote no usable scene for panel pn_\w+\n--- raw output ---\nupper body, \.\.\.$/);
-    expect(lib.store.chapters.require(chapter.id).status).toBe('draft');
+    expect(runner.get(run.id).steps[4]).toMatchObject({ status: 'done', error: null });
     const pages = storyPages(lib.store, chapter.id);
-    expect(pages.flatMap((p) => lib.store.panels.listByPage(p.id)).every((p) => p.prompt.scene === '')).toBe(true);
+    expect(pages.flatMap((p) => lib.store.panels.listByPage(p.id)).every((p) => p.prompt.scene !== '')).toBe(true);
+    expect(warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes('no usable English scene'))).toHaveLength(1);
   });
 
   it('cancel stops the run, cancels its queued jobs and returns the chapter to draft', () => {
@@ -890,5 +889,89 @@ describe('EpisodeRunner — shape slips of a local model (Roman\'s qwen3 prompts
     const edited = { panels: stored.panels.map((p) => ({ ...p, negative: { 'extra people': 'extra people' } })) };
     expect(() => runner.editOutput(run.id, 'prompts', edited)).toThrow(ZodError);
     expect(runner.get(run.id).steps[4]!.output).toEqual(stored);
+  });
+});
+
+describe("EpisodeRunner — a Ukrainian book's prompts must be English (Roman's Вельм run)", () => {
+  const ROMAN_SCENE = 'Вельм, Вельм спокійно усміхається й піднімає долоню, наче дає слово, віз, мішки, сіре небо';
+  const ENGLISH_RULE = 'scene must be English (Danbooru-style tags or plain English sentences as asked), with no Cyrillic and no character names';
+
+  /** A Ukrainian manga whose cast is Вельм, a grown man; outline adds nobody, so the scripts cast him in every panel. */
+  function ukWorld() {
+    const w = seedEpisodeWorld(lib.store, { language: 'uk' });
+    const velm = seedCharacter(lib.store, w.manga.id, 'Вельм', '1boy, adult, short black hair, beard, travel cloak');
+    const input: EpisodeInput = { prompt: 'Вельм веде караван', characterIds: [velm.id], pages: 2, tone: '' };
+    return { ...w, velm, input };
+  }
+
+  /** Runs the prompts step through a real engine's correction round; `answer(isCorrection)` gives each panel's scene. */
+  async function throughPrompts(scene: (isCorrection: boolean) => string) {
+    const w = ukWorld();
+    const asked: string[] = [];
+    const { runner, queue } = rig({
+      responses: { 'episode.outline': () => outline(['Вельм']) },
+      wrap: (scripted) => ({
+        name: scripted.name,
+        health: () => scripted.health(),
+        completeJson: <T>(req: JsonRequest<T>): Promise<T> => (req.name === 'episode.prompts'
+          ? completeStructured(async ({ prompt }) => {
+            asked.push(prompt);
+            const correction = prompt.includes('Your previous answer could not be used');
+            const { panels } = extractContext<PromptsContext>(prompt);
+            return JSON.stringify({ panels: panels.map((p) => ({ panelId: p.panelId, scene: scene(correction) })) });
+          }, req)
+          : scripted.completeJson(req)),
+      }),
+    });
+    const run = runner.start(w.chapter.id, w.input, 'review');
+    await queue.idle();
+    runner.approve(run.id);
+    await queue.idle();
+    runner.approve(run.id);
+    await queue.idle();
+    return { ...w, runner, run, asked };
+  }
+
+  it("Roman's Ukrainian scene goes through the correction round, and the corrected English scene is used", async () => {
+    const { runner, run, asked, chapter, manga } = await throughPrompts((correction) => (correction ? 'smile, raised hand, cart, sacks, grey sky' : ROMAN_SCENE));
+    expect(runner.get(run.id).steps[4]).toMatchObject({ status: 'done', error: null });
+    const corrections = asked.filter((p) => p.includes('Your previous answer could not be used'));
+    expect(corrections.length).toBe(asked.length / 2); // every call was corrected once
+    expect(corrections[0]).toContain(`panels.0.scene: ${ENGLISH_RULE}`);
+    for (const { panel } of chapterPanels(lib.store, chapter.id, manga.readingDirection)) {
+      expect(lib.store.panels.require(panel.id).prompt.scene).toContain('smile, raised hand, cart, sacks, grey sky');
+    }
+  });
+
+  it('when the corrected answer is still Ukrainian, the step completes with scenes from the cast and the camera', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { runner, run, chapter, manga } = await throughPrompts(() => ROMAN_SCENE);
+    expect(runner.get(run.id).steps[4]).toMatchObject({ status: 'done', error: null });
+    const settings = lib.store.settings.get();
+    const panels = chapterPanels(lib.store, chapter.id, manga.readingDirection).map((e) => lib.store.panels.require(e.panel.id));
+    for (const panel of panels) {
+      const scene = panel.prompt.scene;
+      expect(scene).not.toMatch(/\p{Script=Cyrillic}/u);
+      const { style } = panelStyle(lib.store, settings, manga, panel);
+      if (style === 'tags') {
+        expect(scene.startsWith(cameraTags(panel.script.shot, panel.script.angle).join(', '))).toBe(true);
+        expect(scene).toContain('1boy, solo, male focus, mature male, adult, short black hair, beard, travel cloak');
+      } else {
+        expect(scene.startsWith(cameraSentence(panel.script.shot, panel.script.angle))).toBe(true);
+        expect(scene).toContain('Appearance: mature male, adult, short black hair, beard, travel cloak.');
+      }
+    }
+    const messages = warn.mock.calls.map((c) => String(c[0])).filter((m) => m.startsWith('[manga] episode prompts:'));
+    expect(messages).toHaveLength(1);
+    for (const panel of panels) expect(messages[0]).toContain(panel.id);
+  });
+
+  it('a user edit with a Cyrillic scene is stored verbatim', async () => {
+    const { runner, run, chapter, manga } = await throughPrompts(() => 'smile, cart');
+    const stored = runner.get(run.id).steps[4]!.output as { panels: Array<{ panelId: string; scene: string }> };
+    runner.editOutput(run.id, 'prompts', { panels: stored.panels.map((p) => ({ ...p, scene: ROMAN_SCENE })) });
+    for (const { panel } of chapterPanels(lib.store, chapter.id, manga.readingDirection)) {
+      expect(lib.store.panels.require(panel.id).prompt.scene).toBe(ROMAN_SCENE);
+    }
   });
 });
