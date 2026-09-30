@@ -18,10 +18,34 @@ const port = Number(process.env.SMOKE_PORT ?? 4398);
 const base = `http://127.0.0.1:${port}`;
 const env = { ...process.env, MANGA_LIBRARY: library, MANGA_PORT: String(port) };
 delete env.MANGA_FAKES;
-const server = spawn(process.execPath, [serverMain], { env, stdio: ['ignore', 'inherit', 'inherit'], windowsHide: true });
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const started = Date.now();
 const seconds = (ms) => `${Math.round(ms / 1000)} s`;
+/** How long one job (a portrait, an export) may take before the smoke gives up on it (Task 22 review minor 4). */
+const JOB_DEADLINE_MS = 10 * 60_000;
+
+// Task 22 review minor 3: a server already answering on the port (an orphan of an earlier run, or a SMOKE_PORT
+// collision) would make the smoke test stale code against another library. Refuse before spawning anything.
+try {
+  await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(2000) });
+  console.error(`A server already answers at ${base}: stop it (manga stop --url ${base}) or set SMOKE_PORT to a free port.`);
+  process.exit(1);
+} catch {
+  // nothing listening: good
+}
+
+const server = spawn(process.execPath, [serverMain], { env, stdio: ['ignore', 'inherit', 'inherit'], windowsHide: true });
+/** Set when the server process ends; waitHealth fails fast with its exit code instead of waiting 60 s. */
+let serverExit = null;
+server.on('exit', (code, signal) => { serverExit = { code, signal }; });
+
+/** An error that ends the smoke with this exit code (the server's own, when it died early). */
+class ExitError extends Error {
+  constructor(message, exitCode) {
+    super(message);
+    this.exitCode = exitCode;
+  }
+}
 
 async function api(method, path, body) {
   const res = await fetch(base + path, body === undefined ? { method } : { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -32,12 +56,16 @@ async function api(method, path, body) {
 
 async function waitHealth() {
   for (let i = 0; i < 120; i++) {
+    if (serverExit !== null) {
+      const { code, signal } = serverExit;
+      throw new ExitError(`the server exited before it answered (code ${code ?? '-'}, signal ${signal ?? '-'})`, code || 1);
+    }
     try { await api('GET', '/api/health'); return; } catch { await sleep(500); }
   }
   throw new Error('the server did not start within 60 s');
 }
 
-async function waitJob(id, label) {
+async function waitJob(id, label, deadlineMs = JOB_DEADLINE_MS) {
   const t0 = Date.now();
   let last = '';
   for (;;) {
@@ -48,8 +76,25 @@ async function waitJob(id, label) {
       console.log(`[${label}] took ${seconds(Date.now() - t0)}`);
       return job;
     }
+    if (Date.now() - t0 > deadlineMs) throw new Error(`[${label}] job ${id} did not finish within ${seconds(deadlineMs)}`);
     await sleep(2000);
   }
+}
+
+/**
+ * Task 22 review minor 4: stop the server the graceful way (POST /api/shutdown: the queue stops, ComfyUI work is
+ * cancelled), and kill it only if it has not exited 15 s later.
+ */
+async function stopServer() {
+  if (serverExit !== null) return;
+  const exited = new Promise((resolve) => server.once('exit', resolve));
+  try {
+    await fetch(`${base}/api/shutdown`, { method: 'POST', signal: AbortSignal.timeout(5000) });
+  } catch {
+    // not answering: the kill below ends it
+  }
+  const timer = new Promise((resolve) => setTimeout(() => resolve('timeout'), 15_000).unref());
+  if ((await Promise.race([exited, timer])) === 'timeout' && serverExit === null) server.kill();
 }
 
 async function main() {
@@ -101,6 +146,11 @@ async function main() {
 }
 
 main().then(
-  () => { server.kill(); process.exit(0); },
-  (err) => { console.error('SMOKE FAILED:', err.message); console.error('library:', library); server.kill(); process.exit(1); },
+  async () => { await stopServer(); process.exit(0); },
+  async (err) => {
+    console.error('SMOKE FAILED:', err.message);
+    console.error('library:', library);
+    await stopServer();
+    process.exit(err instanceof ExitError ? err.exitCode : 1);
+  },
 );
