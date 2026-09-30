@@ -3,7 +3,7 @@ import type { EditorCommand } from '../src/editor/commands';
 import { History } from '../src/editor/history';
 import { PAGE_SELECTION, frameSelection, panelSelection } from '../src/editor/selection';
 import {
-  COVER_FRAME_KINDS, CHAPTER_FRAME_KINDS, deletePageFlow, escapeSelection, exportTarget, frameInsert, insertBody, neighbourAfterDelete, nudgePatch, nudgeStep, pageToShow,
+  COVER_FRAME_KINDS, CHAPTER_FRAME_KINDS, deletePageFlow, escapeSelection, exportTarget, frameInsert, insertBody, neighbourAfterDelete, nudgePatch, pageAfterRemoval, nudgeStep, pageToShow,
   removedPanelCount, resolveCurrentPage,
 } from '../src/editor/editorModel';
 import { makeFrame } from './fixtures';
@@ -116,12 +116,13 @@ describe('page delete', () => {
     const done = deletePageFlow('pg_2', {
       flush: () => log.push('flush'),
       barrier: (fn) => h.barrier(fn),
+      view: () => ({ currentId: 'pg_1', pageIds: ['pg_1', 'pg_2'] }),
       remove: async (id) => { log.push(`delete ${id}`); },
-      after: (id) => log.push(`after ${id}`),
+      after: (id, show) => log.push(`after ${id} ${String(show)}`),
     });
     release();
     await Promise.all([slow, done]);
-    expect(log).toEqual(['apply A', 'flush', 'apply slow', 'delete pg_2', 'after pg_2']);
+    expect(log).toEqual(['apply A', 'flush', 'apply slow', 'delete pg_2', 'after pg_2 undefined']);
     expect(h.snapshot()).toMatchObject({ canUndo: false, canRedo: false });
   });
 
@@ -132,10 +133,50 @@ describe('page delete', () => {
     await expect(deletePageFlow('pg_2', {
       flush: () => undefined,
       barrier: (fn) => h.barrier(fn),
+      view: () => ({ currentId: 'pg_2', pageIds: ['pg_1', 'pg_2'] }),
       remove: async () => { throw new Error('404'); },
       after: () => log.push('after'),
     })).rejects.toThrow('404');
     expect(log).toEqual(['apply A']);
     expect(h.snapshot()).toMatchObject({ canUndo: true, undoPageId: 'pg_2' });
+  });
+
+  // Fix round 2: the server's `page deleted` event can arrive (and trim the cached list, so the editor falls back to page 1)
+  // before the DELETE response. The neighbour comes from the list as it was when the request was sent.
+  it('shows the neighbour from the list as it was before the request, even when the event trimmed the list first', async () => {
+    const state = { currentId: 'pg_2' as string | null, pageIds: ['pg_1', 'pg_2', 'pg_3'] };
+    const shown: Array<string | null | undefined> = [];
+    await deletePageFlow('pg_2', {
+      flush: () => undefined,
+      barrier: (fn) => fn(),
+      view: () => ({ ...state }),
+      remove: async () => {
+        // The socket event lands first: the list loses the page and the editor falls back to the first page.
+        state.pageIds = ['pg_1', 'pg_3'];
+        state.currentId = 'pg_1';
+      },
+      after: (_id, show) => shown.push(show),
+    });
+    expect(shown).toEqual(['pg_3']);
+  });
+
+  it('deleting the last page shows the one before it; deleting the only page shows none', async () => {
+    const run = async (pageIds: string[], id: string): Promise<string | null | undefined> => {
+      let out: string | null | undefined;
+      await deletePageFlow(id, { flush: () => undefined, barrier: (fn) => fn(), view: () => ({ currentId: id, pageIds }), remove: async () => undefined, after: (_i, show) => { out = show; } });
+      return out;
+    };
+    expect(await run(['pg_1', 'pg_2'], 'pg_2')).toBe('pg_1');
+    expect(await run(['pg_1'], 'pg_1')).toBeNull();
+  });
+
+  it('moves the URL off a page that left the list elsewhere (an episode re-run, another tab)', () => {
+    expect(pageAfterRemoval(['a', 'b', 'c'], ['a', 'c'], 'b')).toBe('c');
+    expect(pageAfterRemoval(['a', 'b', 'c'], ['a'], 'b')).toBe('a');
+    expect(pageAfterRemoval(['a', 'b'], [], 'a')).toBeNull();
+    expect(pageAfterRemoval(['a', 'b'], ['x'], 'a')).toBe('x');
+    expect(pageAfterRemoval(['a', 'b'], ['a'], 'a')).toBeUndefined(); // still there
+    expect(pageAfterRemoval(['a'], ['a', 'n'], 'n')).toBeUndefined(); // a new page not listed yet before
+    expect(pageAfterRemoval(['a', 'b'], ['a'], null)).toBeUndefined();
   });
 });

@@ -76,9 +76,14 @@ export interface DeletePageSteps {
   /** Commits a pending nudge burst first, so it lands (and is cleared) before the page goes. */
   flush(): void;
   barrier<T>(fn: () => Promise<T>): Promise<T>;
+  /** The page shown and the page list right now. */
+  view(): { currentId: string | null; pageIds: readonly string[] };
   remove(pageId: string): Promise<unknown>;
-  /** Selection and cache cleanup; runs only when the delete succeeded. */
-  after(pageId: string): void;
+  /**
+   * Selection and cache cleanup; runs only when the delete succeeded. `show` is the page to show next when the deleted page
+   * was the one shown (its neighbour, or null for none); undefined when another page was shown.
+   */
+  after(pageId: string, show: string | null | undefined): void;
 }
 
 /**
@@ -87,6 +92,26 @@ export interface DeletePageSteps {
  */
 export async function deletePageFlow(pageId: string, steps: DeletePageSteps): Promise<void> {
   steps.flush();
-  await steps.barrier(() => steps.remove(pageId));
-  steps.after(pageId);
+  // Read just before the request: the server's `page deleted` event can trim the cached list (and the editor then falls back
+  // to the first page) before the response arrives, so the neighbour must come from the list as it was.
+  let before = steps.view();
+  await steps.barrier(() => {
+    before = steps.view();
+    return steps.remove(pageId);
+  });
+  steps.after(pageId, before.currentId === pageId ? neighbourAfterDelete(before.pageIds, pageId) : undefined);
+}
+
+/**
+ * When the page named in the URL (`requested`) has left the page list (deleted elsewhere: an episode re-run, another tab),
+ * the page to show instead: its nearest remaining neighbour in the old order (after it, else before it), else the first
+ * page, else null. Undefined when nothing needs to change (the page is still listed, or was never in the old list).
+ */
+export function pageAfterRemoval(prev: readonly string[], next: readonly string[], requested: string | null): string | null | undefined {
+  if (requested === null || !prev.includes(requested) || next.includes(requested)) return undefined;
+  const remaining = new Set(next);
+  const i = prev.indexOf(requested);
+  for (let j = i + 1; j < prev.length; j++) if (remaining.has(prev[j]!)) return prev[j]!;
+  for (let j = i - 1; j >= 0; j--) if (remaining.has(prev[j]!)) return prev[j]!;
+  return next[0] ?? null;
 }

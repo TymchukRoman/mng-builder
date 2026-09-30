@@ -16,7 +16,7 @@ import type { EditorCommand } from './commands';
 import { ConfirmPresetModal } from './ConfirmPresetModal';
 import { EditorToolbar } from './EditorToolbar';
 import {
-  deletePageFlow, escapeSelection, exportTarget, frameInsert, neighbourAfterDelete, pageToShow, removedPanelCount, resolveCurrentPage,
+  deletePageFlow, escapeSelection, exportTarget, frameInsert, pageAfterRemoval, pageToShow, removedPanelCount, resolveCurrentPage,
 } from './editorModel';
 import { History, IdMap } from './history';
 import { HistoryBarrierContext, type Barrier } from './HistoryBarrierContext';
@@ -85,6 +85,16 @@ export function ChapterEditor({ manga, mode, chapterId, pageIds, title, backTo, 
   // Read after an await: the page and the page list may have changed while a request ran.
   const latest = useRef({ pageId, pageIds, selectPage });
   useLayoutEffect(() => { latest.current = { pageId, pageIds, selectPage }; });
+  // The page in the URL was deleted elsewhere (an episode re-run, another tab, or its socket event beat our own DELETE's
+  // response): show its neighbour and fix `?p=` instead of silently falling back to the first page.
+  const idsKey = pageIds.join(',');
+  const shownIds = useRef(pageIds);
+  useLayoutEffect(() => {
+    const prev = shownIds.current;
+    shownIds.current = latest.current.pageIds;
+    const target = pageAfterRemoval(prev, latest.current.pageIds, search.get('p'));
+    if (target !== undefined) latest.current.selectPage(target);
+  }, [idsKey]); // runs when the list changes; everything else is read through `latest`
   /** One History spans the chapter: after an undo or redo, show the page the command changed. */
   const showCommandPage = (commandPageId: string | null): void => {
     const l = latest.current;
@@ -111,10 +121,10 @@ export function ChapterEditor({ manga, mode, chapterId, pageIds, title, backTo, 
       await deletePageFlow(id, {
         flush: flushNudge,
         barrier: (fn) => history.barrier(fn),
+        view: () => ({ currentId: latest.current.pageId, pageIds: latest.current.pageIds }),
         remove: (pid) => api.delete(`/api/pages/${seg(pid)}`),
-        after: (pid) => {
-          const l = latest.current;
-          if (pid === l.pageId) l.selectPage(neighbourAfterDelete(l.pageIds, pid));
+        after: (pid, show) => {
+          if (show !== undefined) latest.current.selectPage(show);
           if (chapterId) qc.setQueryData<Page[]>(qk.pages(chapterId), (prev) => prev?.filter((p) => p.id !== pid));
           qc.removeQueries({ queryKey: qk.page(pid), exact: true });
           if (chapterId) void qc.invalidateQueries({ queryKey: qk.pages(chapterId) });
