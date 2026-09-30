@@ -20,8 +20,10 @@ export interface PremiseContext {
   request: { prompt: string; tone: string; pages: number }; characters: CharacterBrief[];
 }
 export interface OutlineContext { step: 'outline'; language: Language; pages: number; premise: PremiseOutput; characters: CharacterBrief[] }
+/** `request` is the user's own wording, so an explicit panel count or layout in it reaches the step that picks them. */
 export interface BreakdownContext {
-  step: 'breakdown'; pages: number; scenes: Array<{ idx: number; summary: string; purpose: string; location: string }>; presets: PresetInfo[];
+  step: 'breakdown'; pages: number; request: { prompt: string; tone: string };
+  scenes: Array<{ idx: number; summary: string; purpose: string; location: string }>; presets: PresetInfo[];
 }
 /** `pages` are the pages to write: all of them, or one chunk (F18); `pageRange` says which part of the chapter they are. */
 export interface ScriptsContext {
@@ -85,7 +87,7 @@ export function buildStepContext(store: Store, run: EpisodeRun, step: LlmStepNam
     case 'breakdown': {
       const { scenes } = requireOutput(run, 'outline', OutlineOutputSchema);
       return {
-        step, pages: run.input.pages,
+        step, pages: run.input.pages, request: { prompt: run.input.prompt, tone: run.input.tone },
         scenes: scenes.map((s, idx) => ({ idx, summary: s.summary, purpose: s.purpose, location: s.location })),
         presets: PRESET_NAMES.map((name) => ({ name, panelCount: presetPanelCount(name) })),
       };

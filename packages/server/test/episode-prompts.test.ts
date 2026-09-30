@@ -116,6 +116,13 @@ describe('step contexts', () => {
     expect(ctx.presets).toContainEqual({ name: TWO_PANEL_PRESET, panelCount: 2 });
   });
 
+  it('breakdown sees the request, so an explicit panel count in it is honoured (live smoke: "exactly two panels" gave 5)', () => {
+    const { run } = fullWorld();
+    const ctx = buildStepContext(lib.store, run, 'breakdown') as BreakdownContext;
+    expect(ctx.request).toEqual({ prompt: 'A lost cat in the rain', tone: 'gentle' });
+    expect(renderedSystem(run, 'breakdown')).toContain('If the request asks for a panel count or a layout, follow it');
+  });
+
   it('prompts context lists story panels in reading order, then the cover, with character names', () => {
     const { run, chapter, manga } = fullWorld();
     const ctx = buildStepContext(lib.store, run, 'prompts') as PromptsContext;
