@@ -6,7 +6,7 @@ import { HistoryBarrierContext, type Barrier } from '../editor/HistoryBarrierCon
 import { JsonForm } from '../episode/JsonForm';
 import {
   STEP_LABEL, STEP_STATUS_TEXT, currentStepName, dirtySteps, editOf, isLive, parseDraft, rerunLabel, rerunStep, runLabel, saveThen,
-  statusChipClass, stepActions, toggleRaw, type StepEdit, type StepEdits,
+  statusChipClass, stepActions, stepPlaceholder, toggleRaw, type StepEdit, type StepEdits,
 } from '../episode/episodeView';
 import '../episode/episode.css';
 import { cx } from '../lib/cx';
@@ -179,8 +179,8 @@ export function EpisodePanel({ chapterId }: { chapterId: string }): JSX.Element 
                 onClick={() => act.mutate({ kind: 'save', step: selected, call: () => save(selected) })} />
             </div>
             {step?.error && <div className="episode__error" data-testid="episode-step-error"><ErrorState text={step.error} /></div>}
-            {saved === null && (step?.status === 'pending' || step?.status === 'running')
-              ? <p className="muted">{step.status === 'running' ? 'Working…' : 'Not run yet'}</p>
+            {step && stepPlaceholder(step) !== null
+              ? <p className="muted">{stepPlaceholder(step)}</p>
               : current.raw !== null
                 ? <textarea className="textarea episode__json" aria-label="Step output as JSON" spellCheck={false} value={current.raw}
                     onChange={(e) => setCurrent({ ...current, raw: e.target.value })} />

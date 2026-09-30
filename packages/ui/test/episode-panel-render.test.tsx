@@ -80,6 +80,14 @@ describe('episode panel', () => {
     expect(enabled(html, 'Edit as JSON')).toBe(false);
   });
 
+  it('a re-running premise shows the working state, not its previous output (residual N5)', () => {
+    const r = run('running', 0, 'running');
+    r.steps[0] = { ...r.steps[0]!, output: { title: 'Old premise title', synopsis: 's', tone: '', setting: '' } };
+    const html = render(r);
+    expect(html).toContain('Working…');
+    expect(html).not.toContain('Old premise title');
+  });
+
   it('a failed run shows the step error and offers a retry; the run actions are gone', () => {
     const html = render(run('failed', 5, 'failed', 'ComfyUI is not reachable'));
     expect(statusText(html)).toBe('Failed at images');

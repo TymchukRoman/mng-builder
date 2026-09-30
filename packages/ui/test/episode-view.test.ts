@@ -4,7 +4,7 @@ import { ApiError } from '../src/api';
 import { History } from '../src/editor/history';
 import {
   STEP_STATUS_TEXT, childPath, currentStepName, dirtySteps, isDirty, isLive, numberFromInput, parseDraft, rerunLabel, rerunStep, runLabel,
-  saveThen, statusChipClass, stepActions, stepKey, textRows, toggleRaw, type StepEdits,
+  saveThen, statusChipClass, stepActions, stepKey, stepPlaceholder, textRows, toggleRaw, type StepEdits,
 } from '../src/episode/episodeView';
 
 type StepStatus = EpisodeRun['steps'][number]['status'];
@@ -55,6 +55,12 @@ describe('episode view', () => {
     expect(stepActions(failedAtOutlineNext, 'outline').edit).toBe(true);
     expect(stepActions(run('awaiting-review', 1, 'awaiting-review'), 'outline').edit).toBe(true);
     expect(stepActions(run('done', 6, 'done'), 'scripts').edit).toBe(true);
+  });
+
+  it('shows a placeholder, never a stored output, for a running or pending step (residual N5)', () => {
+    expect(stepPlaceholder({ status: 'running' })).toBe('Working…');
+    expect(stepPlaceholder({ status: 'pending' })).toBe('Not run yet');
+    for (const status of ['done', 'awaiting-review', 'failed'] as const) expect(stepPlaceholder({ status })).toBeNull();
   });
 
   it('calls a re-run of the failed current step a retry', () => {
