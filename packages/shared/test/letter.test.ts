@@ -1,6 +1,6 @@
 // packages/shared/test/letter.test.ts
 import { describe, expect, it } from 'vitest';
-import { autoLetter, estimateTextBoxMm, PT_TO_MM, wrapText, type ExistingFrame, type LetterFrame } from '../src/letter.js';
+import { autoLetter, estimateTextBoxMm, PT_TO_MM, segmentsCross, wrapText, type ExistingFrame, type LetterFrame } from '../src/letter.js';
 import { DEFAULT_FONT_SIZE, FONT_FOR_KIND, NARRATION_PAD, TEXT_INSET } from '../src/fonts.js';
 import type { Rect } from '../src/layout/index.js';
 import { DEFAULT_PAGE_FORMAT, EMPTY_SCRIPT, type Box, type DialogueLine, type LayoutNode, type PanelScript, type ReadingDirection } from '../src/schemas.js';
@@ -56,11 +56,33 @@ describe('autoLetter', () => {
   });
 
   it('continues toward the reading end on the same row', () => {
-    const rtl = one(WIDE, script([speech('First.'), speech('Second.', REN)]), 'rtl');
+    // Speakers on the reading side first, so no tails cross (crossing tails swap: see the M4 final S2 test).
+    const rtl = one(WIDE, script([speech('First.', REN), speech('Second.', AIKO)]), 'rtl');
     expect(rtl[1]!.box.y).toBeCloseTo(rtl[0]!.box.y, 9);
     expect(rtl[1]!.box.x + rtl[1]!.box.w).toBeLessThanOrEqual(rtl[0]!.box.x);
     const ltr = one(WIDE, script([speech('First.'), speech('Second.', REN)]), 'ltr');
     expect(ltr[1]!.box.x).toBeGreaterThanOrEqual(ltr[0]!.box.x + ltr[0]!.box.w);
+  });
+
+  it('uncrosses the tails of a far-side first speaker by swapping the two bubbles (M4 final S2)', () => {
+    // RTL: Aiko (scripted left) speaks first, so §9.3 puts her bubble top-right and Ren's (scripted right) beside it:
+    // Aiko's tail would run across the panel through Ren's.
+    const [aiko, ren] = one(WIDE, script([speech('Where did you find it?', AIKO), speech('In the rain.', REN)]), 'rtl');
+    const seg = (f: LetterFrame) => [{ x: f.box.x + f.box.w / 2, y: f.box.y + f.box.h / 2 }, f.tail!] as const;
+    expect(segmentsCross(...seg(aiko!), ...seg(ren!))).toBe(false);
+    expect(aiko!.box.x + aiko!.box.w / 2).toBeLessThan(ren!.box.x + ren!.box.w / 2); // each bubble on its speaker's side
+    expect(aiko!.tail!.x).toBeCloseTo(WIDE.x + WIDE.w * 0.2, 9); // tails still point at the speakers
+    expect(ren!.tail!.x).toBeCloseTo(WIDE.x + WIDE.w * 0.8, 9);
+    expect([aiko!.order, ren!.order]).toEqual([0, 1]); // the frames keep the dialogue's order
+    expect(noOverlaps([aiko!, ren!])).toBe(true);
+    for (const f of [aiko!, ren!]) expect(inside(f.box, WIDE)).toBe(true);
+  });
+
+  it('detects crossing segments, not touching or parallel ones', () => {
+    const p = (x: number, y: number) => ({ x, y });
+    expect(segmentsCross(p(0, 0), p(1, 1), p(0, 1), p(1, 0))).toBe(true);
+    expect(segmentsCross(p(0, 0), p(1, 0), p(0, 1), p(1, 1))).toBe(false);
+    expect(segmentsCross(p(0, 0), p(1, 1), p(1, 1), p(2, 0))).toBe(false);
   });
 
   it('stacks down into new rows when a row is full, without overlaps', () => {

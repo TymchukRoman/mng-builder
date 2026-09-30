@@ -125,6 +125,69 @@ function tailTip(panel: LetterPanel, line: DialogueLine, box: Box, area: Area): 
   return { x: clamp(x, area.left, area.right), y: clamp(y, area.top, area.bottom) };
 }
 
+type Point = { x: number; y: number };
+
+const cross = (o: Point, a: Point, b: Point): number => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+
+/** True when segments p1-p2 and q1-q2 cross at a point inside both (touching or collinear does not count). */
+export function segmentsCross(p1: Point, p2: Point, q1: Point, q2: Point): boolean {
+  const d1 = cross(q1, q2, p1);
+  const d2 = cross(q1, q2, p2);
+  const d3 = cross(p1, p2, q1);
+  const d4 = cross(p1, p2, q2);
+  return ((d1 > EPS && d2 < -EPS) || (d1 < -EPS && d2 > EPS)) && ((d3 > EPS && d4 < -EPS) || (d3 < -EPS && d4 > EPS));
+}
+
+/** A tail as a segment: from the bubble's centre to its tip. */
+function tailSegment(f: { box: Box; tail: Point | null }): [Point, Point] | null {
+  return f.tail ? [{ x: f.box.x + f.box.w / 2, y: f.box.y + f.box.h / 2 }, f.tail] : null;
+}
+
+/** `box` moved into `slot`: same top, aligned on the reading-start side, kept inside the area. */
+function intoSlot(box: Box, slot: Box, area: Area, dir: ReadingDirection): Box {
+  const x = dir === 'rtl' ? slot.x + slot.w - box.w : slot.x;
+  return { ...box, x: clamp(x, area.left, area.right - box.w), y: clamp(slot.y, area.top, area.bottom - box.h) };
+}
+
+interface Placed { frame: LetterFrame; line: DialogueLine }
+
+/**
+ * M4 final S2: spec §9.3 places the first speaker's bubble on the reading side, so a first speaker standing on the far
+ * side gets a tail across the panel that crosses the next one's (live smoke: over a face). Within one panel, two new
+ * bubbles whose tails cross swap slots and get their tails again, when that uncrosses them without crowding another
+ * frame. Each line keeps its `order`, so the frames' reading sequence stays the dialogue's. Each pair swaps at most once.
+ */
+function uncrossTails(placed: Placed[], obstacles: Box[], panel: LetterPanel, area: Area, dir: ReadingDirection, gx: number, gy: number): void {
+  const swapped = new Set<string>();
+  for (let round = 0; round < placed.length * placed.length; round++) {
+    let changed = false;
+    for (let i = 0; i < placed.length && !changed; i++) {
+      for (let j = i + 1; j < placed.length && !changed; j++) {
+        const a = placed[i]!;
+        const b = placed[j]!;
+        const sa = tailSegment(a.frame);
+        const sb = tailSegment(b.frame);
+        if (!sa || !sb || swapped.has(`${i}:${j}`) || !segmentsCross(sa[0], sa[1], sb[0], sb[1])) continue;
+        swapped.add(`${i}:${j}`);
+        // The later bubble takes the earlier one's slot; the earlier one goes to the next free slot in reading order.
+        const others = [...obstacles, ...placed.filter((_, k) => k !== i && k !== j).map((p) => p.frame.box)];
+        const boxB = intoSlot(b.frame.box, a.frame.box, area, dir);
+        const boxA = placeBubble(a.frame.box.w, a.frame.box.h, area, dir, [...others, boxB], gx, gy);
+        if (tooClose(boxA, boxB, gx, gy) || others.some((o) => tooClose(boxA, o, gx, gy) || tooClose(boxB, o, gx, gy))) continue;
+        const tailA = tailTip(panel, a.line, boxA, area);
+        const tailB = tailTip(panel, b.line, boxB, area);
+        const na = tailSegment({ box: boxA, tail: tailA })!;
+        const nb = tailSegment({ box: boxB, tail: tailB })!;
+        if (segmentsCross(na[0], na[1], nb[0], nb[1])) continue;
+        a.frame = { ...a.frame, box: boxA, tail: tailA };
+        b.frame = { ...b.frame, box: boxB, tail: tailB };
+        changed = true;
+      }
+    }
+    if (!changed) return;
+  }
+}
+
 /**
  * Frames to create for every not-yet-lettered dialogue line, panels in reading order (spec §9.3). Pure.
  * Adds frames for lines with no frame of the same text (exact match, per panel): an edited bubble is lettered again.
@@ -155,6 +218,8 @@ export function autoLetter(input: AutoLetterInput): LetterFrame[] {
       ...todo.filter((l) => l.kind !== 'narration' && l.kind !== 'sfx'),
       ...todo.filter((l) => l.kind === 'sfx'),
     ];
+    const obstacles = [...occupied];
+    const placed: Placed[] = [];
     for (const line of sorted) {
       const kind: FrameKind = line.kind;
       const fontSize = DEFAULT_FONT_SIZE[kind];
@@ -164,11 +229,16 @@ export function autoLetter(input: AutoLetterInput): LetterFrame[] {
       const box = kind === 'sfx' ? placeSfx(w, h, area, occupied, gy) : placeBubble(w, h, area, direction, occupied, gx, gy);
       const tail = kind === 'sfx' || kind === 'narration' ? null : tailTip(panel, line, box, area);
       occupied.push(box);
-      out.push({
-        panelId: id, kind, text: line.text, speakerId: line.speakerId, box, tail, rotation: kind === 'sfx' ? -10 : 0,
-        font: FONT_FOR_KIND[kind], fontSize, align: kind === 'narration' ? 'left' : 'center', order: order++,
+      placed.push({
+        line,
+        frame: {
+          panelId: id, kind, text: line.text, speakerId: line.speakerId, box, tail, rotation: kind === 'sfx' ? -10 : 0,
+          font: FONT_FOR_KIND[kind], fontSize, align: kind === 'narration' ? 'left' : 'center', order: order++,
+        },
       });
     }
+    uncrossTails(placed, obstacles, panel, area, direction, gx, gy);
+    out.push(...placed.map((p) => p.frame));
   }
   return out;
 }
