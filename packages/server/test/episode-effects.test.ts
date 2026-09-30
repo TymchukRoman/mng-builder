@@ -63,8 +63,35 @@ describe('premise and outline effects', () => {
     expect(entityEvents()).toEqual(['chapter:updated', 'textFrame:updated']);
   });
 
+  it('createOutlineCharacters drops chromatic colours from drafted tags in a B&W manga, keeping names and existing characters (M4 final S6)', () => {
+    const { manga } = world(); // a bw manga
+    const aiko = lib.store.characters.listByManga(manga.id).find((c) => c.name === 'Aiko')!;
+    lib.store.characters.update(aiko.id, { appearanceTags: '1girl, red scarf' }); // the user's own edit
+    const draft = { role: 'minor' as const, personality: '', speechStyle: '' };
+    const created = createOutlineCharacters({ store: lib.store, bus }, manga.id, [
+      { name: 'Kitten', ...draft, appearanceTags: 'no humans, kitten, orange tabby fur, green eyes, grey paws' },
+      { name: 'Amber', ...draft, appearanceTags: '1girl, blue-eyed, Amber brooch, black hair' },
+      { name: 'Aiko', ...draft, appearanceTags: '1girl, blue hair' }, // exists: skipped, untouched
+    ]);
+    expect(created.map((c) => [c.name, c.appearanceTags])).toEqual([
+      ['Kitten', 'no humans, kitten, tabby fur, eyes, grey paws'],
+      ['Amber', '1girl, Amber brooch, black hair'],
+    ]);
+    expect(lib.store.characters.require(aiko.id).appearanceTags).toBe('1girl, red scarf');
+  });
+
+  it('createOutlineCharacters keeps colours in a colour manga', () => {
+    const { manga } = world();
+    lib.store.mangas.update(manga.id, { colorMode: 'color' });
+    const [kitten] = createOutlineCharacters({ store: lib.store, bus }, manga.id, [
+      { name: 'Kitten', role: 'minor', personality: '', speechStyle: '', appearanceTags: 'no humans, kitten, orange tabby fur' },
+    ]);
+    expect(kitten!.appearanceTags).toBe('no humans, kitten, orange tabby fur');
+  });
+
   it('createOutlineCharacters creates each new name once, skipping existing ones', () => {
     const { manga } = world();
+    lib.store.mangas.update(manga.id, { colorMode: 'color' }); // colours kept (see the S6 test for B&W)
     const draft = { role: 'supporting' as const, personality: 'cheerful', speechStyle: 'short', appearanceTags: '1girl, yellow raincoat' };
     const created = createOutlineCharacters({ store: lib.store, bus }, manga.id, [
       { name: 'Mika', ...draft }, { name: ' mika ', ...draft }, { name: 'AIKO', ...draft },

@@ -42,14 +42,29 @@ function retitleCover({ store, bus }: EffectDeps, chapter: Chapter, oldTitle: st
   for (const f of stale) emitEntity(bus, 'textFrame', f.id, 'updated', chapter.mangaId);
 }
 
-/** Outline acceptance: new characters (random seed via M1's createCharacter). Names that already exist are skipped. */
+/**
+ * M4 final S6: a black-and-white book's outline-drafted characters get no chromatic colour tags ("orange tabby fur,
+ * green eyes" reached every generation prompt, and the reviewer flagged fur colour the greyscale export hides).
+ * Character names are kept (masked); black, white, grey and silver stay.
+ */
+function bwAppearance(tags: string, names: readonly string[]): string {
+  return stripColourWords(tags, names).split(',').map((t) => t.trim().replace(/\s+/g, ' ')).filter((t) => t.length > 0).join(', ');
+}
+
+/**
+ * Outline acceptance: new characters (random seed via M1's createCharacter). Names that already exist are skipped,
+ * so an existing (possibly user-edited) character is never touched.
+ */
 export function createOutlineCharacters({ store, bus }: EffectDeps, mangaId: string, drafts: NewCharacterDraft[]): Character[] {
   const existing = store.characters.listByManga(mangaId);
+  const bw = store.mangas.require(mangaId).colorMode === 'bw';
+  const names = [...existing.map((c) => c.name), ...drafts.map((d) => d.name)];
   const created: Character[] = [];
   for (const d of drafts) {
     if ([...existing, ...created].some((c) => sameName(c.name, d.name))) continue;
+    const appearanceTags = bw ? bwAppearance(d.appearanceTags, names) : d.appearanceTags;
     const character = createCharacter(store, mangaId, CreateCharacterSchema.parse({
-      name: d.name.trim(), role: d.role, personality: d.personality, speechStyle: d.speechStyle, appearanceTags: d.appearanceTags,
+      name: d.name.trim(), role: d.role, personality: d.personality, speechStyle: d.speechStyle, appearanceTags,
     }));
     emitEntity(bus, 'character', character.id, 'created', mangaId);
     created.push(character);

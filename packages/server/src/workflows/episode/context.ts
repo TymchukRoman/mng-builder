@@ -141,6 +141,12 @@ const COLOR_RULE: Record<ColorMode, string> = {
   color: '- The book is printed in colour: colours of the setting, light and props are welcome.',
 };
 
+/** M4 final S6: the outline's new characters of a black-and-white book are drafted without colours. */
+const APPEARANCE_COLOR_RULE: Record<ColorMode, string> = {
+  bw: '  - The book is black and white: no colours in "appearanceTags" (no "red hair", "blue eyes", "orange fur"); describe hair, eyes and fur by length, style and shade (dark, light, black, white, grey) instead.',
+  color: '  - Colours of hair, eyes and outfit are welcome in "appearanceTags".',
+};
+
 export function templateVars(store: Store, run: EpisodeRun, ctx: StepContext): Record<string, string> {
   const manga = store.mangas.require(store.chapters.require(run.chapterId).mangaId);
   return {
@@ -151,5 +157,6 @@ export function templateVars(store: Store, run: EpisodeRun, ctx: StepContext): R
     prompt: run.input.prompt,
     tone: run.input.tone.trim() || 'any',
     colorRule: COLOR_RULE[manga.colorMode],
+    appearanceColorRule: APPEARANCE_COLOR_RULE[manga.colorMode],
   };
 }

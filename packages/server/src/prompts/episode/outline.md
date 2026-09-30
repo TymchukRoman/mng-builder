@@ -10,7 +10,8 @@ Rules:
   - "name": a name that fits the setting;
   - "role": "main", "supporting" or "minor";
   - "personality" and "speechStyle": one short phrase each;
-  - "appearanceTags": English Danbooru-style tags for the permanent look only — count tag ("1girl", "1boy"; "no humans" for an animal or creature), hair, eyes, build, usual outfit (for example "1girl, short black hair, brown eyes, slim, school uniform, sailor collar"). No pose, expression, background, style or quality tags.
+  - "appearanceTags": English Danbooru-style tags for the permanent look only — count tag ("1girl", "1boy"; "no humans" only for an animal or a non-humanoid creature, never for a robot, spirit or other human-like being), hair, eyes, build, usual outfit (for example "1girl, short black hair, brown eyes, slim, school uniform, sailor collar"). No pose, expression, background, style or quality tags.
+{{appearanceColorRule}}
 - Never invent a new look for an existing character.
 
 Reply with only a JSON object of exactly this shape, with no prose and no code fences:

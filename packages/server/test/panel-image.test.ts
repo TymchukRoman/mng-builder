@@ -96,7 +96,7 @@ describe('image.generate (panel)', () => {
     await run(panel.id);
     const [positive] = nodesOf(fake.graphs[0]!, 'CLIPTextEncode').map((n) => String(n.inputs['text']));
     expect(positive).toContain('1girl, short black hair, kitten, grey tabby, solo, crouching, vending machine');
-    expect(positive.toLowerCase().replace(/_/g, ' ')).not.toMatch(/no\s+humans/);
+    expect(positive!.toLowerCase().replace(/_/g, ' ')).not.toMatch(/no\s+humans/);
   });
 
   it('keeps "no humans" for a panel whose cast has no person (M4 final S4)', async () => {

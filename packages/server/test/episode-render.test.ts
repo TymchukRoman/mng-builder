@@ -150,6 +150,20 @@ describe('people count', () => {
     expect(manga.id).not.toBe(other.manga.id);
     expect(retryTarget(lib.store, DEFAULT_SETTINGS, updated)).toEqual({ cast: { girl: 1, boy: 0, other: 0 }, hasPortraitRefs: true, style: 'tags' });
   });
+
+  it('a pet in the panel script is not a person on the wired retry path (Task 22 fix A; review minor 5)', () => {
+    const { manga, panelIds } = renderWorld();
+    const kitten = seedCharacter(lib.store, manga.id, 'Kitten', 'No_Humans, kitten');
+    const panel = lib.store.panels.require(panelIds[0]!);
+    const withPet = lib.store.panels.update(panel.id, {
+      script: { ...panel.script, characters: [...panel.script.characters, { characterId: kitten.id, pose: 'in a box', expression: '', position: 'left' }] },
+    });
+    const target = retryTarget(lib.store, DEFAULT_SETTINGS, withPet);
+    expect(target.cast).toEqual({ girl: 1, boy: 0, other: 0 });
+    const count = [{ kind: 'character-count' as const, note: 'a second girl sits in the box' }];
+    expect(retryPatch(count, DEFAULT_SETTINGS, 1, target).sceneSuffix).toBe(target.style === 'natural' ? 'Exactly one person.' : 'solo');
+    expect(retryPatch(count, DEFAULT_SETTINGS, 1, { ...target, style: 'natural' }).sceneSuffix).toBe('Exactly one person.');
+  });
 });
 
 describe('estimateRender (M4 final S5)', () => {
