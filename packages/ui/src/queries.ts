@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import type {
-  AppConfig, Chapter, Character, Image, Job, Manga, Page, PageDetail, PresetInfo, RecipeInfo, ServiceStatus, Settings, StylePreset,
+  AppConfig, Chapter, Character, EpisodeRun, Image, Job, Manga, Page, PageDetail, PresetInfo, RecipeInfo, ServiceStatus, Settings, StylePreset,
 } from '@manga/shared';
 import { api, seg } from './api';
 import { qk } from './queryKeys';
@@ -24,6 +24,9 @@ export const usePageDetail = (id: string | null | undefined) =>
   useQuery({ queryKey: qk.page(id ?? ''), queryFn: () => api.get<PageDetail>(`/api/pages/${seg(id)}`), enabled: !!id });
 export const usePanelImages = (panelId: string | null) =>
   useQuery({ queryKey: qk.panelImages(panelId ?? ''), queryFn: () => api.get<Image[]>(`/api/panels/${seg(panelId)}/images`), enabled: !!panelId });
+/** The chapter's latest episode run, or null. No polling: every `episodeRun` event invalidates `['episode']` (events.ts). */
+export const useEpisode = (chapterId: string | undefined) =>
+  useQuery({ queryKey: qk.episode(chapterId ?? ''), queryFn: () => api.get<EpisodeRun | null>(`/api/chapters/${seg(chapterId)}/episode`), enabled: !!chapterId });
 export const useJobs = () =>
   useQuery({ queryKey: qk.jobs(), queryFn: () => api.get<Job[]>('/api/jobs?limit=50'), refetchInterval: 30_000 });
 export const useSettings = () => useQuery({ queryKey: qk.settings(), queryFn: () => api.get<Settings>('/api/settings') });

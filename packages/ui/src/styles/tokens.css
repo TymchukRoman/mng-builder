@@ -31,6 +31,7 @@
   --ink: #111111;
 
   --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
   --fs-2xs: 10px;
   --fs-xs: 11px;
   --fs-sm: 12px;

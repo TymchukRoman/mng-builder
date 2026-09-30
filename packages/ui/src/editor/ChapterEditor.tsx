@@ -19,6 +19,7 @@ import {
   deletePageFlow, escapeSelection, exportTarget, frameInsert, neighbourAfterDelete, pageToShow, removedPanelCount, resolveCurrentPage,
 } from './editorModel';
 import { History, IdMap } from './history';
+import { HistoryBarrierContext, type Barrier } from './HistoryBarrierContext';
 import { createOps } from './ops';
 import { OpsContext } from './OpsContext';
 import { PageList } from './PageList';
@@ -121,6 +122,8 @@ export function ChapterEditor({ manga, mode, chapterId, pageIds, title, backTo, 
       });
     } catch (err) { pushToast('error', errorText(err)); }
   };
+  /** For the aside (the episode stepper): a change there that deletes pages must not leave undo naming them (F33). */
+  const asideBarrier = useCallback<Barrier>((fn) => { flushNudge(); return history.barrier(fn); }, [history, flushNudge]);
   const panelId = selectedPanelId(selection);
   const selectedFrame = d && selection.kind === 'frame' ? d.frames.find((f) => f.id === selection.frameId) : undefined;
 
@@ -194,7 +197,7 @@ export function ChapterEditor({ manga, mode, chapterId, pageIds, title, backTo, 
           onGenerate={() => { if (panelId) generate.mutate(panelId); }}
           onZoom={setZoom}
         />
-        <div className="editor__aside">{aside}</div>
+        <div className="editor__aside"><HistoryBarrierContext.Provider value={asideBarrier}>{aside}</HistoryBarrierContext.Provider></div>
         {mode === 'chapter' && chapterId && (
           <PageList chapterId={chapterId} manga={manga} pageIds={pageIds} currentId={pageId} onSelectPage={selectPage} onDelete={(id) => void deletePage(id)} />
         )}
