@@ -5,12 +5,12 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ComfyClient, ComfyRejectedError, FIRST_PROGRESS_TIMEOUT_MS, STALL_TIMEOUT_MS, stageLabel } from '../src/imaging/comfy.js';
+import { ComfyClient, ComfyRejectedError, FIRST_PROGRESS_TIMEOUT_MS, GPU_PAUSE_FREE_BYTES, STALL_TIMEOUT_MS, stageLabel } from '../src/imaging/comfy.js';
 import type { ComfyGraph } from '../src/imaging/comfy-graph.js';
 import { ComfyLauncher } from '../src/imaging/launcher.js';
 import { pngSize } from '../src/imaging/png-size.js';
 import { encodeSolidPng } from '../src/dev/png.js';
-import { PermanentError, TransientError } from '../src/jobs/index.js';
+import { GpuBusyError, PermanentError, TransientError } from '../src/jobs/index.js';
 import { startFakeComfy, type FakeComfy } from './fakes/fake-comfy.js';
 import { fakeComfyRoot } from './helpers/comfy-root.js';
 
@@ -202,6 +202,8 @@ describe('ComfyClient.run stall watchdog', () => {
     const rec = recorder();
     const err = await watched().run(miniGraph(), { onProgress: rec.onProgress }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(TransientError);
+    // W1 F1: 15 GB free after the models were unloaded: not another app, so a plain TransientError (spends an attempt).
+    expect(err).not.toBeInstanceOf(GpuBusyError);
     expect((err as Error).message).toMatch(/^GPU stalled: no progress for 250 ms \(GPU memory is probably full; close games or other GPU apps\)$/);
     const id = fake.promptIds[0]!;
     expect(fake.calls).toContainEqual({ method: 'POST', path: '/interrupt', body: { prompt_id: id } });
@@ -217,6 +219,7 @@ describe('ComfyClient.run stall watchdog', () => {
     fake.stallNext = 0; // loads, then never samples
     const err = await watched({ firstProgressTimeoutMs: 300, stallTimeoutMs: 60_000 }).run(miniGraph()).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(TransientError);
+    expect(err).not.toBeInstanceOf(GpuBusyError);
     expect((err as Error).message).toMatch(/^GPU stalled: no progress for 300 ms after queueing/);
     expect(fake.calls.some((c) => c.path === '/free')).toBe(true);
   });
@@ -230,21 +233,49 @@ describe('ComfyClient.run stall watchdog', () => {
     expect(fake.calls.some((c) => c.path === '/interrupt' || c.path === '/free')).toBe(false);
   });
 
-  it('warns in the progress label when little VRAM is left for ComfyUI, and still runs', async () => {
+  it('a stall while another app holds the GPU memory is a GpuBusyError (W1 R2, F1)', async () => {
+    fake.stallNext = 1;
+    const rec = recorder();
+    const onProgress = (label: string, value?: number, max?: number): void => {
+      if (label === 'Sampling') fake.vramFree = 2e9; // a game starts while the prompt samples
+      rec.onProgress(label, value, max);
+    };
+    const err = await watched().run(miniGraph(), { onProgress }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(GpuBusyError);
+    expect((err as GpuBusyError).stalled).toBe(true);
+    expect((err as Error).message).toMatch(/^GPU stalled: no progress for 250 ms/);
+    expect(fake.calls.some((c) => c.path === '/free')).toBe(true);
+  });
+
+  it('refuses to start a run while another app holds the GPU memory: GpuBusyError, nothing submitted (W1 R2)', async () => {
+    expect(GPU_PAUSE_FREE_BYTES).toBe(3e9);
     fake.vramFree = 1.2e9;
     const rec = recorder();
-    const result = await client.run(miniGraph(), { onProgress: rec.onProgress });
+    const quick = new ComfyClient({ url: fake.url, launcher: null, pollMs: 20, vramWaitMs: 200 });
+    const err = await quick.run(miniGraph(), { onProgress: rec.onProgress }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(GpuBusyError);
+    expect((err as GpuBusyError).stalled).toBe(false);
+    expect((err as Error).message).toBe('GPU busy: only 1.2 GB of GPU memory free (GPU memory is probably full; close games or other GPU apps)');
+    expect(fake.calls.some((c) => c.path === '/prompt')).toBe(false);
+    expect(fake.calls.filter((c) => c.path === '/system_stats').length).toBeGreaterThan(1); // F13: it looked again first
+  });
+
+  it('re-reads the VRAM before refusing, so memory that is being released (e.g. an ollama unload) does not pause the lane (F13)', async () => {
+    fake.vramFree = 1.2e9;
+    setTimeout(() => { fake.vramFree = 12e9; }, 100);
+    const rec = recorder();
+    const patient = new ComfyClient({ url: fake.url, launcher: null, pollMs: 20, vramWaitMs: 5_000 });
+    const result = await patient.run(miniGraph(), { onProgress: rec.onProgress });
     expect(result.images).toHaveLength(1);
-    expect(rec.steps[0]).toEqual({ label: 'GPU memory low (1.2 GB free) — another app may be using the GPU' });
-    expect(rec.steps).toContainEqual({ label: 'Sampling · GPU memory low', value: 3, max: 3 });
+    expect(rec.steps.map((s) => s.label)).not.toContain(expect.stringMatching(/GPU busy/));
   });
 
   it('does not count VRAM that ComfyUI itself holds (its own resident model) as taken', async () => {
     fake.vramFree = 1e9;
     fake.torchVramTotal = 12e9;
     const rec = recorder();
-    await client.run(miniGraph(), { onProgress: rec.onProgress });
-    expect(rec.steps.some((s) => s.label.includes('GPU memory low'))).toBe(false);
+    const result = await client.run(miniGraph(), { onProgress: rec.onProgress });
+    expect(result.images).toHaveLength(1); // F17: no GpuBusyError
     expect(rec.steps[0]).toEqual({ label: 'Queued' });
   });
 });

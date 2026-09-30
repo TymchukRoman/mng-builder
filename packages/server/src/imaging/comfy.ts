@@ -3,9 +3,10 @@ import { readFile, rm } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import WebSocket from 'ws';
 import type { ServiceState } from '@manga/shared';
-import { PermanentError, TransientError } from '../jobs/index.js';
+import { GpuBusyError, PermanentError, TransientError } from '../jobs/index.js';
 import { abortError, raceAbort, sleep } from '../util/abort.js';
 import type { ComfyGraph } from './comfy-graph.js';
+import { GPU_RESUME_FREE_BYTES } from './gpu-monitor.js';
 import type { ComfyLauncher } from './launcher.js';
 
 export type { ComfyGraph } from './comfy-graph.js';
@@ -76,9 +77,9 @@ export const FIRST_PROGRESS_TIMEOUT_MS = 10 * 60_000;
 /** Stall watchdog: once sampling started, the longest allowed gap between two progress signals of the prompt. Live
  *  case: with a game holding most of the VRAM, ComfyUI spilled to system RAM and sat at "Sampling 3/8" for 21 min. */
 export const STALL_TIMEOUT_MS = 3 * 60_000;
-/** Below this much VRAM left for ComfyUI (free plus what it holds itself) a run warns that another app may be using
- *  the GPU. Generic: every image model family needs more than this. */
-export const LOW_VRAM_BYTES = 3e9;
+/** W1 R2: below this much VRAM left for ComfyUI (free plus what it holds itself), a run does not start: another app is
+ *  using the GPU, and the run would crawl. The job pauses the gpu lane instead. Generic: every image model family needs more. */
+export const GPU_PAUSE_FREE_BYTES = 3e9;
 /** Socket messages that show the prompt is moving. */
 const PROGRESS_SIGNALS: ReadonlySet<string> = new Set(['progress', 'executing', 'executed', 'execution_cached']);
 const STALL_ADVICE = 'GPU memory is probably full; close games or other GPU apps';
@@ -117,7 +118,7 @@ export class ComfyClient {
   private readonly vramWaitMs: number;
   private readonly firstProgressTimeoutMs: number;
   private readonly stallTimeoutMs: number;
-  private readonly lowVramBytes: number;
+  private readonly pauseFreeBytes: number;
   private starting: Promise<void> | null = null;
   /** Model family last prepared for (via prepareFor) or resident from a run; null once free() has cleared it;
    *  UNKNOWN_FAMILY until this process prepared anything. */
@@ -125,7 +126,7 @@ export class ComfyClient {
 
   constructor(opts: {
     url: string; launcher?: ComfyLauncher | null; pollMs?: number; dataDir?: string | null; vramWaitMs?: number;
-    firstProgressTimeoutMs?: number; stallTimeoutMs?: number; lowVramBytes?: number;
+    firstProgressTimeoutMs?: number; stallTimeoutMs?: number; pauseFreeBytes?: number;
   }) {
     this.url = opts.url.replace(/\/+$/, '');
     this.launcher = opts.launcher ?? null;
@@ -134,7 +135,7 @@ export class ComfyClient {
     this.vramWaitMs = opts.vramWaitMs ?? 15_000;
     this.firstProgressTimeoutMs = opts.firstProgressTimeoutMs ?? FIRST_PROGRESS_TIMEOUT_MS;
     this.stallTimeoutMs = opts.stallTimeoutMs ?? STALL_TIMEOUT_MS;
-    this.lowVramBytes = opts.lowVramBytes ?? LOW_VRAM_BYTES;
+    this.pauseFreeBytes = opts.pauseFreeBytes ?? GPU_PAUSE_FREE_BYTES;
   }
 
   async health(): Promise<ServiceState> {
@@ -192,8 +193,6 @@ export class ComfyClient {
     const promptId = randomUUID();
     const started = Date.now();
     let last = '';
-    /** Appended to every stage label once the low-VRAM warning was shown, so it stays visible while sampling. */
-    let note = '';
     const say = (label: string, value?: number, max?: number): void => {
       if (value === undefined && label === last) return;
       last = label;
@@ -205,7 +204,8 @@ export class ComfyClient {
       throw abortError(signal);
     }
     // Stall watchdog: when the prompt stops moving (a game holding the VRAM makes ComfyUI spill to system RAM and
-    // crawl), stalled aborts the wait with a TransientError, so the job retries later and the gpu lane moves on.
+    // crawl), stalled aborts the wait. The catch below decides what it was (W1 F1): a GpuBusyError when another app
+    // still holds the memory (the lane pauses), else a TransientError (the job spends an attempt).
     const stalled = new AbortController();
     const watch = { submittedAt: Date.now(), lastSignalAt: Date.now(), stepped: false };
     socket?.on('message', (data, isBinary) => {
@@ -227,9 +227,9 @@ export class ComfyClient {
       }
       if (typeof d.node !== 'string') return;
       const classType = graph[d.node]?.class_type ?? '';
-      if (type === 'executing') say(stageLabel(classType) + note);
+      if (type === 'executing') say(stageLabel(classType));
       else if (type === 'progress' && typeof d.value === 'number' && typeof d.max === 'number') {
-        say((classType === 'ImageUpscaleWithModel' ? 'Upscaling' : 'Sampling') + note, d.value, d.max);
+        say(classType === 'ImageUpscaleWithModel' ? 'Upscaling' : 'Sampling', d.value, d.max);
       }
     });
     let watchdog: ReturnType<typeof setInterval> | null = null;
@@ -238,11 +238,13 @@ export class ComfyClient {
     const waitSignal = signal ? AbortSignal.any([signal, stalled.signal]) : stalled.signal;
     let accepted = false;
     try {
-      const room = await this.vramAvailable(signal, 3_000);
-      if (room !== null && room < this.lowVramBytes) {
-        say(`GPU memory low (${(room / 1e9).toFixed(1)} GB free) — another app may be using the GPU`);
-        note = ' · GPU memory low';
-      } else say('Queued');
+      const room = await this.roomForRun(signal);
+      if (room !== null && room < this.pauseFreeBytes) {
+        const reason = `GPU busy: only ${(room / 1e9).toFixed(1)} GB of GPU memory free (${STALL_ADVICE})`;
+        say(reason);
+        throw new GpuBusyError(reason); // nothing submitted: the catch below has no prompt to cancel
+      }
+      say('Queued');
       watch.submittedAt = Date.now();
       watch.lastSignalAt = watch.submittedAt;
       const res = await this.request('/prompt', {
@@ -272,7 +274,11 @@ export class ComfyClient {
         // and the next job in the lane, start from a clean GPU.
         await this.cancelPrompt(promptId);
         await this.free();
-        throw abortError(stalled.signal);
+        const stall = abortError(stalled.signal);
+        // W1 F1: only a stall while another app still holds the memory (read after the unload) pauses the lane.
+        const after = await this.vramAvailable(undefined, 3_000);
+        if (after !== null && after < GPU_RESUME_FREE_BYTES) throw new GpuBusyError(stall.message, { stalled: true });
+        throw stall;
       }
       // M6: whatever failed after ComfyUI accepted the prompt, take it out of ComfyUI's queue before the job is
       // retried, so a retry never runs next to (or after) the old prompt. A no-op for a prompt that already ended.
@@ -286,7 +292,8 @@ export class ComfyClient {
   /**
    * Checks `watch` a few times per limit. Before the first sampling step the prompt gets `firstProgressTimeoutMs`
    * from submission (model loading); after it, at most `stallTimeoutMs` between two progress signals. A tripped limit
-   * shows its reason as the progress label and aborts `stalled` with a TransientError carrying it.
+   * shows its reason as the progress label and aborts `stalled` with a TransientError carrying it (run() turns it into a
+   * GpuBusyError when another app holds the memory, W1 F1).
    */
   private startWatchdog(
     watch: { submittedAt: number; lastSignalAt: number; stepped: boolean },
@@ -385,6 +392,28 @@ export class ComfyClient {
   private async vramTotal(signal: AbortSignal | undefined, timeoutMs: number): Promise<number | null> {
     const total = (await this.device(signal, timeoutMs))?.torch_vram_total;
     return typeof total === 'number' ? total : null;
+  }
+
+  /**
+   * W1 F13: the VRAM available for a run, read again every `pollMs` until the `vramWaitMs` bound while it is below
+   * `pauseFreeBytes`: memory that is being released right now (the GPU arbiter's ollama unload does not wait for the
+   * drop) must not pause the lane. Null when it can't be read; rejects only with the abort error.
+   */
+  private async roomForRun(signal: AbortSignal | undefined): Promise<number | null> {
+    const deadline = Date.now() + this.vramWaitMs;
+    let room = await this.vramAvailable(signal, 3_000);
+    while (room !== null && room < this.pauseFreeBytes) {
+      const left = deadline - Date.now();
+      if (left <= 0) break;
+      await sleep(Math.min(this.pollMs, left), signal);
+      room = await this.vramAvailable(signal, 3_000);
+    }
+    return room;
+  }
+
+  /** W1 R2 (the GPU monitor): the VRAM ComfyUI could use now, or null when ComfyUI cannot be reached. */
+  availableVram(signal?: AbortSignal): Promise<number | null> {
+    return this.vramAvailable(signal, 3_000);
   }
 
   /**
