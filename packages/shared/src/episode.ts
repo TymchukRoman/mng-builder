@@ -85,7 +85,9 @@ export function breakdownSchemaFor(rules: BreakdownRules): z.ZodType<BreakdownOu
 export const PanelCharacterDraftSchema = z.object({
   name: z.string().min(1), pose: z.string(), expression: z.string(), position: StagePositionSchema,
 });
-export const DialogueDraftSchema = z.object({ speaker: z.string().min(1).nullable(), kind: DialogueKindSchema, text: z.string().min(1) });
+/** Models often emit "" (or whitespace) for a narration/sfx speaker; that means no speaker. */
+const SpeakerSchema = z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? null : v), z.string().min(1).nullable());
+export const DialogueDraftSchema = z.object({ speaker: SpeakerSchema, kind: DialogueKindSchema, text: z.string().min(1) });
 export const PanelScriptDraftSchema = z.object({
   action: z.string().min(1), shot: ShotSchema, angle: AngleSchema,
   characters: z.array(PanelCharacterDraftSchema).max(4), background: z.string(), dialogue: z.array(DialogueDraftSchema).max(6),
@@ -123,7 +125,7 @@ export function scriptsSchemaFor(rules: ScriptsRules): z.ZodType<ScriptsOutput> 
 
 // ---- 5. prompts ----
 export const PromptsOutputSchema = z.object({
-  panels: z.array(z.object({ panelId: z.string().min(3), scene: z.string().min(1), negative: z.string().optional() })).min(1),
+  panels: z.array(z.object({ panelId: z.string().min(3), scene: z.string().min(1), negative: z.string().nullish().transform((v) => v ?? undefined) })).min(1),
 });
 export type PromptsOutput = z.infer<typeof PromptsOutputSchema>;
 export interface PromptsRules { panelIds: string[] }
@@ -134,7 +136,7 @@ export function promptsSchemaFor(rules: PromptsRules): z.ZodType<PromptsOutput> 
     const seen = new Set<string>();
     value.panels.forEach((p, i) => {
       if (seen.has(p.panelId)) ctx.addIssue({ code: 'custom', path: ['panels', i, 'panelId'], message: `duplicate panelId "${p.panelId}"` });
-      else if (!allowed.has(p.panelId)) ctx.addIssue({ code: 'custom', path: ['panels', i, 'panelId'], message: `unknown panelId "${p.panelId}"` });
+      else if (!allowed.has(p.panelId)) ctx.addIssue({ code: 'custom', path: ['panels', i, 'panelId'], message: `unknown panelId "${p.panelId}"; use one of: ${rules.panelIds.join(', ')}` });
       seen.add(p.panelId);
     });
     const missing = rules.panelIds.filter((id) => !seen.has(id));
@@ -168,10 +170,10 @@ export const EDITABLE_STEPS: ReadonlySet<EpisodeStepName> = new Set<EpisodeStepN
  * Seconds per image, seeded from the live timings (M2 Task 24 live check / P1 bake-off):
  * anime-ref ~32 s per panel incl. ComfyUI overhead; anime ~30 s; qwen-edit-ref 115-135 s (8 steps x 11-13 s + model load);
  * klein-ref 6.5 s, anima 21.7 s, anima-turbo 3.8 s from the bake-off, each + ~10 s overhead; upscale ~10 s.
- * (A character portrait is ~15 s; it is not a panel recipe.) Revisit after the routing decision.
+ * anime-pose and anime-refine are assumed, not measured. (A character portrait is ~15 s; it is not a panel recipe.) Revisit after the routing decision.
  */
 export const RECIPE_AVG_SECONDS: Record<string, number> = {
-  anime: 30, 'anime-ref': 32, 'anime-pose': 32, 'anime-refine': 20, 'qwen-edit-ref': 125, 'klein-ref': 17, anima: 32, 'anima-turbo': 14, upscale: 10,
+  anime: 30, 'anime-ref': 32, 'anime-pose': 32 /* assumed, not measured */, 'anime-refine': 20 /* assumed, not measured */, 'qwen-edit-ref': 125, 'klein-ref': 17, anima: 32, 'anima-turbo': 14, upscale: 10,
 };
 export const DEFAULT_RECIPE_SECONDS = 20;
 
@@ -179,10 +181,13 @@ export function estimateSeconds(recipes: Array<string | null>): number {
   return recipes.reduce((sum, r) => sum + (r !== null ? RECIPE_AVG_SECONDS[r] ?? DEFAULT_RECIPE_SECONDS : DEFAULT_RECIPE_SECONDS), 0);
 }
 
+/** Rounds first, then picks the unit, so a value never renders as "~60 s" / "~60 min" / "1 h 60 min". 0 renders "~0 s" (a real, empty estimate). */
 export function formatEstimate(seconds: number): string {
-  if (seconds < 60) return `~${Math.max(1, Math.round(seconds))} s`;
-  if (seconds < 3600) return `~${Math.round(seconds / 60)} min`;
-  const h = Math.floor(seconds / 3600);
-  const m = Math.round((seconds - h * 3600) / 60);
+  const s = Math.round(seconds);
+  if (s < 60) return `~${Math.max(0, s)} s`;
+  const mins = Math.round(s / 60);
+  if (mins < 60) return `~${mins} min`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
   return m > 0 ? `~${h} h ${m} min` : `~${h} h`;
 }

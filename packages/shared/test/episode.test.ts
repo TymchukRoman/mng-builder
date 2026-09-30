@@ -76,6 +76,13 @@ describe('scriptsSchemaFor', () => {
     expect(schema.safeParse({ pages: [{ panels: [odd, panel()] }] }).success).toBe(true);
   });
 
+  it('treats an empty or blank speaker as no speaker', () => {
+    const blank = panel({ dialogue: [{ speaker: '', kind: 'sfx', text: 'BOOM' }, { speaker: '  ', kind: 'narration', text: 'Later.' }] });
+    const r = schema.safeParse({ pages: [{ panels: [blank, panel()] }] });
+    expect(r.success).toBe(true);
+    expect(r.data?.pages[0]?.panels[0]?.dialogue.map((d) => d.speaker)).toEqual([null, null]);
+  });
+
   it('rejects unknown characters and speakers with the valid names listed', () => {
     const stranger = panel({ dialogue: [{ speaker: 'Mika', kind: 'speech', text: 'Hi' }] });
     const r = schema.safeParse({ pages: [{ panels: [stranger, panel()] }] });
@@ -95,11 +102,17 @@ describe('promptsSchemaFor', () => {
     expect(schema.safeParse({ panels: [{ panelId: 'pn_b', scene: 'rain' }, { panelId: 'pn_a', scene: 'sun', negative: 'blur' }] }).success).toBe(true);
   });
 
+  it('accepts a null negative and normalises it to undefined', () => {
+    const r = schema.safeParse({ panels: [{ panelId: 'pn_a', scene: 'x', negative: null }, { panelId: 'pn_b', scene: 'y' }] });
+    expect(r.success).toBe(true);
+    expect(r.data?.panels[0]?.negative).toBeUndefined();
+  });
+
   it('rejects unknown, duplicate and missing ids', () => {
     const r = schema.safeParse({ panels: [{ panelId: 'pn_a', scene: 'x' }, { panelId: 'pn_a', scene: 'y' }, { panelId: 'pn_zz', scene: 'z' }] });
     expect(issuesOf(r)).toEqual([
       'panels.1.panelId: duplicate panelId "pn_a"',
-      'panels.2.panelId: unknown panelId "pn_zz"',
+      'panels.2.panelId: unknown panelId "pn_zz"; use one of: pn_a, pn_b',
       'panels: missing panelIds: pn_b',
     ]);
   });
@@ -125,5 +138,12 @@ describe('step tables and estimates', () => {
     expect(formatEstimate(110)).toBe('~2 min');
     expect(formatEstimate(3900)).toBe('~1 h 5 min');
     expect(formatEstimate(7200)).toBe('~2 h');
+  });
+
+  it('formats unit boundaries without overflowing', () => {
+    expect(formatEstimate(59.6)).toBe('~1 min');
+    expect(formatEstimate(3599)).toBe('~1 h');
+    expect(formatEstimate(7170)).toBe('~2 h');
+    expect(formatEstimate(0)).toBe('~0 s');
   });
 });
