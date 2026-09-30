@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { ApiErrorBody, Chapter, Character, EpisodeRun, ImageGeneratePayload, Job, Manga, Page, PageDetail } from '@manga/shared';
+import { CHAPTER_TITLE_FROM_PREMISE, type ApiErrorBody, type Chapter, type Character, type EpisodeRun, type ImageGeneratePayload, type Job, type Manga, type Page, type PageDetail } from '@manga/shared';
 import { extractContext, type ScriptsContext } from '../src/workflows/episode/context.js';
 import { startM4TestServer, type M4TestServer } from './helpers/m4-server.js';
 
@@ -34,7 +34,8 @@ function portraitJobs(jobs: Job[], characterId: string): Job[] {
 async function setup(server: M4TestServer, pages: number) {
   const manga = (await server.api<Manga>('POST', '/api/mangas', { title: 'Дощ', language: 'uk' })).body;
   const aiko = (await server.api<Character>('POST', `/api/mangas/${manga.id}/characters`, { name: 'Aiko', appearanceTags: '1girl, short black hair' })).body;
-  const chapter = (await server.api<Chapter>('POST', `/api/mangas/${manga.id}/chapters`, { title: 'Один' })).body;
+  // Left to the premise, as the New chapter dialog does when its Title is blank (M4 final M6).
+  const chapter = (await server.api<Chapter>('POST', `/api/mangas/${manga.id}/chapters`, { title: CHAPTER_TITLE_FROM_PREMISE })).body;
   const run = (await server.api<EpisodeRun>('POST', `/api/chapters/${chapter.id}/episode`, {
     input: { prompt: 'Айко знаходить кота під дощем', characterIds: [aiko.id], pages }, mode: 'autopilot',
   })).body;

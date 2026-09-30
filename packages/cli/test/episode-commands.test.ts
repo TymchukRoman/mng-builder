@@ -130,7 +130,8 @@ describe('manga episode …', { timeout: 90_000 }, () => {
     const file = join(mkdtempSync(join(tmpdir(), 'manga-cli-')), 'premise.json');
     writeFileSync(file, JSON.stringify({ title: 'From a file', synopsis: 'S.', tone: 'calm', setting: 'Pier' }));
     await run(['episode', 'edit', chapter.id, 'premise', '--file', file]);
-    expect((await s.api<Chapter>('GET', `/api/chapters/${chapter.id}`)).body.title).toBe('From a file');
+    // The typed chapter title ('One') stays; the edited premise reaches the chapter's synopsis (M4 final M6).
+    expect((await s.api<Chapter>('GET', `/api/chapters/${chapter.id}`)).body).toMatchObject({ title: 'One', synopsis: 'S.' });
     await expect(run(['episode', 'rerun', chapter.id, 'breakdown'])).rejects.toThrow(CliError);
     await expect(run(['episode', 'rerun', chapter.id, 'breakdown'])).rejects.toThrow(/^re-running breakdown replaces the chapter's pages \(\d+ panels: pn_\w+.*\); add --confirm$/);
     await run(['episode', 'rerun', chapter.id, 'breakdown', '--confirm'], true);

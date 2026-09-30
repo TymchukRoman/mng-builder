@@ -1,6 +1,6 @@
 // packages/server/test/helpers/episode-fixtures.ts
 import {
-  DEFAULT_PAGE_FORMAT, EPISODE_STEPS, PRESET_NAMES, STYLE_PRESETS, presetPanelCount, stepIndex,
+  CHAPTER_TITLE_FROM_PREMISE, DEFAULT_PAGE_FORMAT, EPISODE_STEPS, PRESET_NAMES, STYLE_PRESETS, presetPanelCount, stepIndex,
   type BreakdownOutput, type Chapter, type EpisodeInput, type EpisodeRun, type EpisodeStepName, type Language, type Manga,
   type NewCharacterDraft, type OutlineOutput, type PremiseOutput, type ReadingDirection, type ScriptsOutput,
 } from '@manga/shared';
@@ -11,7 +11,7 @@ export const STAMP = '2026-09-27T00:00:00.000Z';
 
 export interface EpisodeWorld { manga: Manga; chapter: Chapter }
 
-/** A manga with one empty chapter (no pages): the starting point of every episode run. */
+/** A manga with one empty chapter (no pages): the starting point of every episode run. Its title is left to the premise (M4 final M6) unless given. */
 export function seedEpisodeWorld(
   store: Store, opts: { language?: Language; direction?: ReadingDirection; mangaTitle?: string; chapterTitle?: string } = {},
 ): EpisodeWorld {
@@ -21,7 +21,7 @@ export function seedEpisodeWorld(
     colorMode: 'bw', readingDirection: opts.direction ?? 'rtl', pageFormat: DEFAULT_PAGE_FORMAT, styleGuide: preset.styleGuide, coverPageId: null,
   });
   const chapter = store.chapters.create({
-    mangaId: manga.id, number: 1, title: opts.chapterTitle ?? 'Draft', synopsis: '', coverPageId: null, status: 'draft', order: 0,
+    mangaId: manga.id, number: 1, title: opts.chapterTitle ?? CHAPTER_TITLE_FROM_PREMISE, synopsis: '', coverPageId: null, status: 'draft', order: 0,
   });
   return { manga, chapter };
 }

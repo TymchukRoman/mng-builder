@@ -82,7 +82,8 @@ describe('episode routes', { timeout: 90_000 }, () => {
     const ok = await s.api<EpisodeRun>('PUT', `/api/episodes/${run.id}/steps/premise/output`, { output: premise });
     expect(ok.status).toBe(200);
     expect(ok.body.steps[0]!.output).toEqual(premise);
-    expect((await s.api<Chapter>('GET', `/api/chapters/${chapter.id}`)).body.title).toBe('Edited');
+    // The chapter's title was typed ('One'), so it stays; the synopsis follows the premise (M4 final M6).
+    expect((await s.api<Chapter>('GET', `/api/chapters/${chapter.id}`)).body).toMatchObject({ title: 'One', synopsis: 'S.' });
     const bad = await s.api<ApiErrorBody>('PUT', `/api/episodes/${run.id}/steps/outline/output`, { output: { scenes: [], newCharacters: [] } });
     expect([bad.status, bad.body.error.code]).toEqual([400, 'validation']);
   });

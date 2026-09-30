@@ -1,6 +1,6 @@
 // packages/server/src/workflows/episode/effects.ts
 import {
-  CreateCharacterSchema, EMPTY_SCRIPT, panelIds, readingOrder, sameName,
+  CHAPTER_TITLE_FROM_PREMISE, CreateCharacterSchema, EMPTY_SCRIPT, panelIds, readingOrder, sameName,
   type BreakdownOutput, type Chapter, type Character, type Manga, type NewCharacterDraft, type PanelScript,
   type PanelScriptDraft, type PremiseOutput, type PromptsOutput, type ScriptsOutput,
 } from '@manga/shared';
@@ -18,10 +18,28 @@ import { panelStyle } from './context.js';
 export interface EffectDeps { store: Store; bus: EventBus }
 type Position = PanelScript['characters'][number]['position'];
 
-/** Step 1 → the chapter (spec §8: "written to the chapter"). */
-export function applyPremise({ store, bus }: EffectDeps, chapterId: string, premise: PremiseOutput): void {
-  const chapter = store.chapters.update(chapterId, { title: premise.title, synopsis: premise.synopsis });
+/**
+ * Step 1 → the chapter (spec §8: "written to the chapter"). The synopsis always follows the premise. The title follows
+ * it only while it is not the user's own (M4 final M6): the placeholder `CHAPTER_TITLE_FROM_PREMISE`, or the title the
+ * run's previous premise wrote (`previous`: the output being edited or re-run). A title the user typed stays.
+ * When the title changes, the cover's title frames that still show the old title follow it (M4 final M3).
+ */
+export function applyPremise(fx: EffectDeps, chapterId: string, premise: PremiseOutput, previous: PremiseOutput | null): void {
+  const { store, bus } = fx;
+  const before = store.chapters.require(chapterId);
+  const owned = before.title === CHAPTER_TITLE_FROM_PREMISE || (previous !== null && before.title === previous.title);
+  const title = owned ? premise.title : before.title;
+  const chapter = store.chapters.update(chapterId, { title, synopsis: premise.synopsis });
   emitEntity(bus, 'chapter', chapter.id, 'updated', chapter.mangaId);
+  if (title !== before.title) retitleCover(fx, chapter, before.title);
+}
+
+/** The chapter cover's `title` frames whose text is still `oldTitle` get the chapter's new title (M4 final M3). */
+function retitleCover({ store, bus }: EffectDeps, chapter: Chapter, oldTitle: string): void {
+  if (chapter.coverPageId === null || store.pages.get(chapter.coverPageId) === null) return;
+  const stale = store.frames.listByPage(chapter.coverPageId).filter((f) => f.kind === 'title' && f.text === oldTitle);
+  store.tx(() => { for (const f of stale) store.frames.update(f.id, { text: chapter.title }); });
+  for (const f of stale) emitEntity(bus, 'textFrame', f.id, 'updated', chapter.mangaId);
 }
 
 /** Outline acceptance: new characters (random seed via M1's createCharacter). Names that already exist are skipped. */

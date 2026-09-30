@@ -1,7 +1,7 @@
 import { getEventListeners, getMaxListeners } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ZodError } from 'zod';
-import type { EpisodeInput, ImageGeneratePayload, Job, LlmStepPayload, ServerEvent } from '@manga/shared';
+import { CHAPTER_TITLE_FROM_PREMISE, type EpisodeInput, type ImageGeneratePayload, type Job, type LlmStepPayload, type ServerEvent } from '@manga/shared';
 import { EPISODE_FAKE_RESPONSES } from '../src/dev/fake-episode.js';
 import { FAKE_RESPONSES } from '../src/dev/fake-responses.js';
 import { createPage, NeedsConfirmError } from '../src/domain/pages.js';
@@ -281,6 +281,50 @@ describe('EpisodeRunner — failure, retry, edit, rerun, cancel', () => {
     expect(lib.store.episodes.latestByChapter(chapter.id)?.id).toBe(newer.id);
     expect(() => runner.editOutput(run.id, 'premise', { ...PREMISE, title: 'Old run' })).toThrow('only the latest run of a chapter can be edited');
     expect(lib.store.chapters.require(chapter.id).title).not.toBe('Old run');
+  });
+
+  it('the cover title follows a premise edit and a premise re-run, across a scripts re-run (M4 final M3)', async () => {
+    let title = 'The Cat in the Rain';
+    const { chapter, input } = world();
+    const { runner, queue } = rig({
+      responses: { 'episode.premise': (req) => ({ ...(EPISODE_FAKE_RESPONSES['episode.premise']!(req) as object), title }) },
+    });
+    const run = runner.start(chapter.id, input, 'autopilot');
+    await queue.idle();
+    const coverTitles = (): string[] => {
+      const coverId = lib.store.chapters.require(chapter.id).coverPageId!;
+      return lib.store.frames.listByPage(coverId).filter((f) => f.kind === 'title').map((f) => f.text);
+    };
+    expect(coverTitles()).toEqual(['The Cat in the Rain']);
+
+    runner.editOutput(run.id, 'premise', { ...PREMISE, title: 'Renamed By Edit' });
+    expect(events.some((e) => e.type === 'entity' && e.entity === 'textFrame' && e.op === 'updated')).toBe(true);
+    runner.rerun(run.id, 'scripts', true);
+    await queue.idle();
+    expect(runner.get(run.id).status).toBe('done');
+    expect(lib.store.chapters.require(chapter.id).title).toBe('Renamed By Edit');
+    expect(coverTitles()).toEqual(['Renamed By Edit']);
+
+    title = 'Renamed By Rerun';
+    runner.rerun(run.id, 'premise', true);
+    await queue.idle();
+    expect(runner.get(run.id).status).toBe('done');
+    expect(lib.store.chapters.require(chapter.id).title).toBe('Renamed By Rerun');
+    expect(coverTitles()).toEqual(['Renamed By Rerun']);
+  });
+
+  it('a typed chapter title survives the premise, its edits and re-runs (M4 final M6)', async () => {
+    const w = seedEpisodeWorld(lib.store, { chapterTitle: 'Rain', mangaTitle: 'Typed' });
+    const { runner, queue } = rig();
+    const run = runner.start(w.chapter.id, { prompt: 'A cat', characterIds: [], pages: 1, tone: '' }, 'autopilot');
+    await queue.idle();
+    expect(lib.store.chapters.require(w.chapter.id).title).toBe('Rain');
+    runner.editOutput(run.id, 'premise', { ...PREMISE, title: 'Not this' });
+    runner.rerun(run.id, 'premise', true);
+    await queue.idle();
+    expect(lib.store.chapters.require(w.chapter.id).title).toBe('Rain');
+    const coverId = lib.store.chapters.require(w.chapter.id).coverPageId!;
+    expect(lib.store.frames.listByPage(coverId).filter((f) => f.kind === 'title').map((f) => f.text)).toEqual(['Rain']);
   });
 
   it('a prompts edit is stored verbatim on the panels (no camera prepend, no colour strip)', async () => {
@@ -568,7 +612,7 @@ describe('EpisodeRunner — restart safety', () => {
     release(); // the scripted engine checks the signal only before it answers, so the old handler still returns a value
     await expect(pending).resolves.toEqual({ skipped: true });
     expect(runner.get(run.id).steps[0]).toMatchObject({ status: 'running', output: null });
-    expect(lib.store.chapters.require(chapter.id).title).toBe('Draft');
+    expect(lib.store.chapters.require(chapter.id).title).toBe(CHAPTER_TITLE_FROM_PREMISE);
   });
 
   it('an error inside a job watch is logged, not an unhandled rejection (M3)', async () => {
@@ -599,7 +643,7 @@ describe('EpisodeRunner — restart safety', () => {
     await expect(pending).resolves.toEqual({ skipped: true });
     const after = runner.get(run.id);
     expect(after.steps[0]).toMatchObject({ status: 'running', output: null });
-    expect(lib.store.chapters.require(chapter.id).title).toBe('Draft');
+    expect(lib.store.chapters.require(chapter.id).title).toBe(CHAPTER_TITLE_FROM_PREMISE);
     expect(queue.jobs('llm.step')).toHaveLength(2);
   });
 });

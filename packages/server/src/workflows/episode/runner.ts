@@ -2,7 +2,7 @@ import { setMaxListeners } from 'node:events';
 import {
   BreakdownOutputSchema, EDIT_NEEDS_PENDING_NEXT, EDIT_TOO_LATE_MESSAGE, EDITABLE_STEPS, EPISODE_STEPS, OutlineOutputSchema, PremiseOutputSchema, PromptsOutputSchema,
   REVIEW_POINTS, STEP_TASK, ScriptsOutputSchema, panelIds, stepIndex,
-  type Chapter, type EpisodeInput, type EpisodeRun, type EpisodeStepName, type ImageGeneratePayload, type Job, type LlmStepPayload,
+  type Chapter, type EpisodeInput, type EpisodeRun, type EpisodeStepName, type ImageGeneratePayload, type Job, type LlmStepPayload, type PremiseOutput,
 } from '@manga/shared';
 import { deletePage } from '../../domain/delete.js';
 import { NeedsConfirmError } from '../../domain/pages.js';
@@ -28,6 +28,12 @@ export interface RunnerDeps { store: Store; bus: EventBus; queue: QueueLike; eng
 export const PORTRAITS_PER_NEW_CHARACTER = 4;
 
 const ACTIVE: ReadonlySet<EpisodeRun['status']> = new Set(['running', 'awaiting-review']);
+
+/** The premise output the run holds before a new one is applied (null when there is none, or it is unreadable). */
+function previousPremise(run: EpisodeRun): PremiseOutput | null {
+  const parsed = PremiseOutputSchema.safeParse(run.steps[stepIndex('premise')]?.output);
+  return parsed.success ? parsed.data : null;
+}
 
 const isPortraitJob = (job: Job): boolean =>
   job.kind === 'image.generate' && (job.payload as ImageGeneratePayload | null)?.target === 'character-portrait';
@@ -131,7 +137,7 @@ export class EpisodeRunner {
     }
     const value = validationSchema(this.deps.store, run, name).parse(output); // ZodError → 400 validation
     const fx = this.effectDeps();
-    if (name === 'premise') applyPremise(fx, run.chapterId, PremiseOutputSchema.parse(value));
+    if (name === 'premise') applyPremise(fx, run.chapterId, PremiseOutputSchema.parse(value), previousPremise(run));
     if (name === 'scripts') applyScripts(fx, run.chapterId, ScriptsOutputSchema.parse(value));
     if (name === 'prompts') applyPrompts(fx, run.chapterId, PromptsOutputSchema.parse(value), { source: 'user' }); // verbatim (F2)
     const fresh = this.get(runId);
@@ -161,6 +167,9 @@ export class EpisodeRunner {
     const steps = run.steps.map((s, i) => {
       if (i < idx) return s;
       if (i === idx && retry) return { ...s, status: 'pending' as const, error: null, finishedAt: null };
+      // M4 final M6: a re-run premise keeps its old output until the new one replaces it, so the new premise can tell
+      // a chapter title the old one wrote (it follows) from one the user typed (it stays).
+      if (i === idx && s.name === 'premise') return { ...freshStep(s.name), output: s.output };
       return freshStep(s.name);
     });
     this.save(this.get(runId), { steps, currentStep: idx, status: 'running' });
@@ -249,7 +258,7 @@ export class EpisodeRunner {
   /** premise → chapter, scripts → pages and panels, prompts → panel prompts (finished like M2's panel-prompt, F2). */
   private applyResult(run: EpisodeRun, name: EpisodeStepName, output: unknown): void {
     const fx = this.effectDeps();
-    if (name === 'premise') applyPremise(fx, run.chapterId, PremiseOutputSchema.parse(output));
+    if (name === 'premise') applyPremise(fx, run.chapterId, PremiseOutputSchema.parse(output), previousPremise(run));
     if (name === 'scripts') {
       materializeScripts(fx, run.chapterId, {
         breakdown: requireOutput(run, 'breakdown', BreakdownOutputSchema), scripts: ScriptsOutputSchema.parse(output),

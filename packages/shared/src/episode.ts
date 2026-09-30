@@ -16,6 +16,13 @@ export function stepIndex(name: EpisodeStepName): number {
   return EPISODE_STEPS.indexOf(name);
 }
 
+/**
+ * M4 final M6: the title a chapter gets when the user leaves it for the AI to fill (the New chapter dialog's Title is
+ * optional while it has an AI prompt). Chapter titles cannot be empty, so this known text stands for "not typed by
+ * the user": the premise step replaces it. Any other title is the user's and is never overwritten.
+ */
+export const CHAPTER_TITLE_FROM_PREMISE = 'Untitled chapter';
+
 // ---- 1. premise ----
 export const PremiseOutputSchema = z.object({
   title: z.string().min(1), synopsis: z.string().min(1), tone: z.string(), setting: z.string(),
