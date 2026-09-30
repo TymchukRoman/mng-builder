@@ -2,7 +2,7 @@
 
 A personal, local tool for making manga with AI. It keeps character art consistent, builds chapters from a prompt with review points, and handles page layouts, lettering in text frames (never inside the art), and PNG/PDF export. Every action is also available from the `manga` CLI.
 
-**Status: milestone M1 (foundation).** Everything that does not need an AI engine or a GPU already works from the REST API and the CLI: mangas, characters, chapters, pages and layouts, panels, text frames, image uploads and the job queue. AI imaging (M2), the web UI (M3), and the episode workflow and export (M4) are next.
+**Status: milestones M1–M4 complete (MVP).** The foundation (M1: mangas, characters, chapters, pages and layouts, panels, text frames, uploads, the job queue), AI imaging (M2), the web UI (M3), and the episode workflow with PNG/PDF export (M4) all work from the web UI, the REST API and the `manga` CLI.
 
 ## Requirements
 
@@ -17,6 +17,7 @@ npm install
 # check that the SQLite native module loads on this Node version:
 node --input-type=module -e "import Database from 'better-sqlite3'; console.log('sqlite', new Database(':memory:').prepare('select sqlite_version() as v').get().v)"
 npm run build
+npx playwright install --only-shell chromium   # the headless Chromium that export (and `npm test`) render pages with
 npm run link-cli        # puts `manga` on your PATH (undo: npm unlink -g @manga/cli)
 ```
 
@@ -106,6 +107,11 @@ References take an id or a unique name or title, case-insensitive. A chapter can
 | `manga recipes` | List image recipes |
 | `manga text add <page> --kind speech --text "…" [--speaker <char>] [--panel <panel>]` | Add a text frame |
 | `manga text edit <frame> [--text] [--box x,y,w,h] [--speaker <char>\|-] …` · `text rm <frame>` | Edit or delete a text frame |
+| `manga text auto <page>` | Auto-letter a page: add text frames for the dialogue lines that have none yet |
+| `manga episode start <chapter> --prompt "…" [--pages 8] [--chars a,b] [--tone "…"] [--autopilot]` | Generate the chapter from one prompt (AI). Without `--autopilot` it stops at the review points; with `--wait` it follows the run and prints each step's progress |
+| `manga episode status <chapter>` · `episode approve <chapter>` · `episode autopilot <chapter>` · `episode cancel <chapter>` | Show the latest run, continue past a review point, run to the end, or cancel it and its jobs |
+| `manga episode edit <chapter> <step> --file <out.json>` · `episode rerun <chapter> <step> [--confirm]` | Replace a step's output, or run a step again (and every later step); `--confirm` allows replacing the chapter's pages |
+| `manga export <page\|chapter> [--format pdf\|png] [--out <dir>]` | Export a page, or a whole chapter (cover first, plus `chapter.pdf`), at print size; default folder `<library>/exports/<manga>/<chapter>` |
 | `manga jobs [--watch] [--status <s>]` · `manga cancel <job>` | Background jobs |
 
 The exit code is `0` on success, `1` for API or validation errors (the message goes to stderr), and `2` for usage errors.
@@ -118,7 +124,10 @@ npm run typecheck       # tsc --build --force, then the UI's own tsc -p
 npm run dev             # tsc --build, then tsc --build --watch + the server (node --watch) + Vite, together
 npm run build           # tsc --build, then the UI's vite build into packages/ui/dist (the server serves it at /)
 npm run e2e             # build, then the Playwright specs in e2e/ against the built UI
+npm run smoke           # live smoke test: real Claude + ComfyUI, one episode and its export (slow; uses the GPU)
 ```
+
+`npm run smoke` needs `npm run build` first, a logged-in `claude` CLI and a working ComfyUI. It starts its own server on port 4398 (`SMOKE_PORT` overrides it) with a throwaway library in the OS temp folder (`SMOKE_LIBRARY` names another one), never port 4317 or your library.
 
 The UI dev server is `http://127.0.0.1:5173`; it proxies `/api` (with the WebSocket) and `/files` to the server. Open the UI there during `npm run dev`; the built UI is served by the server itself at `http://127.0.0.1:4317/`.
 
