@@ -8,13 +8,34 @@ import { planUpscales, type UpscalePlan } from './hires.js';
 import { planExport } from './paths.js';
 import { mergePdfs } from './pdf.js';
 
-export interface ExportJobDeps { baseUrl(): string; render?: PageRenderer; probeUi?(baseUrl: string): Promise<void> }
+export interface ExportJobDeps { baseUrl(): string; render?: PageRenderer; probeUi?(baseUrl: string, signal?: AbortSignal): Promise<void> }
 
-/** The print route is a UI route: without packages/ui/dist the server answers JSON 404 and Chromium would wait 60 s for nothing. */
-export async function probeUi(baseUrl: string): Promise<void> {
-  const res = await fetch(`${baseUrl}/render/page/probe`).catch(() => null);
-  const type = res?.headers.get('content-type') ?? '';
-  if (!res?.ok || !type.includes('text/html')) {
+/** How long the UI check waits for this server to answer. */
+export const PROBE_TIMEOUT_MS = 10_000;
+
+function errorDetail(err: unknown): string {
+  const cause = err instanceof Error && err.cause instanceof Error ? `: ${err.cause.message}` : '';
+  return `${err instanceof Error ? err.message : String(err)}${cause}`;
+}
+
+/**
+ * The print route is a UI route: without packages/ui/dist the server answers JSON 404 and Chromium would wait 60 s for
+ * nothing. M4 (review): bounded by `signal` (the job's; an abort rethrows its reason) and PROBE_TIMEOUT_MS, and a server
+ * that cannot be reached is reported as such, not as a missing UI.
+ */
+export async function probeUi(baseUrl: string, signal?: AbortSignal): Promise<void> {
+  const timeout = AbortSignal.timeout(PROBE_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl}/render/page/probe`, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+  } catch (err) {
+    if (signal?.aborted) throw signal.reason;
+    if (timeout.aborted) throw new PermanentError(`The export server at ${baseUrl} did not answer the UI check within ${PROBE_TIMEOUT_MS / 1000} s`);
+    throw new PermanentError(`Could not reach the export server at ${baseUrl} to check the UI: ${errorDetail(err)}`);
+  }
+  await res.body?.cancel().catch(() => undefined); // only the status and type matter
+  const type = res.headers.get('content-type') ?? '';
+  if (!res.ok || !type.includes('text/html')) {
     throw new PermanentError('The UI is not built (packages/ui/dist is missing): run "npm run build" before exporting');
   }
 }
@@ -62,11 +83,15 @@ export function exportJobHandler(deps: ExportJobDeps): JobHandler {
   return async (ctx): Promise<ExportRenderResult> => {
     const payload = ExportSchema.parse(ctx.job.payload) as ExportRenderPayload;
     const plan = planExport(ctx.store, payload);
-    await ensureHires(ctx, plan.items.map((i) => i.pageId));
     const baseUrl = deps.baseUrl();
-    await (deps.probeUi ?? probeUi)(baseUrl);
+    // M5 (review): check the UI first, so a missing UI fails at once without spending GPU time on upscales.
+    await (deps.probeUi ?? probeUi)(baseUrl, ctx.signal);
+    await ensureHires(ctx, plan.items.map((i) => i.pageId));
     ctx.signal.throwIfAborted();
     // Task 12: only this export's own files are written into the plan's dir; nothing else there is cleared or deleted.
+    // M3 (review), partial failure: page files are overwritten in place, each written whole by Chromium. An export
+    // that fails at page k leaves this run's pages 1..k beside the previous export's later pages and chapter.pdf;
+    // the failed job says so, and a re-run replaces them. chapter.pdf itself is replaced atomically (mergePdfs).
     await mkdir(plan.dir, { recursive: true });
     const files = await (deps.render ?? renderWithChromium)({
       baseUrl, items: plan.items, format: plan.format, pageFormat: plan.pageFormat, signal: ctx.signal,

@@ -1,6 +1,6 @@
 // packages/server/test/export-job.test.ts
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
@@ -70,6 +70,16 @@ describe('pdf helpers', () => {
     await onePagePdf(b);
     const out = await mergePdfs([a, b], join(lib.dir, 'all.pdf'));
     expect((await PDFDocument.load(await readFile(out))).getPageCount()).toBe(2);
+  });
+
+  it('M3: replaces an existing merged PDF atomically, leaving no temp file behind', async () => {
+    const a = join(lib.dir, 'a.pdf');
+    const out = join(lib.dir, 'all.pdf');
+    await onePagePdf(a);
+    await writeFile(out, 'stale');
+    await mergePdfs([a, a, a], out);
+    expect((await PDFDocument.load(await readFile(out))).getPageCount()).toBe(3);
+    expect((await readdir(lib.dir)).filter((f) => f.endsWith('.tmp'))).toEqual([]);
   });
 
   it('scales the print-pixel layout onto the paper width', () => {
@@ -161,6 +171,25 @@ describe('exportJobHandler', () => {
     expect(rendered).toEqual([]);
   });
 
+  it('M5: checks the UI before queueing any upscale, so a missing UI fails without GPU work', async () => {
+    const { page } = lowResPage();
+    const queue = new FakeQueue(lib.store).on('image.upscale', () => ({ imageId: 'im_unused0000' }));
+    const probe = async (): Promise<void> => { throw new Error('The UI is not built'); };
+    const handler = exportJobHandler({ baseUrl: () => 'http://127.0.0.1:1', render: stubRenderer([]), probeUi: probe });
+    await expect(handler(exportContext({ target: { type: 'page', id: page.page.id }, format: 'png' }, queue))).rejects.toThrow('The UI is not built');
+    expect(queue.jobs('image.upscale')).toEqual([]);
+  });
+
+  it('M4: a server that cannot be reached is not reported as a missing UI', async () => {
+    await expect(probeUi('http://127.0.0.1:1')).rejects.toThrow('Could not reach the export server at http://127.0.0.1:1 to check the UI');
+  });
+
+  it('M4: the UI check stops at once when the job is aborted', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('cancelled'));
+    await expect(probeUi('http://127.0.0.1:1', controller.signal)).rejects.toThrow('cancelled');
+  });
+
   it('refuses to export when the UI is not built', async () => {
     server = await startM4TestServer({ uiDir: null });
     await expect(probeUi(server.url)).rejects.toThrow('The UI is not built (packages/ui/dist is missing): run "npm run build" before exporting');
@@ -175,12 +204,13 @@ describe('export routes', { timeout: 60_000 }, () => {
     await server.api('POST', `/api/chapters/${chapter.id}/pages`, { layoutPreset: TWO_PANEL_PRESET });
     expect((await server.api<ApiErrorBody>('POST', '/api/export', { target: { type: 'chapter', id: chapter.id }, format: 'tiff' })).status).toBe(400);
     expect((await server.api<ApiErrorBody>('POST', '/api/export', { target: { type: 'chapter', id: 'ch_missing000' } })).status).toBe(404);
+    expect((await server.api<ApiErrorBody>('POST', '/api/export', { target: { type: 'page', id: 'pg_missing000' } })).status).toBe(404);
     const { body } = await server.api<JobRef>('POST', '/api/export', { target: { type: 'chapter', id: chapter.id } });
     const job = await server.until(async () => {
       const j = (await server!.api<Job>('GET', `/api/jobs/${body.jobId}`)).body;
       return j.status === 'failed' || j.status === 'succeeded' ? j : null;
     });
-    expect(job).toMatchObject({ kind: 'export.render', lane: 'cpu', status: 'failed' });
+    expect(job).toMatchObject({ kind: 'export.render', lane: 'cpu', status: 'failed', maxAttempts: 1, attempts: 1 });
     expect(job.error).toContain('The UI is not built');
   });
 
@@ -200,5 +230,6 @@ describe('export routes', { timeout: 60_000 }, () => {
     const print = (await server.api<PageDetail>('GET', `/api/pages/${page.page.id}/print`)).body;
     expect(print.panels[0]!.activeImageId).toBe(up.id);
     expect((await server.api<PageDetail>('GET', `/api/pages/${page.page.id}`)).body.panels[0]!.activeImageId).toBe(base.id);
+    expect((await server.api<ApiErrorBody>('GET', '/api/pages/pg_missing000/print')).status).toBe(404);
   });
 });

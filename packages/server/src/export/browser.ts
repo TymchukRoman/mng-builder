@@ -19,6 +19,8 @@ export function pdfScale(format: PageFormat): number {
 }
 
 const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+/** Playwright appends a multi-line call log; the job error keeps its first line. */
+const firstLine = (text: string): string => text.split('\n', 1)[0] ?? text;
 
 /**
  * One Chromium (the headless shell) per export job; one tab reused for every page. The browser is always closed, and
@@ -48,7 +50,14 @@ export const renderWithChromium: PageRenderer = async (req) => {
       if (req.signal.aborted) throw cancelled();
       req.onPage?.(i, req.items.length);
       // Contract E: ?hires=1 makes the print route load GET /api/pages/:id/print (the upscaled images).
-      await page.goto(`${req.baseUrl}/render/page/${encodeURIComponent(item.pageId)}?hires=1`, { waitUntil: 'load' });
+      const url = `${req.baseUrl}/render/page/${encodeURIComponent(item.pageId)}?hires=1`;
+      try {
+        await page.goto(url, { waitUntil: 'load', timeout });
+      } catch (err) {
+        // M1 (review): a stuck or failed navigation names the page, like a render timeout does.
+        if (err instanceof errors.TimeoutError) throw new PermanentError(`Export timed out after ${Math.round(timeout / 1000)} s opening page ${item.pageId}`);
+        throw new PermanentError(`Export could not open page ${item.pageId}: ${firstLine(messageOf(err))}`);
+      }
       try {
         // M3's print route sets __MANGA_RENDER_READY__ when fonts and images are in, or __MANGA_RENDER_ERROR__ (a string) when loading failed.
         await page.waitForFunction('window.__MANGA_RENDER_READY__ === true || typeof window.__MANGA_RENDER_ERROR__ === "string"', undefined, { timeout });
