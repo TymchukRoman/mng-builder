@@ -51,11 +51,19 @@ describe('character images', () => {
       const deb = seedCharacter(lib.store, manga.id, 'Debil', '1other, fat man, long hair, wavy hair, aristocratic clothes');
       const result = await generatePortrait(ctx(), services, { characterId: deb.id });
       const gen = lib.store.images.require(result.imageId).gen!;
-      expect(gen.prompt).toContain('lineart, 1boy, fat man, long hair, wavy hair, aristocratic clothes, solo, male focus, upper body, portrait');
+      expect(gen.prompt).toContain('lineart, 1boy, mature male, fat man, long hair, wavy hair, aristocratic clothes, solo, male focus, upper body, portrait');
       expect(gen.prompt).not.toContain('1other');
       expect(gen.negative).toContain(`multiple views, 2girls, 2boys, multiple persons, cropped head, out of frame, ${ANTI_FEMALE_NEGATIVE}`);
       expect(loraStrengths()).toEqual([['Mnga-illustriousXL_v01_V1-CAME.safetensors', 0.4]]);
       expect(lib.store.characters.require(deb.id).appearanceTags).toBe('1other, fat man, long hair, wavy hair, aristocratic clothes');
+    });
+
+    it('gives a teenage boy no `mature male`', async () => {
+      const { manga } = seedManga(lib.store);
+      const kid = seedCharacter(lib.store, manga.id, 'Kenta', '1boy, teen, school uniform');
+      const gen = lib.store.images.require((await generatePortrait(ctx(), services, { characterId: kid.id })).imageId).gen!;
+      expect(gen.prompt).toContain('1boy, teen, school uniform, solo, male focus');
+      expect(gen.prompt).not.toContain('mature male');
     });
 
     it('leaves a female portrait as it was: no male focus, no anti-female negative, the Mnga LoRA at 0.8', async () => {
@@ -73,7 +81,7 @@ describe('character images', () => {
       const ren = giveRefs(lib.store, seedCharacter(lib.store, manga.id, 'Ren', 'king, beard, crown'), ['portrait']);
       const fullbody = (await generateSlot(ctx(), services, { characterId: ren.id, slot: 'fullbody' })).imageId;
       const full = lib.store.images.require(fullbody).gen!;
-      expect(full.prompt).toContain('1boy, king, beard, crown, solo, male focus, full body');
+      expect(full.prompt).toContain('1boy, mature male, king, beard, crown, solo, male focus, full body');
       expect(full.negative).toContain(ANTI_FEMALE_NEGATIVE);
       expect(loraStrengths()).toEqual([['Mnga-illustriousXL_v01_V1-CAME.safetensors', 0.4]]);
       const side = (await generateSlot(ctx(), services, { characterId: ren.id, slot: 'side' })).imageId;

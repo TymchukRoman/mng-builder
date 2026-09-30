@@ -86,6 +86,12 @@ describe('retryPatch', () => {
       .toEqual({ seed: 8, sceneSuffix: 'Exactly two people: one man and one woman. She sits on the bench.' });
   });
 
+  it('says "grown man" in a natural retry count when every man is grown, as the build does', () => {
+    const man: RetryTarget = { cast: { girl: 0, boy: 1, other: 0 }, grownMen: true, hasPortraitRefs: true, style: 'natural' };
+    expect(retryPatch([{ kind: 'character-count', note: 'two people' }], s, 3, man)).toEqual({ seed: 3, sceneSuffix: 'Exactly one grown man.' });
+    expect(retryPatch([{ kind: 'character-count', note: 'two people' }], s, 3, { ...man, style: 'tags' })).toEqual({ seed: 3, sceneSuffix: '1boy, solo, male focus' });
+  });
+
   it('puts only the wanted state in the scene, never the reviewer\'s "X instead of Y" note (M4 final S1)', () => {
     const natural: RetryTarget = { ...solo, style: 'natural' };
     const note = 'The kitten is perched on top of the vending machine instead of peeking from a box.';
@@ -131,7 +137,7 @@ describe('people count', () => {
     const extra = [stranger.id, 'ch_gone'].map((characterId) => ({ characterId, pose: '', expression: '', position: 'left' as const }));
     const updated = lib.store.panels.update(panel.id, { script: { ...panel.script, characters: [...panel.script.characters, ...extra] } });
     expect(manga.id).not.toBe(other.manga.id);
-    expect(retryTarget(lib.store, DEFAULT_SETTINGS, updated)).toEqual({ cast: { girl: 1, boy: 0, other: 0 }, hasPortraitRefs: true, style: 'tags' });
+    expect(retryTarget(lib.store, DEFAULT_SETTINGS, updated)).toEqual({ cast: { girl: 1, boy: 0, other: 0 }, grownMen: false, hasPortraitRefs: true, style: 'tags' });
   });
 
   it('a pet in the panel script is not a person on the wired retry path (Task 22 fix A; review minor 5)', () => {

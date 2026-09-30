@@ -71,6 +71,41 @@ export function withCountTag(appearanceTags: string): string {
   return hasCountTag(appearanceTags) ? appearanceTags : `${count}, ${appearanceTags}`;
 }
 
+/** Words that make a man an adult (GPU check: the Mnga LoRA at 0.4 drew "fat man" as a soft young boy until
+ *  `mature male` followed 1boy), and the youth words that rule it out. Whole words, like genderOf. */
+const ADULT_MALE = wordsPattern(['man', 'men', 'old man', 'fat man', 'elderly', 'middle-aged', 'middle aged', 'adult', 'gentleman', 'father',
+  'husband', 'grandfather', 'grandpa', 'king', 'lord', 'uncle', 'beard', 'bearded']);
+const YOUTH = wordsPattern(['boy', 'boys', 'teen', 'teens', 'teenage', 'teenager', 'young', 'child', 'children', 'kid', 'kids', 'shota', 'student']);
+const MATURE_MALE = /(?<![a-z0-9])mature male(?![a-z0-9])/;
+const has = (re: RegExp, text: string): boolean => (text.match(re) ?? []).length > 0;
+
+/** A male whose tags name an adult (man, beard, king, …) and no youth (boy, teen, young, student, …), and that has
+ *  no `mature male` yet: the prompt builders give him `mature male`. */
+export function isGrownMan(appearanceTags: string): boolean {
+  if (genderOf(appearanceTags) !== 'male') return false;
+  const text = plain(appearanceTags);
+  return has(ADULT_MALE, text) && !has(YOUTH, text) && !MATURE_MALE.test(text);
+}
+
+const isMaleCountTag = (tag: string): boolean => /^(?:\d+\+?\s?boys?|multiple boys)$/.test(plain(tag).trim());
+
+/** `mature male` right after the male count tag (or in front without one) when isGrownMan; else the tags as they are.
+ *  Prompt build only: stored tags are not rewritten. */
+export function withMatureMale(appearanceTags: string): string {
+  if (!isGrownMan(appearanceTags)) return appearanceTags;
+  const parts = appearanceTags.split(',');
+  const at = parts.findIndex(isMaleCountTag);
+  if (at < 0) return `mature male, ${appearanceTags}`;
+  return [...parts.slice(0, at + 1), ' mature male', ...parts.slice(at + 1)].join(',');
+}
+
+/** Every male human of the cast is grown (isGrownMan, or already `mature male`), and there is one: the natural
+ *  count sentence says "grown man". */
+export function grownMen(cast: ReadonlyArray<{ appearanceTags: string }>): boolean {
+  const men = cast.filter((c) => !hasNoHumansTag(c.appearanceTags) && genderOf(c.appearanceTags) === 'male');
+  return men.length > 0 && men.every((c) => isGrownMan(c.appearanceTags) || MATURE_MALE.test(plain(c.appearanceTags)));
+}
+
 /** How many of a panel's humans are boys (men), girls (women) and others; non-humans (`no humans`) are not counted. */
 export interface CastCount { girl: number; boy: number; other: number }
 
@@ -115,19 +150,23 @@ export function countTag(count: CastCount): string {
 
 const NOUNS: Record<keyof CastCount, [string, string]> = { boy: ['man', 'men'], girl: ['woman', 'women'], other: ['person', 'people'] };
 
-/** The people count as a sentence for the natural style (qwen/klein scenes are plain English sentences). */
-export function countSentence(count: CastCount): string {
+/**
+ * The people count as a sentence for the natural style (qwen/klein scenes are plain English sentences). With
+ * `grownMen` (every man of the cast is grown, see grownMen) the men are "grown men", the natural form of `mature male`.
+ */
+export function countSentence(count: CastCount, opts: { grownMen?: boolean } = {}): string {
   const n = humanCount(count);
   if (n === 0) return 'No people.';
+  const noun = (kind: keyof CastCount, k: number): string => `${kind === 'boy' && opts.grownMen === true ? 'grown ' : ''}${NOUNS[kind][k === 1 ? 0 : 1]}`;
   const present = (['boy', 'girl', 'other'] as const).filter((kind) => count[kind] > 0);
   if (present.length === 1) {
     const kind = present[0]!;
-    return `Exactly ${numberWord(n)} ${NOUNS[kind][n === 1 ? 0 : 1]}.`;
+    return `Exactly ${numberWord(n)} ${noun(kind, n)}.`;
   }
   const parts = present.map((kind) => {
     const k = count[kind];
-    const noun = kind === 'other' ? (k === 1 ? 'other person' : 'other people') : NOUNS[kind][k === 1 ? 0 : 1];
-    return `${numberWord(k)} ${noun}`;
+    const word = kind === 'other' ? (k === 1 ? 'other person' : 'other people') : noun(kind, k);
+    return `${numberWord(k)} ${word}`;
   });
   return `Exactly ${numberWord(n)} people: ${parts.slice(0, -1).join(', ')} and ${parts.at(-1)!}.`;
 }

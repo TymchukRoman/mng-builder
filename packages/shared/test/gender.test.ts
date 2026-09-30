@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { ANTI_FEMALE_NEGATIVE, antiFemaleNegative, castCount, countSentence, countTag, genderOf, withCountTag } from '@manga/shared';
+import {
+  ANTI_FEMALE_NEGATIVE, antiFemaleNegative, castCount, countSentence, countTag, genderOf, grownMen, isGrownMan, withCountTag, withMatureMale,
+} from '@manga/shared';
 
 describe('genderOf (the subject gender from appearance tags)', () => {
   it.each([
@@ -105,5 +107,36 @@ describe('people count (one source of truth for the panel build and the retry)',
     expect(antiFemaleNegative(castCount([c('1boy'), c('1girl')]))).toBe('');
     expect(antiFemaleNegative(castCount([c('1girl')]))).toBe('');
     expect(antiFemaleNegative(castCount([]))).toBe('');
+  });
+});
+
+describe('mature male (GPU check: Mnga 0.4 drew "fat man" as a soft young boy until `mature male` followed 1boy)', () => {
+  it('marks a man whose tags name an adult, and no youth', () => {
+    for (const tags of ['1other, fat man, long hair', '1boy, beard', 'king, crown', '1boy, middle-aged, suit', 'old man', '1boy, elderly', 'grandpa'])
+      expect(isGrownMan(tags), tags).toBe(true);
+    for (const tags of ['1boy, teen, school uniform', '1boy, young man', '1boy, long dark hair, mask', 'fat man, student', '1boy, kid',
+      '1boy, mature male, beard', '1girl, adult', 'old woman', 'no humans, man-eating plant'])
+      expect(isGrownMan(tags), tags).toBe(false);
+  });
+
+  it('puts `mature male` right after the count tag, or in front when there is none', () => {
+    expect(withMatureMale(withCountTag('1other, fat man, long hair, wavy hair, aristocratic clothes')))
+      .toBe('1boy, mature male, fat man, long hair, wavy hair, aristocratic clothes');
+    expect(withMatureMale('tall, 1boy, beard')).toBe('tall, 1boy, mature male, beard');
+    expect(withMatureMale('fat man, long hair')).toBe('mature male, fat man, long hair');
+    for (const tags of ['1boy, teen', '1boy, mature male, beard', '1girl, adult', '1boy, mask']) expect(withMatureMale(tags), tags).toBe(tags);
+  });
+
+  it('says "grown man" in the count sentence when every man is grown', () => {
+    const c = (appearanceTags: string) => ({ appearanceTags });
+    const men = [c('1boy, beard'), c('king')];
+    expect(grownMen(men)).toBe(true);
+    expect(grownMen([c('1boy, mature male')])).toBe(true);
+    expect(grownMen([c('1boy, beard'), c('1boy, teen')])).toBe(false);
+    expect(grownMen([c('1girl')])).toBe(false);
+    expect(countSentence(castCount([c('fat man')]), { grownMen: true })).toBe('Exactly one grown man.');
+    expect(countSentence(castCount(men), { grownMen: true })).toBe('Exactly two grown men.');
+    expect(countSentence(castCount([c('beard'), c('1girl')]), { grownMen: true })).toBe('Exactly two people: one grown man and one woman.');
+    expect(countSentence(castCount([c('beard')]))).toBe('Exactly one man.');
   });
 });

@@ -1,5 +1,5 @@
 import {
-  BASE_NEGATIVE, allMale, antiFemaleNegative, assemblePrompt, castCount, withCountTag,
+  BASE_NEGATIVE, allMale, antiFemaleNegative, assemblePrompt, castCount, withCountTag, withMatureMale,
   type Character, type CharacterRefsPayload, type CharacterRefsResult, type ImageGenerateResult, type LoraRef, type Manga,
 } from '@manga/shared';
 import { generateImage } from '../imaging/generate.js';
@@ -35,14 +35,14 @@ interface SheetSubject { characterTags: string[]; scene: string; extraNegative: 
 
 /**
  * A portrait or sheet view of one character: its tags with the count tag their words call for (a "1other, fat man"
- * is a 1boy), and for a man "male focus" after "solo", the anti-female negative (when the recipe takes a negative)
+ * is a 1boy) and `mature male` after it for a grown man, and for a man "male focus" after "solo", the anti-female negative (when the recipe takes a negative)
  * and the style LoRA at its male strength. Roman: the Mnga LoRA drew every man as a woman.
  */
 function sheetSubject(manga: Manga, character: Character, recipe: string, scene: string, negative: string): SheetSubject {
   const count = castCount([character]);
   const antiFemale = takesNegative(recipe) ? antiFemaleNegative(count) : '';
   return {
-    characterTags: [withCountTag(character.appearanceTags)].filter(nonEmpty),
+    characterTags: [withMatureMale(withCountTag(character.appearanceTags))].filter(nonEmpty),
     scene: allMale(count) ? scene.replace(/^solo\b/, 'solo, male focus') : scene,
     extraNegative: [negative, antiFemale].filter(nonEmpty).join(', '),
     loras: styleLoras(manga, recipe, count),

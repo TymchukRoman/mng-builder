@@ -1,5 +1,5 @@
 import {
-  castCount, countSentence, countTag, estimateReviewSeconds, estimateSeconds, formatEstimate, stepIndex, type CastCount,
+  castCount, countSentence, countTag, estimateReviewSeconds, grownMen, estimateSeconds, formatEstimate, stepIndex, type CastCount,
   type Character, type EpisodeRun, type Image, type ImageGeneratePayload, type ImageGenerateResult, type ImageReviewPayload,
   type Job, type Manga, type Panel, type RenderOutput, type ReviewResult, type Settings,
 } from '@manga/shared';
@@ -21,7 +21,8 @@ export const TEXT_NEGATIVE = 'text, letters, words, writing';
 /** F14: an anatomy flag goes into the negative prompt; the reviewer's note names the defect, not the wanted result. */
 export const ANATOMY_NEGATIVE = 'bad anatomy, extra arms, extra limbs, bad hands';
 export interface RetryPatch { seed: number; recipe?: string; negativeExtra?: string; sceneSuffix?: string }
-export interface RetryTarget { cast: CastCount; hasPortraitRefs: boolean; style: PromptStyle }
+/** `grownMen`: every man of the cast is grown, so the natural count sentence says "grown man" as the build's does. */
+export interface RetryTarget { cast: CastCount; hasPortraitRefs: boolean; style: PromptStyle; grownMen?: boolean }
 
 /**
  * The retry facts of a panel: its people count (panelCharacters, the cast the panel build counts, so a
@@ -33,6 +34,7 @@ export function retryTarget(store: Store, settings: Settings, panel: Panel): Ret
   const route = routeRecipe({ settings, manga, panel, refCount: refCharacters.length, charCount: characters.length });
   return {
     cast: castCount(characters),
+    grownMen: grownMen(characters),
     hasPortraitRefs: refCharacters.some((c) => c.refs.portrait !== undefined && store.images.get(c.refs.portrait) !== null),
     style: promptStyleFor(route.recipe),
   };
@@ -59,7 +61,7 @@ export function retryPatch(issues: ReviewResult['issues'], settings: Settings, s
     .filter((i) => i.kind === 'script-mismatch' || i.kind === 'other')
     .map((i) => i.fix?.trim() ?? '')
     .filter((n) => n.length > 0);
-  const count = style === 'natural' ? countSentence(target.cast) : countTag(target.cast);
+  const count = style === 'natural' ? countSentence(target.cast, { grownMen: target.grownMen === true }) : countTag(target.cast);
   const scene = [...(kinds.has('character-count') ? [count] : []), ...notes];
   return {
     seed,

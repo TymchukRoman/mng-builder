@@ -42,8 +42,15 @@ describe('castPrompt (deterministic panel people count from the cast)', () => {
   });
 
   it('counts a 1other man as a boy and a mixed panel without male focus', () => {
-    expect(castPrompt('tags', [c('1other, fat man, long hair')], 'solo').characterTags).toEqual(['1boy, solo, male focus', 'fat man, long hair']);
+    expect(castPrompt('tags', [c('1other, fat man, long hair')], 'solo').characterTags).toEqual(['1boy, solo, male focus', 'mature male, fat man, long hair']);
     expect(castPrompt('tags', [c('1boy'), c('1girl, bob cut')], '1girl, park').characterTags).toEqual(['1boy, 1girl', 'bob cut']);
+  });
+
+  it('gives `mature male` to the grown man only, after the single count set (GPU check: Mnga 0.4 drew a soft boy)', () => {
+    const out = castPrompt('tags', [c('1other, fat man, long hair'), c('1boy, teen, school uniform')], 'hall');
+    expect(out.characterTags).toEqual(['2boys, male focus', 'mature male, fat man, long hair', 'teen, school uniform']);
+    expect(castPrompt('natural', [c('1boy, beard')], 'He waits.').scene).toBe('Exactly one grown man. He waits.');
+    expect(castPrompt('natural', [c('1boy, beard'), c('1boy, teen')], 'They wait.').scene).toBe('Exactly two men. They wait.');
   });
 
   it('writes the count as the first sentence for the natural style', () => {

@@ -80,10 +80,21 @@ describe('image.generate (panel)', () => {
       await run(male.id);
       await run(female.id);
       expect(loraStrengths(0)).toEqual([['Mnga-illustriousXL_v01_V1-CAME.safetensors', 0.4]]);
-      expect(texts(0)[0]).toContain('1boy, solo, male focus, fat man, long hair');
+      expect(texts(0)[0]).toContain('1boy, solo, male focus, mature male, fat man, long hair');
       expect(loraStrengths(1)).toEqual([['Mnga-illustriousXL_v01_V1-CAME.safetensors', 0.8]]);
       expect(texts(1)[1]).not.toContain(ANTI_FEMALE_NEGATIVE);
       expect(lib.store.images.get(lib.store.panels.require(male.id).activeImageId!)!.gen!.loras).toEqual([{ name: 'Mnga-illustriousXL_v01_V1-CAME.safetensors', strength: 0.4 }]);
+    });
+
+    it('gives `mature male` to the adult man of a panel and not to the boy beside him', async () => {
+      const { manga, panels } = seedManga(lib.store);
+      const father = seedCharacter(lib.store, manga.id, 'Father', '1boy, beard, farmer clothes');
+      const son = seedCharacter(lib.store, manga.id, 'Son', '1boy, teen, straw hat');
+      const panel = updatePanel(lib.store, panels[0]!.id, { characters: [stage(father.id), stage(son.id)] }, { prompt: { scene: 'field', negative: '' } });
+      await run(panel.id);
+      const [positive] = texts();
+      expect(positive).toContain('lineart, 2boys, male focus, mature male, beard, farmer clothes, teen, straw hat, field');
+      expect(positive!.match(/mature male/g)).toHaveLength(1);
     });
 
     it('a mixed panel counts 1boy, 1girl, uses the male LoRA strength and no anti-female negative', async () => {

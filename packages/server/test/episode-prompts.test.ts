@@ -131,6 +131,7 @@ describe('step contexts', () => {
     expect(system).toContain('start with the count tag: "1boy" for a male (a man, boy or old man), "1girl" for a female');
     expect(system).toContain('"1other" only for a human whose gender is genuinely non-binary or unknown');
     expect(system).toContain('for a man, male traits where they fit ("beard", "stubble", "broad shoulders")');
+    expect(system).toContain('An adult man gets "mature male" right after "1boy" (never a boy or a teenager).');
   });
 
   it("the outline closes the cast: an adaptation brings its canonical characters, crowds are not characters (Roman's Naruto run)", () => {

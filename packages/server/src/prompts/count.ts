@@ -1,4 +1,4 @@
-import { castCount, countSentence, countTag, humanCount, type CastCount } from '@manga/shared';
+import { castCount, countSentence, countTag, grownMen, humanCount, isGrownMan, type CastCount } from '@manga/shared';
 import type { PromptStyle } from '../imaging/route.js';
 import { normalizeTag } from './camera.js';
 
@@ -36,14 +36,17 @@ export interface CastPrompt {
  * The panel's subject: one people count computed from its cast (the panelCharacters the router counts, by genderOf,
  * the same count a character-count retry writes) in place of every count the LLM or a character's tags carry, so
  * the prompt has exactly one. The tags style gets the count tags ahead of the character tags (`1boy, solo, male
- * focus`); the natural style gets the count sentence ahead of the scene ("Exactly one man."). A cast without a
+ * focus`); the natural style gets the count sentence ahead of the scene ("Exactly one man.", "Exactly one grown man."
+ * when every man is grown). A grown man (isGrownMan) gets `mature male` at the front of his own tags. A cast without a
  * human (a pet only, or no characters: a crowd, a street) leaves everything as written, since extras are not in it.
  */
 export function castPrompt(style: PromptStyle, cast: ReadonlyArray<{ appearanceTags: string }>, scene: string): CastPrompt {
   const count = castCount(cast);
   const tags = cast.map((c) => c.appearanceTags);
   if (humanCount(count) === 0) return { characterTags: tags.filter((t) => t.trim() !== ''), scene, count };
-  const characterTags = tags.map(stripCountTags).filter((t) => t !== '');
+  // A grown man's own tags open with `mature male` (only his: a boy beside him gets none); the count set stays first.
+  const characterTags = tags.map((t) => (isGrownMan(t) ? ['mature male', stripCountTags(t)].filter((p) => p !== '').join(', ') : stripCountTags(t)))
+    .filter((t) => t !== '');
   if (style === 'tags') return { characterTags: [countTag(count), ...characterTags], scene: stripCountTags(scene), count };
-  return { characterTags, scene: [countSentence(count), stripCountSentences(scene)].filter((s) => s !== '').join(' '), count };
+  return { characterTags, scene: [countSentence(count, { grownMen: grownMen(cast) }), stripCountSentences(scene)].filter((s) => s !== '').join(' '), count };
 }

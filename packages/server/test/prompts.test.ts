@@ -34,6 +34,7 @@ describe('loadPrompt', () => {
     expect(text).toContain('`1boy` for a male (a man, boy or old man), `1girl` for a female');
     expect(text).toContain('`1other` only for a human whose gender is genuinely non-binary or unknown');
     expect(text).toContain('`beard`');
+    expect(text).toContain('For an adult man, put `mature male` right after `1boy`; never for a boy or a teenager.');
   });
 
   it('forbids appearance, names, lettering and camera framing in both scene prompts', () => {
