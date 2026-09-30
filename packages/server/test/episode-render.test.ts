@@ -136,6 +136,8 @@ describe('people count', () => {
     expect(countTag(castCount([c('1girl'), kitten]))).toBe('solo');
     expect(countTag(castCount([kitten]))).toBe('no humans');
     expect(countSentence(castCount([c('No Humans, dog')]))).toBe('No people.');
+    // Any spelling (M4 final S4, Task 22 review minor 1)
+    expect(castCount([c('1girl'), c('no_humans, dog'), c(' No  Human , cat')])).toEqual({ girl: 1, boy: 0, other: 0 });
   });
 
   it('counts only script characters that exist in this manga, as the renderer does', () => {

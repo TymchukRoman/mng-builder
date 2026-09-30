@@ -1,5 +1,5 @@
 import {
-  estimateSeconds, formatEstimate, stepIndex,
+  estimateSeconds, formatEstimate, hasNoHumansTag, stepIndex,
   type Character, type EpisodeRun, type Image, type ImageGeneratePayload, type ImageGenerateResult, type ImageReviewPayload,
   type Job, type Manga, type Panel, type RenderOutput, type ReviewResult, type Settings,
 } from '@manga/shared';
@@ -37,8 +37,8 @@ const NUMBER_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven
 export function castCount(cast: Array<Pick<Character, 'appearanceTags'>>): CastCount {
   const count: CastCount = { girl: 0, boy: 0, other: 0 };
   for (const c of cast) {
+    if (hasNoHumansTag(c.appearanceTags)) continue; // any spelling: no_humans, No Humans, no human (M4 final S4)
     const tags = c.appearanceTags.split(',').map((t) => t.trim().toLowerCase());
-    if (tags.includes('no humans')) continue;
     count[tags.includes('1girl') ? 'girl' : tags.includes('1boy') ? 'boy' : 'other'] += 1;
   }
   return count;

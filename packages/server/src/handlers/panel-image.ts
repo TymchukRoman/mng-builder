@@ -1,4 +1,4 @@
-import { assemblePrompt, type ImageGeneratePayload, type ImageGenerateResult } from '@manga/shared';
+import { assemblePrompt, dropNoHumansTags, hasNoHumansTag, type ImageGeneratePayload, type ImageGenerateResult } from '@manga/shared';
 import { generateImage, randomSeed, type GenerateRequest } from '../imaging/generate.js';
 import { RECIPES } from '../imaging/recipes/index.js';
 import { refineFor, routeRecipe } from '../imaging/route.js';
@@ -24,9 +24,12 @@ export async function generatePanelImage(
   const refineWith = p.recipe ? refineFor(settings, manga, recipeId) : route.refineWith;
   if (refineWith !== null && !RECIPES[refineWith]) throw new PermanentError(`Unknown refine recipe "${refineWith}" (settings.routing.bwRefine)`);
 
-  const scene = [panel.prompt.scene, p.sceneSuffix].filter(nonEmpty).join(', ');
+  // M4 final S4: a person in the cast wins over a pet's "no humans" (the Task 22 smoke got "1girl, …, no humans, kitten"),
+  // in the character tags and the scene alike, whatever the recipe's prompt style.
+  const tidy = characters.some((c) => !hasNoHumansTag(c.appearanceTags)) ? dropNoHumansTags : (t: string): string => t;
+  const scene = tidy([panel.prompt.scene, p.sceneSuffix].filter(nonEmpty).join(', '));
   const extraNegative = [panel.prompt.negative, p.negativeExtra].filter(nonEmpty).join(', ');
-  const characterTags = characters.map((c) => c.appearanceTags).filter(nonEmpty);
+  const characterTags = characters.map((c) => tidy(c.appearanceTags)).filter(nonEmpty);
   const { prompt, negative } = assemblePrompt({
     styleGuide: manga.styleGuide, colorMode: manga.colorMode, characterTags, scene,
     ...(extraNegative ? { extraNegative } : {}),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assemblePrompt, BASE_NEGATIVE, BW_TOKENS, type StyleGuide } from '@manga/shared';
+import { assemblePrompt, BASE_NEGATIVE, BW_TOKENS, dropNoHumansTags, hasNoHumansTag, isNoHumansTag, type StyleGuide } from '@manga/shared';
 
 const style: StyleGuide = { recipe: 'anime', stylePrompt: 'masterpiece, best quality', negativePrompt: 'lowres, bad hands', loras: [] };
 
@@ -41,5 +41,20 @@ describe('assemblePrompt', () => {
   it('skips empty parts instead of leaving double commas', () => {
     const r = assemblePrompt({ styleGuide: { ...style, stylePrompt: '', negativePrompt: '' }, colorMode: 'color', characterTags: ['', '  '], scene: '' });
     expect(r).toEqual({ prompt: '', negative: BASE_NEGATIVE });
+  });
+});
+
+describe('the "no humans" tag (M4 final S4)', () => {
+  it('recognises every spelling, and nothing else', () => {
+    for (const t of ['no humans', 'no_humans', ' No Humans ', 'NO  HUMANS', 'no human']) expect(isNoHumansTag(t), t).toBe(true);
+    for (const t of ['humans', 'no humanoid', 'non-human', 'solo']) expect(isNoHumansTag(t), t).toBe(false);
+    expect(hasNoHumansTag('kitten, No_Humans')).toBe(true);
+    expect(hasNoHumansTag('1girl, kitten')).toBe(false);
+  });
+
+  it('drops it from a tag list, leaving a list without it untouched', () => {
+    expect(dropNoHumansTags('no humans, kitten,  grey tabby')).toBe('kitten, grey tabby');
+    expect(dropNoHumansTags('1girl,  short hair')).toBe('1girl,  short hair');
+    expect(dropNoHumansTags('no_humans')).toBe('');
   });
 });

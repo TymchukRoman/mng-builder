@@ -86,6 +86,43 @@ describe('image.generate (panel)', () => {
     expect(negative).toContain('letters, writing');
   });
 
+  it('drops "no humans" (any spelling) when a person shares the panel, on the tags path (M4 final S4)', async () => {
+    const { manga, panels } = seedManga(lib.store);
+    const aiko = seedCharacter(lib.store, manga.id, 'Aiko', '1girl, short black hair');
+    const kitten = seedCharacter(lib.store, manga.id, 'Kitten', 'No_Humans, kitten, grey tabby');
+    const panel = updatePanel(lib.store, panels[0]!.id, { characters: [stage(aiko.id), stage(kitten.id)] }, {
+      prompt: { scene: 'solo, no  humans, crouching, vending machine', negative: '' },
+    });
+    await run(panel.id);
+    const [positive] = nodesOf(fake.graphs[0]!, 'CLIPTextEncode').map((n) => String(n.inputs['text']));
+    expect(positive).toContain('1girl, short black hair, kitten, grey tabby, solo, crouching, vending machine');
+    expect(positive.toLowerCase().replace(/_/g, ' ')).not.toMatch(/no\s+humans/);
+  });
+
+  it('keeps "no humans" for a panel whose cast has no person (M4 final S4)', async () => {
+    const { manga, panels } = seedManga(lib.store);
+    const kitten = seedCharacter(lib.store, manga.id, 'Kitten', 'no humans, kitten');
+    const panel = updatePanel(lib.store, panels[0]!.id, { characters: [stage(kitten.id)] }, { prompt: { scene: 'no humans, box, rain', negative: '' } });
+    await run(panel.id);
+    const [positive] = nodesOf(fake.graphs[0]!, 'CLIPTextEncode').map((n) => String(n.inputs['text']));
+    expect(positive).toContain('no humans, kitten, no humans, box, rain');
+  });
+
+  it('drops "no humans" on the natural path (qwen-edit-ref) too (M4 final S4)', async () => {
+    const { manga, panels } = seedManga(lib.store);
+    const aiko = giveRefs(lib.store, seedCharacter(lib.store, manga.id, 'Aiko', '1girl, silver hair'), ['portrait']);
+    const kitten = giveRefs(lib.store, seedCharacter(lib.store, manga.id, 'Kitten', 'no humans, kitten'), ['portrait']);
+    const panel = updatePanel(lib.store, panels[0]!.id, { characters: [stage(aiko.id, 'left'), stage(kitten.id, 'right')] }, {
+      refCharacterIds: [aiko.id, kitten.id], prompt: { scene: 'The girl from picture 1 holds the kitten from picture 2 under an umbrella.', negative: '' },
+    });
+    await run(panel.id);
+    const graph = fake.graphs[0]!;
+    expect(nodesOf(graph, 'TextEncodeQwenImageEditPlus')).not.toHaveLength(0); // the natural-language recipe
+    const text = JSON.stringify(graph);
+    expect(text).toContain('holds the kitten from picture 2');
+    expect(text.toLowerCase()).not.toContain('no humans');
+  });
+
   it('routes two referenced characters through qwen-edit-ref, then refines B&W with anime-refine', async () => {
     // F1b: DEFAULT_SETTINGS.routing.bwRefine is null now, so the refine pass must be turned on explicitly.
     lib.store.settings.patch({ routing: { bwRefine: 'anime-refine' } });

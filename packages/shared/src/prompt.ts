@@ -16,6 +16,29 @@ function stripBannedWords(text: string): string {
     .join(', ');
 }
 
+/**
+ * The Danbooru "no humans" count tag, however it is written: `no humans`, `no_humans`, `No Humans`, `no human`, extra
+ * spaces (M4 final S4 and the Task 22 review minor 1: a variant must not count a pet as a person).
+ */
+export function isNoHumansTag(tag: string): boolean {
+  return /^no humans?$/.test(tag.toLowerCase().replace(/_/g, ' ').replace(/\s+/g, ' ').trim());
+}
+
+/** Whether a comma-separated tag list carries the "no humans" tag. */
+export function hasNoHumansTag(tags: string): boolean {
+  return tags.split(',').some(isNoHumansTag);
+}
+
+/**
+ * Drops every "no humans" tag from a comma-separated list (M4 final S4: a panel with a person in its cast must not ask
+ * for "no humans" because a pet in it is tagged so). A list without one is returned unchanged, character tags verbatim.
+ */
+export function dropNoHumansTags(text: string): string {
+  const parts = text.split(',');
+  if (!parts.some(isNoHumansTag)) return text;
+  return parts.filter((p) => !isNoHumansTag(p)).map((p) => p.trim()).filter((p) => p.length > 0).join(', ');
+}
+
 function joinParts(parts: ReadonlyArray<string | undefined>): string {
   return parts
     .map((part) => (part ?? '').trim())
