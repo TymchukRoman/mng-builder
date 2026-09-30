@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS } from '@manga/shared';
 import { openStore, type JobInsert, type Store } from '../src/store/index.js';
+import { seedEpisodeWorld, seedRun } from './helpers/episode-fixtures.js';
 import { seedManga } from './helpers/store.js';
 import { tempDir, type TempDir } from './helpers/tmp.js';
 
@@ -76,6 +77,19 @@ describe('job repo', () => {
     expect(store.jobs.list({ limit: 10 }).map((j) => j.id)).toEqual([c.id, b.id, a.id]);
     expect(store.jobs.list({ status: 'failed', limit: 10 }).map((j) => j.id)).toEqual([b.id]);
     expect(store.jobs.list({ limit: 2 })).toHaveLength(2);
+  });
+
+  it("lists one episode run's jobs, oldest first, whatever their status", () => {
+    const { chapter } = seedEpisodeWorld(store);
+    const run = seedRun(store, chapter.id);
+    const other = seedRun(store, chapter.id);
+    const a = insert({ episodeRunId: run.id });
+    insert({ episodeRunId: other.id });
+    insert();
+    const b = insert({ episodeRunId: run.id, kind: 'image.review', lane: 'claude' });
+    store.jobs.update(a.id, { status: 'succeeded' });
+    expect(store.jobs.listByEpisodeRun(run.id).map((j) => [j.id, j.status])).toEqual([[a.id, 'succeeded'], [b.id, 'queued']]);
+    expect(store.jobs.listByEpisodeRun('er_missing')).toEqual([]);
   });
 });
 

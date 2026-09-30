@@ -4,8 +4,8 @@ import {
   type CharacterRefsPayload, type ImageGeneratePayload, type ImageReviewPayload, type JobRef, type JobRefs, type RecipeInfo,
 } from '@manga/shared';
 import type { CoreDeps } from '../deps.js';
-import { SEED_MODULUS } from '../domain/seed.js';
 import { ConflictError, ValidationError } from '../errors.js';
+import { enqueuePortraits } from '../imaging/portraits.js';
 import { RECIPES, recipeInfo } from '../imaging/recipes/index.js';
 import type { M2Services } from '../modules/services.js';
 import type { IdParams } from './util.js';
@@ -24,13 +24,7 @@ export function registerImagingRoutes(app: FastifyInstance, deps: CoreDeps, serv
   app.post<IdParams>('/api/characters/:id/portraits', async (req): Promise<JobRefs> => {
     const character = store.characters.require(req.params.id);
     const { n } = PortraitsSchema.parse(req.body ?? {});
-    const jobIds = Array.from({ length: n }, (_, i) => {
-      const payload: ImageGeneratePayload = {
-        target: 'character-portrait', characterId: character.id, seed: (character.seed + i) % SEED_MODULUS,
-      };
-      return queue.enqueue({ kind: 'image.generate', lane: 'gpu', payload }).id;
-    });
-    return { jobIds };
+    return { jobIds: enqueuePortraits(queue, character, n).map((j) => j.id) };
   });
 
   app.post<IdParams>('/api/characters/:id/sheet', async (req): Promise<JobRef> => {

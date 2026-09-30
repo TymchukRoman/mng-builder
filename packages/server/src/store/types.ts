@@ -34,6 +34,8 @@ export interface JobRepo {
   list(filter: { status?: JobStatus; limit: number }): Job[];
   /** Queued jobs of these kinds, oldest first (engine switch re-lane, I1). */
   listQueued(kinds: readonly JobKind[]): Job[];
+  /** Every job of one episode run, oldest first, whatever its status (F11: the render driver adopts them after a restart). */
+  listByEpisodeRun(runId: string): Job[];
   /** Atomically marks the highest-priority, oldest due queued job in `lane` as running (attempts + 1); null if none. */
   claimNext(lane: Lane, nowIso: string): Job | null;
   /** On boot: running → queued. Returns count. */

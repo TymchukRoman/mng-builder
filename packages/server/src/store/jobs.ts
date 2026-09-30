@@ -42,6 +42,13 @@ export class SqliteJobRepo extends TableRepo<Job, NewJobRow, JobPatch> implement
     return rows.map((row) => this.decode(row));
   }
 
+  listByEpisodeRun(runId: string): Job[] {
+    const rows = this.db
+      .prepare('SELECT * FROM jobs WHERE episode_run_id = ? ORDER BY created_at ASC, rowid ASC')
+      .all(runId) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.decode(row));
+  }
+
   claimNext(lane: Lane, nowIso: string): Job | null {
     return this.db.transaction((): Job | null => {
       const row = this.db
