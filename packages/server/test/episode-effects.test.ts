@@ -36,27 +36,27 @@ function world() {
 describe('premise and outline effects', () => {
   it('applyPremise writes the title and synopsis to a chapter left to the premise', () => {
     const { chapter } = world();
-    applyPremise({ store: lib.store, bus }, chapter.id, PREMISE, null);
+    applyPremise({ store: lib.store, bus }, chapter.id, PREMISE, []);
     expect(lib.store.chapters.require(chapter.id)).toMatchObject({ title: PREMISE.title, synopsis: PREMISE.synopsis });
     expect(entityEvents()).toEqual(['chapter:updated']);
   });
 
   it('applyPremise never overwrites a title the user typed; the synopsis still follows (M4 final M6)', () => {
     const w = seedEpisodeWorld(lib.store, { chapterTitle: 'Rain' });
-    applyPremise({ store: lib.store, bus }, w.chapter.id, PREMISE, null);
+    applyPremise({ store: lib.store, bus }, w.chapter.id, PREMISE, []);
     expect(lib.store.chapters.require(w.chapter.id)).toMatchObject({ title: 'Rain', synopsis: PREMISE.synopsis });
-    applyPremise({ store: lib.store, bus }, w.chapter.id, { ...PREMISE, title: 'Other' }, PREMISE); // 'Rain' was not the premise's
+    applyPremise({ store: lib.store, bus }, w.chapter.id, { ...PREMISE, title: 'Other' }, [PREMISE.title]); // 'Rain' was not the premise's
     expect(lib.store.chapters.require(w.chapter.id).title).toBe('Rain');
   });
 
   it('a changed premise title renames the chapter and the cover title frames that showed the old title (M4 final M3)', () => {
     const { chapter, manga } = world();
-    applyPremise({ store: lib.store, bus }, chapter.id, PREMISE, null);
+    applyPremise({ store: lib.store, bus }, chapter.id, PREMISE, []);
     const cover = createCoverPage(lib.store, manga.id, chapter.id);
     const title = createFrame(lib.store, cover.page.id, CreateFrameSchema.parse({ kind: 'title', text: PREMISE.title, box: { x: 0, y: 0, w: 10, h: 5 } }));
     const custom = createFrame(lib.store, cover.page.id, CreateFrameSchema.parse({ kind: 'title', text: 'Vol. 1', box: { x: 0, y: 6, w: 10, h: 5 } }));
     events.length = 0;
-    applyPremise({ store: lib.store, bus }, chapter.id, { ...PREMISE, title: 'Renamed' }, PREMISE);
+    applyPremise({ store: lib.store, bus }, chapter.id, { ...PREMISE, title: 'Renamed' }, ['Something else', PREMISE.title]);
     expect(lib.store.chapters.require(chapter.id).title).toBe('Renamed');
     expect(lib.store.frames.require(title.id).text).toBe('Renamed');
     expect(lib.store.frames.require(custom.id).text).toBe('Vol. 1');

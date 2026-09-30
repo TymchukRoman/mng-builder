@@ -343,6 +343,31 @@ describe('EpisodeRunner — failure, retry, edit, rerun, cancel', () => {
     for (const p of prompts.panels) expect(lib.store.panels.require(p.panelId).prompt.scene).toBe('red umbrella, rain');
   });
 
+  it('a later run renames a chapter whose title an earlier run\'s premise wrote (residual N3)', async () => {
+    let title = 'The Cat in the Rain';
+    const { chapter, input } = world(); // titled with the placeholder
+    const { runner, queue } = rig({
+      responses: {
+        'episode.premise': (req) => ({ ...(EPISODE_FAKE_RESPONSES['episode.premise']!(req) as object), title }),
+        'episode.breakdown': () => { throw new Error('model overloaded'); },
+      },
+    });
+    const first = runner.start(chapter.id, input, 'autopilot');
+    await queue.idle();
+    expect(runner.get(first.id).status).toBe('failed'); // before any page exists
+    expect(lib.store.chapters.require(chapter.id).title).toBe('The Cat in the Rain');
+    title = 'A Second Premise';
+    runner.start(chapter.id, input, 'autopilot');
+    await queue.idle();
+    expect(lib.store.chapters.require(chapter.id).title).toBe('A Second Premise');
+    // A title the user typed in between is theirs again
+    lib.store.chapters.update(chapter.id, { title: 'Mine' });
+    title = 'A Third Premise';
+    runner.start(chapter.id, input, 'autopilot');
+    await queue.idle();
+    expect(lib.store.chapters.require(chapter.id).title).toBe('Mine');
+  });
+
   it('re-running a step at or before scripts needs confirm once pages exist, then replaces them', async () => {
     const { chapter, input } = world();
     const { runner, queue } = rig();

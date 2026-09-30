@@ -2,7 +2,7 @@ import { setMaxListeners } from 'node:events';
 import {
   BreakdownOutputSchema, EPISODE_ACTIVE_STATUSES as ACTIVE, EDIT_NEEDS_PENDING_NEXT, EDIT_TOO_LATE_MESSAGE, EDITABLE_STEPS, EPISODE_STEPS, OutlineOutputSchema, PremiseOutputSchema, PromptsOutputSchema,
   REVIEW_POINTS, STEP_TASK, ScriptsOutputSchema, panelIds, stepIndex,
-  type Chapter, type EpisodeInput, type EpisodeRun, type EpisodeStepName, type ImageGeneratePayload, type Job, type LlmStepPayload, type PremiseOutput,
+  type Chapter, type EpisodeInput, type EpisodeRun, type EpisodeStepName, type ImageGeneratePayload, type Job, type LlmStepPayload,
 } from '@manga/shared';
 import { deletePage } from '../../domain/delete.js';
 import { NeedsConfirmError } from '../../domain/pages.js';
@@ -27,10 +27,15 @@ export interface RunnerDeps { store: Store; bus: EventBus; queue: QueueLike; eng
 /** Outline acceptance queues this many portrait variants per new character (spec §8; the sheet stays manual, F36). */
 export const PORTRAITS_PER_NEW_CHARACTER = 4;
 
-/** The premise output the run holds before a new one is applied (null when there is none, or it is unreadable). */
-function previousPremise(run: EpisodeRun): PremiseOutput | null {
-  const parsed = PremiseOutputSchema.safeParse(run.steps[stepIndex('premise')]?.output);
-  return parsed.success ? parsed.data : null;
+/**
+ * The titles premises of this chapter wrote before a new one is applied (residual N3): every run's stored premise output,
+ * this run's one being edited or re-run included (a re-run premise keeps it until replaced). Unreadable outputs are skipped.
+ */
+function premiseTitles(store: Store, chapterId: string): string[] {
+  return store.episodes.listByChapter(chapterId).flatMap((r) => {
+    const parsed = PremiseOutputSchema.safeParse(r.steps[stepIndex('premise')]?.output);
+    return parsed.success ? [parsed.data.title] : [];
+  });
 }
 
 const isPortraitJob = (job: Job): boolean =>
@@ -135,7 +140,7 @@ export class EpisodeRunner {
     }
     const value = validationSchema(this.deps.store, run, name).parse(output); // ZodError → 400 validation
     const fx = this.effectDeps();
-    if (name === 'premise') applyPremise(fx, run.chapterId, PremiseOutputSchema.parse(value), previousPremise(run));
+    if (name === 'premise') applyPremise(fx, run.chapterId, PremiseOutputSchema.parse(value), premiseTitles(this.deps.store, run.chapterId));
     if (name === 'scripts') applyScripts(fx, run.chapterId, ScriptsOutputSchema.parse(value));
     if (name === 'prompts') applyPrompts(fx, run.chapterId, PromptsOutputSchema.parse(value), { source: 'user' }); // verbatim (F2)
     const fresh = this.get(runId);
@@ -256,7 +261,7 @@ export class EpisodeRunner {
   /** premise → chapter, scripts → pages and panels, prompts → panel prompts (finished like M2's panel-prompt, F2). */
   private applyResult(run: EpisodeRun, name: EpisodeStepName, output: unknown): void {
     const fx = this.effectDeps();
-    if (name === 'premise') applyPremise(fx, run.chapterId, PremiseOutputSchema.parse(output), previousPremise(run));
+    if (name === 'premise') applyPremise(fx, run.chapterId, PremiseOutputSchema.parse(output), premiseTitles(this.deps.store, run.chapterId));
     if (name === 'scripts') {
       materializeScripts(fx, run.chapterId, {
         breakdown: requireOutput(run, 'breakdown', BreakdownOutputSchema), scripts: ScriptsOutputSchema.parse(output),

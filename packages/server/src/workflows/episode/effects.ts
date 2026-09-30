@@ -20,14 +20,15 @@ type Position = PanelScript['characters'][number]['position'];
 
 /**
  * Step 1 → the chapter (spec §8: "written to the chapter"). The synopsis always follows the premise. The title follows
- * it only while it is not the user's own (M4 final M6): the placeholder `CHAPTER_TITLE_FROM_PREMISE`, or the title the
- * run's previous premise wrote (`previous`: the output being edited or re-run). A title the user typed stays.
+ * it only while it is not the user's own (M4 final M6): the placeholder `CHAPTER_TITLE_FROM_PREMISE`, or a title a
+ * premise of this chapter wrote (`premiseTitles`: every run's stored premise title, the output being edited or re-run
+ * included; residual N3, so a later run renames what an earlier run's premise wrote). A title the user typed stays.
  * When the title changes, the cover's title frames that still show the old title follow it (M4 final M3).
  */
-export function applyPremise(fx: EffectDeps, chapterId: string, premise: PremiseOutput, previous: PremiseOutput | null): void {
+export function applyPremise(fx: EffectDeps, chapterId: string, premise: PremiseOutput, premiseTitles: readonly string[]): void {
   const { store, bus } = fx;
   const before = store.chapters.require(chapterId);
-  const owned = before.title === CHAPTER_TITLE_FROM_PREMISE || (previous !== null && before.title === previous.title);
+  const owned = before.title === CHAPTER_TITLE_FROM_PREMISE || premiseTitles.includes(before.title);
   const title = owned ? premise.title : before.title;
   const chapter = store.chapters.update(chapterId, { title, synopsis: premise.synopsis });
   emitEntity(bus, 'chapter', chapter.id, 'updated', chapter.mangaId);
