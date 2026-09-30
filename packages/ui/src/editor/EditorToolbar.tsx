@@ -2,7 +2,7 @@ import { useRef, useState, type JSX } from 'react';
 import { useNavigate } from 'react-router';
 import type { FrameKind, PageDetail, PageFormat, ReadingDirection, SplitDir } from '@manga/shared';
 import { IconButton } from '../ui/IconButton';
-import { ArrowLeft, Columns2, LayoutGrid, Merge, Redo2, Rows2, Sparkles, Undo2, ZoomIn, ZoomOut } from '../ui/icons';
+import { ArrowLeft, Columns2, LayoutGrid, Merge, MessageSquareText, Redo2, Rows2, Sparkles, Undo2, ZoomIn, ZoomOut } from '../ui/icons';
 import { CHAPTER_FRAME_KINDS, COVER_FRAME_KINDS } from './editorModel';
 import { ExportButton } from './ExportButton';
 import { FRAME_KIND_ICON, FRAME_KIND_LABEL } from './frameKinds';
@@ -23,6 +23,7 @@ export interface EditorToolbarProps {
   format: PageFormat;
   zoom: Zoom;
   generating: boolean;
+  lettering: boolean;
   exportTarget: { type: 'page' | 'chapter'; id: string } | null;
   onUndo(): void;
   onRedo(): void;
@@ -30,6 +31,7 @@ export interface EditorToolbarProps {
   onSplit(dir: SplitDir): void;
   onMerge(): void;
   onAddFrame(kind: FrameKind): void;
+  onAutoLetter(): void;
   onGenerate(): void;
   onZoom(z: Zoom): void;
 }
@@ -67,6 +69,7 @@ export function EditorToolbar(p: EditorToolbarProps): JSX.Element {
       {kinds.map((k) => (
         <IconButton key={k} icon={FRAME_KIND_ICON[k]} label={`Add ${FRAME_KIND_LABEL[k].toLowerCase()}`} disabled={!hasPage} onClick={() => p.onAddFrame(k)} />
       ))}
+      <IconButton icon={MessageSquareText} label="Auto-letter page (cannot be undone)" disabled={!hasPage} busy={p.lettering} onClick={p.onAutoLetter} />
       <span className="toolbar__sep" />
       <IconButton icon={Sparkles} label={panelSelected ? 'Generate image for the selected panel' : 'Generate image: select a panel'}
         disabled={!panelSelected} busy={p.generating} onClick={p.onGenerate} />
@@ -77,7 +80,7 @@ export function EditorToolbar(p: EditorToolbarProps): JSX.Element {
       </button>
       <IconButton icon={ZoomIn} label="Zoom in" onClick={() => p.onZoom(stepZoom(p.zoom, 1))} />
       <span className="toolbar__sep" />
-      <ExportButton target={p.exportTarget} />
+      <ExportButton target={p.exportTarget} pageId={p.detail?.page.id ?? null} />
       {p.mode === 'chapter' && (
         <PresetPicker anchor={presetRef} open={presetsOpen && preset.enabled} onClose={() => setPresetsOpen(false)} readingDirection={p.readingDirection} format={p.format}
           onPick={(name) => { setPresetsOpen(false); p.onApplyPreset(name); }} />

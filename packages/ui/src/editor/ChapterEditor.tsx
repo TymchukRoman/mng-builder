@@ -57,6 +57,7 @@ export function ChapterEditor({ manga, mode, chapterId, pageIds, title, backTo, 
   const [container, setContainer] = useState({ w: 800, h: 1000 });
   const [confirm, setConfirm] = useState<{ preset: string; removed: number } | null>(null);
   const [presetBusy, setPresetBusy] = useState(false);
+  const [lettering, setLettering] = useState(false);
   const [history] = useState(() => new History(200));
   const [ids] = useState(() => new IdMap());
   const cache = useMemo(() => queryCache(qc), [qc]);
@@ -167,6 +168,15 @@ export function ChapterEditor({ manga, mode, chapterId, pageIds, title, backTo, 
       setSelection(panelSelection(keep));
     } catch (err) { pushToast('error', errorText(err)); }
   };
+  /** Not undoable, and a barrier: the server letters every dialogue line of the page that has no frame yet. */
+  const autoLetter = async (): Promise<void> => {
+    if (!pageId || lettering) return;
+    flushNudge();
+    setLettering(true);
+    try {
+      await history.barrier(() => ops.autoLetter(pageId));
+    } catch (err) { pushToast('error', errorText(err)); } finally { setLettering(false); }
+  };
   const addFrame = async (kind: FrameKind): Promise<void> => {
     if (!pageId) return;
     const cmd = ops.addFrame(pageId, frameInsert(kind, selection));
@@ -197,13 +207,14 @@ export function ChapterEditor({ manga, mode, chapterId, pageIds, title, backTo, 
       <div className={cx('editor', mode === 'cover' && 'editor--cover')}>
         <EditorToolbar
           mode={mode} title={title} backTo={backTo} detail={d} selection={selection} history={snap}
-          readingDirection={manga.readingDirection} format={manga.pageFormat} zoom={zoom} generating={generate.isPending}
+          readingDirection={manga.readingDirection} format={manga.pageFormat} zoom={zoom} generating={generate.isPending} lettering={lettering}
           exportTarget={exportTarget(chapterId, pageId)}
           onUndo={undo} onRedo={redo}
           onApplyPreset={(name) => void applyPreset(name, false)}
           onSplit={split}
           onMerge={() => void merge()}
           onAddFrame={(kind) => void addFrame(kind)}
+          onAutoLetter={() => void autoLetter()}
           onGenerate={() => { if (panelId) generate.mutate(panelId); }}
           onZoom={setZoom}
         />

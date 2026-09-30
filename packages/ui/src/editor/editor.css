@@ -43,3 +43,10 @@
 .preset:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 0; }
 .preset__page { fill: var(--surface-2); stroke: var(--border-3); }
 .preset__panel { fill: var(--surface); stroke: var(--text-2); stroke-width: 0.8; }
+
+.export-pop { width: 280px; padding: var(--sp-3); }
+.export-pop__body { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
+.export-pop__status { max-width: 100%; }
+.export-pop__error { margin: 0; overflow-wrap: anywhere; }
+.export-pop__file { justify-content: space-between; min-width: 0; font-size: var(--fs-sm); }
+.export-pop__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-1); }
