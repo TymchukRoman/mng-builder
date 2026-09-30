@@ -152,4 +152,9 @@ CREATE TABLE settings (
     // W1 Q1: the chapter summary an episode run writes when it finishes; older rows read as "".
     sql: `ALTER TABLE chapters ADD COLUMN summary TEXT NOT NULL DEFAULT '';`,
   },
+  {
+    version: 3,
+    // W1 Q1 (review M8): the chapter summary a run wrote, so a later summary never overwrites one the user edited; NULL: none.
+    sql: `ALTER TABLE episode_runs ADD COLUMN chapter_summary TEXT;`,
+  },
 ];

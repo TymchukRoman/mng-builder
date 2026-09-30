@@ -18,6 +18,8 @@ export const LANGUAGE_NAME: Record<Language, string> = { en: 'English', uk: 'Ukr
 export const STORY_SO_FAR_LIMIT = 3000;
 export const PREVIOUS_PAGE_LIMIT = 800;
 export const PREVIOUS_CHAPTERS_LIMIT = 10;
+/** Review I1: each earlier chapter's summary or synopsis, at most (ten of them stay small for the local engine). */
+export const PREVIOUS_CHAPTER_TEXT_LIMIT = 600;
 
 export interface CharacterBrief { name: string; role: string; personality: string; speechStyle: string }
 /** W1 Q1: an earlier chapter as the next chapter's premise and outline see it; `synopsis` is its summary when it has one. */
@@ -69,21 +71,14 @@ export type StepContext = PremiseContext | OutlineContext | BreakdownContext | S
 /** Never includes appearanceTags: the story model must not rewrite a character's look (spec §6.3). */
 const brief = (c: Character): CharacterBrief => ({ name: c.name, role: c.role, personality: c.personality, speechStyle: c.speechStyle });
 
-const clip = (text: string, limit: number): string => (text.length <= limit ? text : `${text.slice(0, limit - 1)}…`);
+/** `text` cut to at most `limit` characters, ending in "…" when it was cut. */
+export const clip = (text: string, limit: number): string => (text.length <= limit ? text : `${text.slice(0, Math.max(0, limit - 1))}…`);
 
-/**
- * W1 Q1: pages already written, compact. Per page, its panels' actions (one line each) with each panel's dialogue under it as
- * "speaker: text" (narration and sfx name their kind). Whole pages are kept from the most recent back while they fit `limit`;
- * a single page longer than `limit` is clipped.
- */
-export function storyDigest(pages: ScriptsOutput['pages'], firstPage: number, limit = STORY_SO_FAR_LIMIT): string {
-  const blocks = pages.map((page, i) => [
-    `Page ${firstPage + i}:`,
-    ...page.panels.flatMap((p) => [`- ${p.action}`, ...p.dialogue.map((d) => `  ${d.speaker ?? d.kind}: ${d.text}`)]),
-  ].join('\n'));
+/** The last blocks that fit `limit` joined by "\n", oldest first; a last block alone longer than `limit` is clipped. */
+function latestBlocks(blocks: readonly string[], limit: number): string[] {
   const kept: string[] = [];
   let size = 0;
-  for (let i = blocks.length - 1; i >= 0; i--) {
+  for (let i = blocks.length - 1; i >= 0 && limit > 0; i--) {
     const block = blocks[i]!;
     const cost = block.length + (kept.length > 0 ? 1 : 0);
     if (size + cost > limit) {
@@ -93,7 +88,30 @@ export function storyDigest(pages: ScriptsOutput['pages'], firstPage: number, li
     kept.unshift(block);
     size += cost;
   }
-  return kept.join('\n');
+  return kept;
+}
+
+/** Marks the pages a `keepFirst` digest leaves out between the first page and the most recent ones. */
+export const STORY_GAP = '…';
+
+/**
+ * W1 Q1: pages already written, compact. Per page, its panels' actions (one line each) with each panel's dialogue under it as
+ * "speaker: text" (narration and sfx name their kind). Whole pages are kept from the most recent back while they fit `limit`;
+ * a single page longer than `limit` is clipped. `keepFirst` (the chapter summary, review M5): the first page (at most half
+ * the limit) is always kept, so a long chapter keeps its opening, and a STORY_GAP line marks the pages left out after it.
+ */
+export function storyDigest(
+  pages: ScriptsOutput['pages'], firstPage: number, limit = STORY_SO_FAR_LIMIT, opts: { keepFirst?: boolean } = {},
+): string {
+  const blocks = pages.map((page, i) => [
+    `Page ${firstPage + i}:`,
+    ...page.panels.flatMap((p) => [`- ${p.action}`, ...p.dialogue.map((d) => `  ${d.speaker ?? d.kind}: ${d.text}`)]),
+  ].join('\n'));
+  if (opts.keepFirst !== true || blocks.length < 2) return latestBlocks(blocks, limit).join('\n');
+  const head = clip(blocks[0]!, Math.floor(limit / 2));
+  const rest = blocks.slice(1);
+  const tail = latestBlocks(rest, limit - head.length - STORY_GAP.length - 2); // room for "\n…\n"
+  return [head, ...(tail.length < rest.length ? [STORY_GAP] : []), ...tail].join('\n');
 }
 
 /** W1 Q1: a page's panel actions on one line, capped (the prompts step's `previousPage`). */
@@ -101,13 +119,18 @@ export function pageActions(panels: ReadonlyArray<{ action: string }>, limit = P
   return clip(panels.map((p) => p.action.trim()).filter((a) => a !== '').join(' / '), limit);
 }
 
-/** W1 Q1: the manga's chapters numbered before `chapter`, oldest first, the last PREVIOUS_CHAPTERS_LIMIT. */
+/**
+ * W1 Q1: the manga's chapters numbered before `chapter`, oldest first, the last PREVIOUS_CHAPTERS_LIMIT of those that say
+ * something (a chapter with neither a summary nor a synopsis is left out, review M9). Each one's text is its summary, else
+ * its synopsis, clipped to PREVIOUS_CHAPTER_TEXT_LIMIT (review I1: user-written text has no length limit).
+ */
 export function previousChapters(store: Store, chapter: Chapter): ChapterBrief[] {
   return store.chapters.listByManga(chapter.mangaId)
-    .filter((c) => c.number < chapter.number)
-    .sort((a, b) => a.number - b.number)
+    .map((c) => ({ c, text: c.summary.trim() !== '' ? c.summary.trim() : c.synopsis.trim() }))
+    .filter(({ c, text }) => c.number < chapter.number && text !== '')
+    .sort((a, b) => a.c.number - b.c.number)
     .slice(-PREVIOUS_CHAPTERS_LIMIT)
-    .map((c) => ({ number: c.number, title: c.title, synopsis: c.summary.trim() !== '' ? c.summary : c.synopsis }));
+    .map(({ c, text }) => ({ number: c.number, title: c.title, synopsis: clip(text, PREVIOUS_CHAPTER_TEXT_LIMIT) }));
 }
 
 /** Stands in for a portrait that is not rendered yet: ensurePortraits and the review gate provide one before render (F3). */

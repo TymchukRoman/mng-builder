@@ -8,7 +8,7 @@ import { withJsonInstruction } from '../src/engines/structured.js';
 import { ConflictError } from '../src/errors.js';
 import { chapterPanels } from '../src/workflows/episode/chapter.js';
 import {
-  PREVIOUS_PAGE_LIMIT, STORY_SO_FAR_LIMIT, buildStepContext, contextBlock, extractContext, pageActions, storyDigest, templateVars,
+  PREVIOUS_CHAPTER_TEXT_LIMIT, PREVIOUS_PAGE_LIMIT, STORY_GAP, STORY_SO_FAR_LIMIT, buildStepContext, contextBlock, extractContext, pageActions, storyDigest, templateVars,
   type BreakdownContext, type OutlineContext, type PremiseContext, type PromptsContext,
 } from '../src/workflows/episode/context.js';
 import { loadPrompt } from '../src/prompts/load.js';
@@ -320,5 +320,31 @@ describe('story memory (W1 Q1)', () => {
       expect(ctx.previousChapters.at(-1)).toEqual({ number: 11, title: 'C11', synopsis: 'what happened in 11' });
       expect(ctx.previousChapters[0]).toEqual({ number: 2, title: 'C2', synopsis: 'syn 2' });
     }
+  });
+
+  it('caps each earlier chapter at 600 characters and leaves out chapters that say nothing (review I1, M9)', () => {
+    const { manga, chapter } = seedEpisodeWorld(lib.store);
+    lib.store.chapters.update(chapter.id, { number: 4 });
+    const add = (number: number, synopsis: string, summary: string) =>
+      lib.store.chapters.create({ mangaId: manga.id, number, title: `C${number}`, synopsis, coverPageId: null, status: 'ready', order: number, summary });
+    add(1, 'syn 1', 'x'.repeat(1800));
+    add(2, '', '  ');
+    add(3, 'y'.repeat(700), '');
+    const ctx = buildStepContext(lib.store, seedRun(lib.store, chapter.id), 'premise') as PremiseContext;
+    expect(ctx.previousChapters.map((c) => c.number)).toEqual([1, 3]);
+    expect(ctx.previousChapters.map((c) => c.synopsis.length)).toEqual([PREVIOUS_CHAPTER_TEXT_LIMIT, PREVIOUS_CHAPTER_TEXT_LIMIT]);
+    expect(ctx.previousChapters[0]!.synopsis).toBe(`${'x'.repeat(PREVIOUS_CHAPTER_TEXT_LIMIT - 1)}…`);
+  });
+
+  it('storyDigest keepFirst keeps the first page, marks the gap, and fills the rest with the most recent pages (review M5)', () => {
+    const pages = scripts(breakdown(200), 'Aiko').pages;
+    const digest = storyDigest(pages, 1, 3000, { keepFirst: true });
+    expect(digest.length).toBeLessThanOrEqual(3000);
+    expect(digest.startsWith('Page 1:\n- Page 1 panel 1')).toBe(true);
+    expect(digest).toContain(`\n${STORY_GAP}\nPage `);
+    expect(digest.endsWith('  Aiko: Line 200.2')).toBe(true);
+    expect(digest).not.toContain('Page 2:\n');
+    // A chapter that fits whole has no gap.
+    expect(storyDigest(pages.slice(0, 3), 1, 3000, { keepFirst: true })).toBe(storyDigest(pages.slice(0, 3), 1, 3000));
   });
 });

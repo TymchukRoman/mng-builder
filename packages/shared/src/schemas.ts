@@ -201,7 +201,13 @@ export const EpisodeRunStatusSchema = z.enum(['running', 'awaiting-review', 'don
 export const EPISODE_ACTIVE_STATUSES: ReadonlySet<z.infer<typeof EpisodeRunStatusSchema>> = new Set(['running', 'awaiting-review', 'paused']);
 export const EpisodeRunSchema = z.object({
   id: IdSchema, chapterId: IdSchema, input: EpisodeInputSchema, mode: z.enum(['review', 'autopilot']),
-  steps: z.array(EpisodeStepSchema), currentStep: z.number().int().min(0), status: EpisodeRunStatusSchema, ...Timestamps,
+  steps: z.array(EpisodeStepSchema), currentStep: z.number().int().min(0), status: EpisodeRunStatusSchema,
+  /**
+   * W1 Q1 (review M8): the chapter summary this run wrote when it finished; null or absent when it wrote none. A later
+   * summary replaces the chapter's summary only when it is empty or one a run of the chapter wrote, never a user's edit.
+   */
+  chapterSummary: z.string().nullish(),
+  ...Timestamps,
 });
 export type EpisodeRun = z.infer<typeof EpisodeRunSchema>;
 

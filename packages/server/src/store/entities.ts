@@ -141,7 +141,7 @@ export class EpisodeRepo extends TableRepo<EpisodeRun, NewEpisodeRun, EpisodePat
       table: 'episode_runs', entity: 'episode run', prefix: 'er', schema: EpisodeRunSchema, hasUpdatedAt: true, orderBy: 'created_at, rowid',
       columns: {
         id: 'id', chapterId: 'chapter_id', input: ['input', 'json'], mode: 'mode', steps: ['steps', 'json'],
-        currentStep: 'current_step', status: 'status', ...TIMESTAMPS,
+        currentStep: 'current_step', status: 'status', chapterSummary: 'chapter_summary', ...TIMESTAMPS,
       },
     }, now);
   }

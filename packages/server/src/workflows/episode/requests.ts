@@ -53,6 +53,7 @@ export interface StepRequest {
 export function stepRequests(store: Store, run: EpisodeRun, step: LlmStepName): StepRequest[] {
   const ctx = buildStepContext(store, run, step);
   const template = loadStepPrompt(step);
+  /** A scripts chunk's user prompt with its `storySoFar` (W1 Q1), rendered when the chunk is sent. */
   const userPrompt = (c: StepContext): string => renderTemplate(template.user, templateVars(store, run, c));
   const request = (c: StepContext, schema: z.ZodType<unknown>, progress: string, relaxed?: z.ZodType<unknown>): StepRequest => {
     const vars = templateVars(store, run, c);
@@ -64,7 +65,7 @@ export function stepRequests(store: Store, run: EpisodeRun, step: LlmStepName): 
       return answer.value;
     }, inner);
     return {
-      name: `episode.${step}`, task: STEP_TASK[step]!, system: renderTemplate(template.system, vars), prompt: userPrompt(c),
+      name: `episode.${step}`, task: STEP_TASK[step]!, system: renderTemplate(template.system, vars), prompt: renderTemplate(template.user, vars),
       schema: normalized(schema), progress, filled, ...(relaxed ? { relaxed: normalized(relaxed) } : {}),
     };
   };

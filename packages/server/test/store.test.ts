@@ -57,13 +57,13 @@ describe('database', () => {
   it('runs in WAL mode with foreign keys on, at the latest schema version', () => {
     expect(db.pragma('journal_mode', { simple: true })).toBe('wal');
     expect(db.pragma('foreign_keys', { simple: true })).toBe(1);
-    expect(schemaVersion(db)).toBe(2);
+    expect(schemaVersion(db)).toBe(3);
   });
 
   it('migrates idempotently when reopened', () => {
     db.close();
     db = openDatabase(join(dir.path, 'library.sqlite'));
-    expect(schemaVersion(db)).toBe(2);
+    expect(schemaVersion(db)).toBe(3);
   });
 });
 
@@ -223,7 +223,7 @@ describe('migration 2 (W1 Q1: chapters.summary)', () => {
     old.prepare(`INSERT INTO chapters VALUES ('ch_aaaaaaaaaa','mg_aaaaaaaaaa',1,'One','',NULL,'draft',0,'t','t')`).run();
     old.close();
     db = openDatabase(file);
-    expect(schemaVersion(db)).toBe(2);
+    expect(schemaVersion(db)).toBe(3);
     expect(db.prepare(`SELECT summary FROM chapters WHERE id = 'ch_aaaaaaaaaa'`).get()).toEqual({ summary: '' });
   });
 
@@ -233,5 +233,25 @@ describe('migration 2 (W1 Q1: chapters.summary)', () => {
     expect(ch.summary).toBe('');
     expect(repos.chapters.update(ch.id, { summary: 'Aiko found the cat.' }).summary).toBe('Aiko found the cat.');
     expect(repos.chapters.require(ch.id).summary).toBe('Aiko found the cat.');
+  });
+});
+
+describe('migration 3 (W1 Q1 review M8: episode_runs.chapter_summary)', () => {
+  it('reads a run written before it with no chapter summary, and round-trips one', () => {
+    db.close();
+    const file = join(dir.path, 'old3.sqlite');
+    const old = new Database(file);
+    old.exec(MIGRATIONS[0]!.sql);
+    old.exec(MIGRATIONS[1]!.sql);
+    old.pragma('user_version = 2');
+    old.prepare(`INSERT INTO mangas VALUES ('mg_aaaaaaaaaa','M','','en','bw','rtl','{}','{}',NULL,'t','t')`).run();
+    old.prepare(`INSERT INTO chapters VALUES ('ch_aaaaaaaaaa','mg_aaaaaaaaaa',1,'One','',NULL,'draft',0,'t','t','')`).run();
+    old.prepare(`INSERT INTO episode_runs VALUES ('er_aaaaaaaaaa','ch_aaaaaaaaaa','{"prompt":"p","characterIds":[],"pages":1,"tone":""}','review','[]',0,'done','t','t')`).run();
+    old.close();
+    db = openDatabase(file);
+    repos = createEntityRepos(db, () => new Date().toISOString());
+    expect(repos.episodes.require('er_aaaaaaaaaa').chapterSummary).toBeNull();
+    expect(repos.episodes.update('er_aaaaaaaaaa', { chapterSummary: 'Aiko found the cat.' }).chapterSummary).toBe('Aiko found the cat.');
+    expect(repos.episodes.require('er_aaaaaaaaaa').chapterSummary).toBe('Aiko found the cat.');
   });
 });

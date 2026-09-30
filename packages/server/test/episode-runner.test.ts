@@ -151,6 +151,35 @@ describe('EpisodeRunner — flow', () => {
     expect(lib.store.chapters.require(chapter.id).summary).not.toBe('');
   });
 
+  it('a chapter summary job that fails leaves the run done and the chapter ready (W1 Q1, review M7)', async () => {
+    const { chapter, input } = world();
+    const { runner, queue } = rig({ responses: { 'episode.summary': () => { throw new Error('the summary engine is down'); } } });
+    const run = runner.start(chapter.id, input, 'autopilot');
+    await queue.idle();
+    const summaryJob = queue.jobs('llm.step').find((j) => (j.payload as LlmStepPayload).type === 'chapter-summary')!;
+    expect(summaryJob).toMatchObject({ status: 'failed', error: 'the summary engine is down' });
+    expect(runner.get(run.id).status).toBe('done');
+    expect(stepStatuses(run.id).every((s) => s === 'done')).toBe(true);
+    expect(lib.store.chapters.require(chapter.id)).toMatchObject({ status: 'ready', summary: '' });
+  });
+
+  it('deleting the chapter cancels its running chapter summary job with the run\'s other jobs (W1 Q1, review M7)', async () => {
+    const { chapter, input } = world();
+    // The summary call waits until its job is cancelled.
+    const waits: ScriptedResponse = (req) => new Promise((_resolve, reject) => {
+      req.signal?.addEventListener('abort', () => { reject(new Error('aborted')); });
+    });
+    const { runner, queue } = rig({ responses: { 'episode.summary': waits } });
+    const run = runner.start(chapter.id, input, 'autopilot');
+    const summaryJob = (): Job | undefined => queue.jobs('llm.step').find((j) => (j.payload as LlmStepPayload).type === 'chapter-summary');
+    await vi.waitFor(() => { expect(summaryJob()?.status).toBe('running'); }, { timeout: 10_000 });
+    expect(runner.get(run.id).status).toBe('done');
+    expect(runner.cancelForChapter(chapter.id)).toEqual([run.id]); // the chapter delete hook (M4 final I1)
+    expect(summaryJob()!.status).toBe('cancelled');
+    await queue.idle();
+    expect(lib.store.chapters.require(chapter.id).summary).toBe('');
+  });
+
   it('uses the lane of the engine chosen for each task', async () => {
     lib.store.settings.patch({ engine: { tasks: { prompts: 'local' } } });
     const { chapter, input } = world();
