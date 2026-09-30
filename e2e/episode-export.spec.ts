@@ -29,6 +29,9 @@ test('a chapter generated in autopilot from the create modal exports as one PDF'
   await expect(page.getByTestId('episode-status')).toHaveText('Chapter ready', { timeout: 200_000 });
   await expect(page.getByTestId('episode-step-error')).toHaveCount(0);
   await expect(page.getByLabel('Page 2', { exact: true })).toBeVisible();
+  // The typed title is kept; the premise does not replace it (M4 final M6)
+  const chapterId = /\/c\/(ch_[a-z2-7]+)/.exec(page.url())?.[1] ?? '';
+  expect(((await (await request.get(`/api/chapters/${chapterId}`)).json()) as { title: string }).title).toBe('Rain');
 
   // Auto-letter: the episode already lettered page 1; delete a bubble, and the toolbar action brings it back
   await page.getByLabel('Page 1', { exact: true }).click();

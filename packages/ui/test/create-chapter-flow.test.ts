@@ -1,7 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createChapterFlow, startFailureMessage } from '../src/chapter/createChapterFlow';
+import { CHAPTER_TITLE_FROM_PREMISE } from '@manga/shared';
+import { chapterTitleFor, createChapterFlow, startFailureMessage } from '../src/chapter/createChapterFlow';
 
 const chapter = { id: 'ch_1' };
+
+describe('chapter title (M4 final M6)', () => {
+  it('keeps a typed title, AI or not', () => {
+    expect(chapterTitleFor('  Rain ', true)).toBe('Rain');
+    expect(chapterTitleFor('Rain', false)).toBe('Rain');
+  });
+  it('leaves a blank title to the premise only while the AI section has a prompt', () => {
+    expect(chapterTitleFor('  ', true)).toBe(CHAPTER_TITLE_FROM_PREMISE);
+    expect(chapterTitleFor('', false)).toBeNull();
+  });
+});
 
 describe('create chapter flow', () => {
   it('posts once, starts the episode and reports no error', async () => {
