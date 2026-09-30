@@ -3,10 +3,12 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { Command, CommanderError } from 'commander';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { EMPTY_SCRIPT, type Chapter, type Character, type EpisodeRun, type Job, type Manga, type PageDetail } from '@manga/shared';
+import { EMPTY_SCRIPT, GPU_MANUAL_PAUSE_REASON, type Chapter, type Character, type EpisodeRun, type Job, type Manga, type PageDetail, type QueueLanes } from '@manga/shared';
 import { ApiClient } from '../src/client.js';
+import { registerChapterCommands } from '../src/commands/chapters.js';
 import { registerEpisodeCommands } from '../src/commands/episode.js';
 import { registerExportCommands } from '../src/commands/export.js';
+import { registerQueueCommands } from '../src/commands/queue.js';
 import { registerTextAutoCommand } from '../src/commands/text-auto.js';
 import type { CliContext } from '../src/context.js';
 import { CliError } from '../src/errors.js';
@@ -75,7 +77,9 @@ function manga(wait = false, opts: CtxOptions = {}): Command {
   const ctx = testContext(s.url, outputs, stderr, wait, opts);
   const root = new Command('manga').option('--json').option('--wait').option('--url <url>').exitOverride().configureOutput({ writeErr: () => undefined });
   root.command('text'); // M1's group
+  registerChapterCommands(root, async () => ctx);
   registerEpisodeCommands(root, async () => ctx);
+  registerQueueCommands(root, async () => ctx);
   registerExportCommands(root, async () => ctx);
   registerTextAutoCommand(root, async () => ctx);
   return root;
@@ -313,5 +317,86 @@ describe('manga export / text auto', { timeout: 60_000 }, () => {
     await run(['text', 'auto', page.page.id]);
     expect(last<PageDetail>().frames.map((f) => f.text)).toEqual(['Rain.']);
     expect(humans.at(-1)).toBe(`0 frames created on ${page.page.id} (1 in all)`);
+  });
+});
+
+describe('manga W1 commands', { timeout: 90_000 }, () => {
+  beforeEach(() => serve());
+
+  it('episode start previews by default, --no-preview turns it off, and the estimate goes to stderr', async () => {
+    const a = await world();
+    await run(['episode', 'start', a.chapter.id, '--prompt', 'A cat', '--pages', '8']);
+    expect(last<EpisodeRun>().input.previewFirst).toBe(true);
+    expect(stderr[0]).toBe('8 pages ≈ 36 panels ≈ 37 min\n');
+    const b = await world();
+    await run(['episode', 'start', b.chapter.id, '--prompt', 'A cat', '--no-preview']);
+    expect(last<EpisodeRun>().input.previewFirst).toBe(false);
+  });
+
+  it('the estimate stays off stderr under --json', async () => {
+    const { chapter } = await world();
+    await run(['episode', 'start', chapter.id, '--prompt', 'A cat'], false, { json: true });
+    expect(stderr).toEqual([]);
+  });
+
+  it('episode pause and resume a rendering run', async () => {
+    s.fake.loadDelayMs = 1_500; // each image takes a while: the render step is caught running
+    const { chapter } = await world();
+    await run(['episode', 'start', chapter.id, '--prompt', 'A cat', '--pages', '2', '--autopilot', '--no-preview']);
+    await s.until(async () => {
+      const r = await latest(chapter.id);
+      return r?.status === 'running' && r.currentStep === 5 && r.steps[5]!.status === 'running';
+    });
+    await run(['episode', 'pause', chapter.id]);
+    expect(last<EpisodeRun>().status).toBe('paused');
+    await run(['episode', 'resume', chapter.id]);
+    expect(last<EpisodeRun>().status).toBe('running');
+    await run(['episode', 'cancel', chapter.id]);
+  });
+
+  it('chapter render-missing --wait renders the panels without an image; a second call has nothing to do', async () => {
+    const { chapter } = await world();
+    await s.api('POST', `/api/chapters/${chapter.id}/pages`, { layoutPreset: '2-rows' });
+    await run(['chapter', 'render-missing', chapter.id], true);
+    expect(last<Job[]>().map((j) => j.status)).toEqual(['succeeded', 'succeeded']);
+    await run(['chapter', 'render-missing', chapter.id], true);
+    expect(last<Job[]>()).toEqual([]);
+    expect(humans.at(-1)).toBe('no panels without an image');
+  });
+
+  it('chapter render-missing without --wait prints the job ids', async () => {
+    const { chapter } = await world();
+    await s.api('POST', `/api/chapters/${chapter.id}/pages`, { layoutPreset: '2-rows' });
+    await run(['chapter', 'render-missing', chapter.id]);
+    expect(last<{ jobIds: string[] }>().jobIds).toHaveLength(2);
+    expect(humans.at(-1)).toMatch(/^jb_\w+\njb_\w+$/);
+  });
+
+  it('an autopilot --wait run that stops at the page 1 preview says what is left (F20)', async () => {
+    const { chapter } = await world();
+    await run(['episode', 'start', chapter.id, '--prompt', 'A cat', '--pages', '2', '--autopilot'], true);
+    expect(last<EpisodeRun>().status).toBe('awaiting-review');
+    expect(stderr.filter((l) => l.startsWith('awaiting-review')).at(-1)).toMatch(/^awaiting-review: Page 1 is ready — continue with \d+ panels \(~\d+ (s|min)\)\?\n$/);
+    expect(humans.at(-1)).toMatch(/\nPage 1 is ready — continue with \d+ panels/);
+  });
+
+  it('chapter edit --summary patches the summary', async () => {
+    const { chapter } = await world();
+    await run(['chapter', 'edit', chapter.id, '--summary', 'Aiko found the cat.']);
+    expect((await s.api<Chapter>('GET', `/api/chapters/${chapter.id}`)).body.summary).toBe('Aiko found the cat.');
+  });
+
+  it('queue pause|resume gpu; another lane is refused', async () => {
+    await run(['queue', 'pause', 'gpu']);
+    expect(last<QueueLanes>().pausedLanes).toEqual([{ lane: 'gpu', until: null, reason: GPU_MANUAL_PAUSE_REASON }]);
+    expect(humans.at(-1)).toBe(`gpu paused: ${GPU_MANUAL_PAUSE_REASON}`);
+    await run(['queue', 'resume', 'gpu']);
+    expect(last<QueueLanes>().pausedLanes).toEqual([]);
+    expect(humans.at(-1)).toBe('no lane is paused');
+    await expect(run(['queue', 'pause', 'cpu'])).rejects.toThrow(/only the gpu lane/);
+  });
+
+  it('the real program registers queue', () => {
+    expect(buildProgram().commands.map((c) => c.name())).toContain('queue');
   });
 });

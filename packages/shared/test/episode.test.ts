@@ -3,11 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import {
   EDITABLE_STEPS, OutlineOutputSchema, PremiseOutputSchema, PromptsOutputSchema, RenderOutputSchema, STEP_TASK,
-  REVIEW_AVG_SECONDS, TYPICAL_PANELS_PER_PAGE, breakdownSchemaFor, estimateChapter, estimateReviewSeconds, estimateSeconds, formatChapterEstimate, formatEstimate, isEnglishScene, outlineSchemaFor, promptsSchemaFor, renderGate, sameName,
+  REVIEW_AVG_SECONDS, TYPICAL_PANELS_PER_PAGE, breakdownSchemaFor, estimateChapter, estimateReviewSeconds, estimateSeconds, formatChapterEstimate, formatEstimate, gateText, isEnglishScene, outlineSchemaFor, promptsSchemaFor, renderGate, sameName,
   scriptsSchemaFor, stepIndex,
   type PanelScriptDraft,
 } from '../src/episode.js';
-import { DEFAULT_SETTINGS } from '../src/schemas.js';
+import { DEFAULT_SETTINGS, EPISODE_STEPS, type EpisodeRun } from '../src/schemas.js';
 import { PRESET_NAMES, presetPanelCount } from '../src/layout/index.js';
 
 const TWO = PRESET_NAMES.find((n) => presetPanelCount(n) === 2)!;
@@ -272,5 +272,29 @@ describe('renderGate (W1 Q2, C2)', () => {
     expect(renderGate(base)).toBeNull(); // stored before W1: failedPanelIds defaults to []
     expect(RenderOutputSchema.parse(base).failedPanelIds).toEqual([]);
     expect(renderGate(null)).toBeNull();
+  });
+});
+
+describe('gateText (W1 F20: the status text of a render stop, shared by the UI and the CLI)', () => {
+  const base = { jobs: [], reviewed: 0, flagged: 0, rounds: 0, failedPanelIds: [] };
+  const T = '2026-09-30T10:00:00.000Z';
+  const at = (output: unknown, over: Partial<EpisodeRun> = {}): EpisodeRun => ({
+    id: 'er_1', chapterId: 'ch_1', input: { prompt: 'p', characterIds: [], pages: 1, tone: '' }, mode: 'autopilot', currentStep: stepIndex('render'), status: 'awaiting-review',
+    steps: EPISODE_STEPS.map((name, i) => ({
+      name, status: i < stepIndex('render') ? 'done' as const : i === stepIndex('render') ? 'awaiting-review' as const : 'pending' as const,
+      output: name === 'render' ? output : null, error: null, startedAt: T, finishedAt: null,
+    })),
+    createdAt: T, updatedAt: T, ...over,
+  } as EpisodeRun);
+
+  it('words the preview stop and the size stop', () => {
+    expect(gateText(at({ ...base, preview: true, remainingPanels: 34, estimateSeconds: 1800 }))).toBe('Page 1 is ready — continue with 34 panels (~30 min)?');
+    expect(gateText(at({ ...base, confirm: true, panels: 40, estimateSeconds: 3600 }))).toBe('Render 40 panels (~1 h)?');
+  });
+
+  it('is null for a finished render, another step, or a run that is not waiting', () => {
+    expect(gateText(at(base))).toBeNull();
+    expect(gateText(at({ ...base, preview: true, remainingPanels: 3, estimateSeconds: 60 }, { currentStep: 1 }))).toBeNull();
+    expect(gateText(at({ ...base, preview: true, remainingPanels: 3, estimateSeconds: 60 }, { status: 'running' }))).toBeNull();
   });
 });

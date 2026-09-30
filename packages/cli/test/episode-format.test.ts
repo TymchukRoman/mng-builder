@@ -31,6 +31,15 @@ describe('episode formatting', () => {
     expect(runLine(run('awaiting-review', 1, 'awaiting-review'))).toBe('awaiting-review: outline awaiting-review');
   });
 
+  it('says what a render stop asks, in the run line and under the table (F20)', () => {
+    const gated = run('awaiting-review', 5, 'awaiting-review');
+    gated.steps[5]!.output = { jobs: [], reviewed: 0, flagged: 0, rounds: 0, failedPanelIds: [], preview: true, remainingPanels: 34, estimateSeconds: 1800 };
+    const question = 'Page 1 is ready — continue with 34 panels (~30 min)?';
+    expect(runLine(gated)).toBe(`awaiting-review: ${question}`);
+    expect(formatRun(gated).split('\n').at(-1)).toBe(question);
+    expect(runLine(run('paused', 5, 'paused'))).toBe('paused: render paused');
+  });
+
   it('classifies export targets', () => {
     expect(exportTargetType('pg_abc')).toBe('page');
     expect(exportTargetType('ch_abc')).toBe('chapter');

@@ -1,4 +1,4 @@
-import type { EpisodeRun } from '@manga/shared';
+import { gateText, type EpisodeRun } from '@manga/shared';
 import { table } from './format.js';
 
 const clock = (iso: string | null): string => (iso ? iso.slice(11, 19) : '-');
@@ -9,10 +9,13 @@ export function formatRun(run: EpisodeRun): string {
     String(i + 1), s.name, `${s.status}${i === run.currentStep && run.status !== 'done' ? ' <' : ''}`,
     clock(s.startedAt), clock(s.finishedAt), s.error ?? '',
   ]);
-  return `${run.id}  ${run.status}  ${run.mode}\n${table(rows, ['#', 'step', 'status', 'started', 'finished', 'error'])}`;
+  const gate = gateText(run); // W1 F20: what a render stop asks
+  return `${run.id}  ${run.status}  ${run.mode}\n${table(rows, ['#', 'step', 'status', 'started', 'finished', 'error'])}${gate ? `\n${gate}` : ''}`;
 }
 
 export function runLine(run: EpisodeRun): string {
   const step = run.steps[run.currentStep];
+  const gate = gateText(run);
+  if (gate) return `${run.status}: ${gate}`;
   return `${run.status}: ${step ? `${step.name} ${step.status}` : '-'}`;
 }

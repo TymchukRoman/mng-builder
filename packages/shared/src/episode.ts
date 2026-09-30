@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { PRESET_NAMES, presetPanelCount } from './layout/index.js';
 import {
   AngleSchema, CharacterRoleSchema, DialogueKindSchema, EPISODE_STEPS, ShotSchema, StagePositionSchema,
-  type EpisodeStepName, type Settings, type Task,
+  type EpisodeRun, type EpisodeStepName, type Settings, type Task,
 } from './schemas.js';
 
 /** Trim, collapse inner whitespace, lower-case (works for Cyrillic). */
@@ -244,6 +244,22 @@ export function renderGate(output: unknown): RenderGate | null {
   if (!parsed.success) return null;
   if (parsed.data.preview === true) return 'preview';
   return parsed.data.confirm === true ? 'confirm' : null;
+}
+/**
+ * W1 F20: the question a run asks while its render step waits at the preview or size stop, or null. The UI's status text and
+ * the CLI's run line both show it, so a `--wait` run that stopped there says how much is left and how long it takes.
+ */
+export function gateText(run: EpisodeRun): string | null {
+  const at = stepIndex('render');
+  const step = run.steps[at];
+  if (run.status !== 'awaiting-review' || run.currentStep !== at || !step) return null;
+  const gate = renderGate(step.output);
+  if (gate === null) return null;
+  const out = RenderOutputSchema.parse(step.output);
+  const est = formatEstimate(out.estimateSeconds ?? 0);
+  return gate === 'preview'
+    ? `Page 1 is ready — continue with ${out.remainingPanels ?? 0} panels (${est})?`
+    : `Render ${out.panels ?? 0} panels (${est})?`;
 }
 export const LetteringOutputSchema = z.object({ frames: z.number().int().min(0) });
 export type LetteringOutput = z.infer<typeof LetteringOutputSchema>;

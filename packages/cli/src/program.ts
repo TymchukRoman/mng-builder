@@ -8,6 +8,7 @@ import { registerJobCommands } from './commands/jobs.js';
 import { registerMangaCommands } from './commands/mangas.js';
 import { registerPageCommands } from './commands/pages.js';
 import { registerPanelCommands } from './commands/panels.js';
+import { registerQueueCommands } from './commands/queue.js';
 import { registerServerCommands } from './commands/server.js';
 import { registerTextAutoCommand } from './commands/text-auto.js';
 import { registerTextCommands } from './commands/text.js';
@@ -41,6 +42,7 @@ export function buildProgram(io: CliIo = processIo, factory: ContextFactory = de
   registerPanelCommands(program, ctx);
   registerTextCommands(program, ctx);
   registerJobCommands(program, ctx);
+  registerQueueCommands(program, ctx);
   registerAiCommands(program, ctx);
   registerEpisodeCommands(program, ctx);
   registerExportCommands(program, ctx);

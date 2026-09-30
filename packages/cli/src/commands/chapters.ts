@@ -1,9 +1,10 @@
 import type { Command } from 'commander';
-import type { Chapter } from '@manga/shared';
+import type { Chapter, JobRef } from '@manga/shared';
 import { parsePositiveInt } from '../args.js';
 import type { CliContext } from '../context.js';
 import { CliError } from '../errors.js';
 import { table } from '../format.js';
+import { jobLine } from './jobs.js';
 
 export function registerChapterCommands(program: Command, ctx: () => Promise<CliContext>): void {
   const chapter = program.command('chapter').description('chapters of a manga');
@@ -38,17 +39,39 @@ export function registerChapterCommands(program: Command, ctx: () => Promise<Cli
     .argument('<chapter>', 'id or <manga>/<number>')
     .option('--title <title>', 'title')
     .option('--synopsis <text>', 'synopsis')
+    .option('--summary <text>', 'summary (later chapters read it)')
     .option('--number <n>', 'chapter number (must be free in the manga)', parsePositiveInt)
-    .action(async (ref: string, opts: { title?: string; synopsis?: string; number?: number }) => {
+    .action(async (ref: string, opts: { title?: string; synopsis?: string; summary?: string; number?: number }) => {
       const patch: Record<string, unknown> = {};
       if (opts.title !== undefined) patch['title'] = opts.title;
       if (opts.synopsis !== undefined) patch['synopsis'] = opts.synopsis;
+      if (opts.summary !== undefined) patch['summary'] = opts.summary;
       if (opts.number !== undefined) patch['number'] = opts.number;
       if (Object.keys(patch).length === 0) throw new CliError('nothing to change; pass at least one option (see: manga chapter edit --help)', 2);
       const c = await ctx();
       const target = await c.resolve.chapter(ref);
       const updated = await c.api.patch<Chapter>(`/api/chapters/${target.id}`, patch);
       c.out(updated, () => `updated ${updated.id}  #${updated.number}  ${updated.title}`);
+    });
+
+  chapter
+    .command('render-missing')
+    .description('render every panel of the chapter that has no image (W1 R1); --wait waits for the jobs')
+    .argument('<chapter>', 'id or <manga>/<number>')
+    .action(async (ref: string) => {
+      const c = await ctx();
+      const target = await c.resolve.chapter(ref);
+      const refs = await c.api.post<JobRef[]>(`/api/chapters/${encodeURIComponent(target.id)}/render-missing`);
+      const jobIds = refs.map((r) => r.jobId);
+      const none = 'no panels without an image';
+      if (!c.wait) {
+        c.out({ jobIds }, () => (jobIds.length === 0 ? none : jobIds.join('\n')));
+        return;
+      }
+      const jobs = await c.waitJobs(jobIds); // [] at once when nothing was queued
+      c.out(jobs, () => (jobs.length === 0 ? none : jobs.map(jobLine).join('\n')));
+      const failed = jobs.filter((j) => j.status !== 'succeeded');
+      if (failed.length > 0) throw new CliError(`${failed.length} job(s) did not succeed`, 1);
     });
 
   chapter
