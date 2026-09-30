@@ -120,6 +120,8 @@ describe('step contexts', () => {
     const { run } = fullWorld();
     // Task 22 review minor 2: animals and non-humanoid creatures only
     expect(renderedSystem(run, 'outline')).toContain('"no humans" only for an animal or a non-humanoid creature, never for a robot, spirit or other human-like being');
+    // Task 5 M1: new characters never take an existing name, in the cast or not
+    expect(renderedSystem(run, 'outline')).toContain('never one from the context\'s "characters" or "otherCharacterNames"');
   });
 
   it('the outline drafts new characters without colours for a black-and-white manga only (M4 final S6)', () => {

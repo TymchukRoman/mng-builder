@@ -7,7 +7,7 @@ Rules:
 - "summary": 1–2 sentences of what visibly happens. "purpose": the scene's job in the story (setup, rising tension, turn, climax, resolution). "location": a short place name.
 - "characterNames": the characters present, spelled exactly as in the context's "characters" list or in your "newCharacters".
 - Add "newCharacters" only when the story cannot work with the existing cast; at most 3. Each one needs:
-  - "name": a name that fits the setting;
+  - "name": a name that fits the setting, never one from the context's "characters" or "otherCharacterNames" (they already exist);
   - "role": "main", "supporting" or "minor";
   - "personality" and "speechStyle": one short phrase each;
   - "appearanceTags": English Danbooru-style tags for the permanent look only — count tag ("1girl", "1boy"; "no humans" only for an animal or a non-humanoid creature, never for a robot, spirit or other human-like being), hair, eyes, build, usual outfit (for example "1girl, short black hair, brown eyes, slim, school uniform, sailor collar"). No pose, expression, background, style or quality tags.

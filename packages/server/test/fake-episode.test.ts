@@ -8,7 +8,7 @@ import { EPISODE_FAKE_RESPONSES } from '../src/dev/fake-episode.js';
 import { FAKE_RESPONSES } from '../src/dev/fake-responses.js';
 import { createCoverPage, createPage } from '../src/domain/pages.js';
 import { ScriptedEngine } from '../src/engines/scripted.js';
-import { extractContext, type PromptsContext, type ScriptsContext } from '../src/workflows/episode/context.js';
+import { extractContext, type OutlineContext, type PromptsContext, type ScriptsContext } from '../src/workflows/episode/context.js';
 import { combineAnswers, stepRequests } from '../src/workflows/episode/requests.js';
 import { patchStep, type LlmStepName } from '../src/workflows/episode/steps.js';
 import { seedEpisodeWorld, seedRun } from './helpers/episode-fixtures.js';
@@ -73,6 +73,26 @@ describe('fake episode responses', () => {
     const outline = await ask<OutlineOutput>(run, 'outline');
     expect(outline.newCharacters).toEqual([]);
     expect(outline.scenes[0]!.characterNames).toEqual(['mika']);
+  });
+
+  it('never re-propose a character the manga has outside this run\'s cast (Task 5 M1)', async () => {
+    const { manga, chapter } = seedEpisodeWorld(lib.store);
+    const aiko = seedCharacter(lib.store, manga.id, 'Aiko');
+    seedCharacter(lib.store, manga.id, 'Mika');
+    const run = seedRun(lib.store, chapter.id, { input: { characterIds: [aiko.id] }, outputs: { premise: { title: 'T', synopsis: 'S', tone: '', setting: '' } } });
+    const outline = await ask<OutlineOutput>(run, 'outline');
+    expect(extractContext<OutlineContext>(engine.calls[0]!.prompt).otherCharacterNames).toEqual(['Mika']);
+    expect(outline.newCharacters).toEqual([]);
+    expect(outline.scenes[0]!.characterNames).toEqual(['Aiko']);
+  });
+
+  it('write the outline in Ukrainian for a Ukrainian manga, tags in English (Task 5 M2)', async () => {
+    const { chapter } = seedEpisodeWorld(lib.store, { language: 'uk' });
+    const run = seedRun(lib.store, chapter.id, { outputs: { premise: { title: 'T', synopsis: 'S', tone: '', setting: '' } } });
+    const outline = await ask<OutlineOutput>(run, 'outline');
+    expect(outline.scenes.map((s) => s.summary)).toEqual(['Вони зустрічаються під дощем.', 'Вони прощаються друзями.']);
+    expect(outline.newCharacters[0]).toMatchObject({ name: 'Mika', personality: 'життєрадісна', speechStyle: 'короткі речення' });
+    expect(outline.newCharacters[0]!.appearanceTags).toMatch(/^1girl, /);
   });
 
   it('write narration only when the manga has no characters', async () => {

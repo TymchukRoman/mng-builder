@@ -39,18 +39,27 @@ export const EPISODE_FAKE_RESPONSES: Record<string, (req: JsonRequest<unknown>) 
       : { title: 'The Cat in the Rain', synopsis: `A short story: ${c.request.prompt}`, tone: c.request.tone || 'gentle', setting: 'A harbour town in autumn, evening' };
   },
 
+  // Task 5 M1/M2: never re-proposes a character the manga already has (in this run's cast or not), and writes Ukrainian
+  // for a Ukrainian manga (the tags stay English, as the outline asks).
   'episode.outline': (req): OutlineOutput => {
     const c = extractContext<OutlineContext>(req.prompt);
-    const existing = c.characters.find((ch) => sameName(ch.name, FAKE_NEW_CHARACTER));
+    const uk = c.language === 'uk';
+    const inCast = c.characters.find((ch) => sameName(ch.name, FAKE_NEW_CHARACTER));
+    const exists = inCast !== undefined || (c.otherCharacterNames ?? []).some((n) => sameName(n, FAKE_NEW_CHARACTER));
     const lead = c.characters.find((ch) => !sameName(ch.name, FAKE_NEW_CHARACTER));
-    const cast = [...(lead ? [lead.name] : []), existing?.name ?? FAKE_NEW_CHARACTER];
+    const cast = [...(lead ? [lead.name] : []), ...(inCast ? [inCast.name] : exists ? [] : [FAKE_NEW_CHARACTER])];
     return {
-      scenes: [
-        { summary: 'They meet in the rain.', purpose: 'setup', location: 'harbour street', characterNames: cast },
-        { summary: 'They part as friends.', purpose: 'resolution', location: 'pier', characterNames: cast },
-      ],
-      newCharacters: existing ? [] : [{
-        name: FAKE_NEW_CHARACTER, role: 'supporting', personality: 'cheerful', speechStyle: 'short sentences',
+      scenes: uk
+        ? [
+          { summary: 'Вони зустрічаються під дощем.', purpose: 'зав’язка', location: 'вулиця біля порту', characterNames: cast },
+          { summary: 'Вони прощаються друзями.', purpose: 'розв’язка', location: 'причал', characterNames: cast },
+        ]
+        : [
+          { summary: 'They meet in the rain.', purpose: 'setup', location: 'harbour street', characterNames: cast },
+          { summary: 'They part as friends.', purpose: 'resolution', location: 'pier', characterNames: cast },
+        ],
+      newCharacters: exists ? [] : [{
+        name: FAKE_NEW_CHARACTER, role: 'supporting', personality: uk ? 'життєрадісна' : 'cheerful', speechStyle: uk ? 'короткі речення' : 'short sentences',
         appearanceTags: '1girl, long brown hair, green eyes, yellow raincoat',
       }],
     };

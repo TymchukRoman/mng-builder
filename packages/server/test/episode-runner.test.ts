@@ -393,7 +393,9 @@ describe('EpisodeRunner — failure, retry, edit, rerun, cancel', () => {
 
   it('re-running the outline after its characters exist re-proposes them without failing or duplicating', async () => {
     const { chapter, manga, input } = world();
-    const { runner, queue } = rig();
+    // A model that proposes Mika every time (the fake no longer re-proposes an existing character, Task 5 M1).
+    const mika = { name: 'Mika', role: 'supporting' as const, personality: 'cheerful', speechStyle: 'short', appearanceTags: '1girl' };
+    const { runner, queue } = rig({ responses: { 'episode.outline': () => outline(['Aiko', 'Mika'], [mika]) } });
     const run = runner.start(chapter.id, input, 'review');
     await queue.idle();
     runner.approve(run.id);
@@ -401,9 +403,9 @@ describe('EpisodeRunner — failure, retry, edit, rerun, cancel', () => {
     expect(runner.get(run.id).currentStep).toBe(3);
     runner.rerun(run.id, 'outline', true);
     await queue.idle();
-    const outline = runner.get(run.id).steps[1]!;
-    expect(outline.status).toBe('awaiting-review');
-    expect((outline.output as { newCharacters: Array<{ name: string }> }).newCharacters.map((c) => c.name)).toEqual(['Mika']);
+    const outlineStep = runner.get(run.id).steps[1]!;
+    expect(outlineStep.status).toBe('awaiting-review');
+    expect((outlineStep.output as { newCharacters: Array<{ name: string }> }).newCharacters.map((c) => c.name)).toEqual(['Mika']);
     runner.approve(run.id);
     await queue.idle();
     expect(runner.get(run.id)).toMatchObject({ status: 'awaiting-review', currentStep: 3 });

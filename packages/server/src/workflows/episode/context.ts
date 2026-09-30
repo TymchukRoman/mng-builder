@@ -19,7 +19,10 @@ export interface PremiseContext {
   step: 'premise'; language: Language; manga: { title: string; synopsis: string };
   request: { prompt: string; tone: string; pages: number }; characters: CharacterBrief[];
 }
-export interface OutlineContext { step: 'outline'; language: Language; pages: number; premise: PremiseOutput; characters: CharacterBrief[] }
+/** `otherCharacterNames`: the manga's characters outside this run's cast, so no new character takes one of their names (Task 5 M1). */
+export interface OutlineContext {
+  step: 'outline'; language: Language; pages: number; premise: PremiseOutput; characters: CharacterBrief[]; otherCharacterNames: string[];
+}
 /** `request` is the user's own wording, so an explicit panel count or layout in it reaches the step that picks them. */
 export interface BreakdownContext {
   step: 'breakdown'; pages: number; request: { prompt: string; tone: string };
@@ -83,7 +86,10 @@ export function buildStepContext(store: Store, run: EpisodeRun, step: LlmStepNam
         request: { prompt: run.input.prompt, tone: run.input.tone, pages: run.input.pages }, characters: chosen.map(brief),
       };
     case 'outline':
-      return { step, language: manga.language, pages: run.input.pages, premise: requireOutput(run, 'premise', PremiseOutputSchema), characters: chosen.map(brief) };
+      return {
+        step, language: manga.language, pages: run.input.pages, premise: requireOutput(run, 'premise', PremiseOutputSchema), characters: chosen.map(brief),
+        otherCharacterNames: all.filter((c) => !chosen.includes(c)).map((c) => c.name),
+      };
     case 'breakdown': {
       const { scenes } = requireOutput(run, 'outline', OutlineOutputSchema);
       return {
