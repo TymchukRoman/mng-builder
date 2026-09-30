@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { MIN_NUM_CTX, OllamaEngine, numCtxFor } from '../src/engines/ollama.js';
+import { MAX_NUM_CTX, MIN_NUM_CTX, OllamaEngine, numCtxFor } from '../src/engines/ollama.js';
 import { EngineUnavailableError } from '../src/engines/errors.js';
 import { GpuArbiter } from '../src/jobs/index.js';
 import { startFakeOllama, type FakeOllama } from './fakes/fake-ollama.js';
@@ -39,12 +39,15 @@ describe('OllamaEngine', () => {
     expect(sizes).toEqual([8192, 32768]);
   });
 
-  it('numCtxFor rounds up to a power of two so the model is not reloaded for every small size change', () => {
+  it('numCtxFor rounds up to a power of two (no reload for every small size change), between 8192 and 32768', () => {
     expect(MIN_NUM_CTX).toBe(8192);
+    expect(MAX_NUM_CTX).toBe(32768);
     expect(numCtxFor(0)).toBe(8192);
     expect(numCtxFor(10_000)).toBe(8192);
     expect(numCtxFor(12_000)).toBe(16384);
-    expect(numCtxFor(100_000)).toBe(65536);
+    expect(numCtxFor(60_000)).toBe(32768);
+    expect(numCtxFor(100_000)).toBe(32768); // capped (M2): a larger KV cache would spill a 14B model to the CPU
+    expect(numCtxFor(1_000_000)).toBe(32768);
   });
 
   it('sends images as base64 to the vision model', async () => {
@@ -57,6 +60,7 @@ describe('OllamaEngine', () => {
       const chat = fo.requests.find((r) => r.path === '/api/chat')!;
       expect(chat.body!['model']).toBe('qwen3-vl:8b');
       expect((chat.body!['messages'] as Array<{ images?: string[] }>)[1]!.images).toEqual(['AQID']);
+      expect(chat.body!['options']).toEqual({ num_ctx: 8192 });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

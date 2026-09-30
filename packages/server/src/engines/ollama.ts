@@ -20,17 +20,19 @@ const JSON_HEADERS = { 'content-type': 'application/json' };
 
 /** F18: ollama's default context window silently truncates long prompts (an episode's scripts/prompts context). */
 export const MIN_NUM_CTX = 8192;
+/** A larger KV cache spills a 14B model to the CPU; episode calls are chunked (F18) so real prompts stay far below it. */
+export const MAX_NUM_CTX = 32768;
 /** Conservative: English runs ~4 characters per token, Cyrillic and JSON fewer. */
 const CHARS_PER_TOKEN = 2.5;
 /** Room for the answer (a 4-page scripts chunk is ~3k tokens). */
 const ANSWER_TOKENS = 4096;
 
 /** The context window for a request of `chars` characters: prompt estimate + answer room, rounded up to a power of
- *  two (floor MIN_NUM_CTX) so small size changes do not make ollama reload the model with a new context size. */
+ *  two between MIN_NUM_CTX and MAX_NUM_CTX, so small size changes do not make ollama reload the model. */
 export function numCtxFor(chars: number): number {
   const needed = Math.ceil(chars / CHARS_PER_TOKEN) + ANSWER_TOKENS;
   let size = MIN_NUM_CTX;
-  while (size < needed) size *= 2;
+  while (size < needed && size < MAX_NUM_CTX) size *= 2;
   return size;
 }
 
