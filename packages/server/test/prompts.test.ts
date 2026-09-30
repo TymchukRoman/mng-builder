@@ -210,6 +210,13 @@ describe('orderRefs (the "picture N" order shared by pickRefs and the episode pr
       .toEqual([['im_a1', 'Aiko'], ['im_m1', 'Mika']]);
   });
 
+  it('caps a multi-character cast at klein-ref maxRefs (4), in cast order', () => {
+    const many = (c: Character): string[] => [`${c.name}-1`, `${c.name}-2`];
+    const extra = [aiko, ren, mika, character('ch_sora000001', 'Sora'), character('ch_yuki000001', 'Yuki')];
+    expect(orderRefs(RECIPES['klein-ref']!, extra, many).map((r) => r.character.name)).toEqual(['Aiko', 'Ren', 'Mika', 'Sora']);
+    expect(orderRefs(RECIPES['qwen-edit-ref']!, extra, many).map((r) => r.character.name)).toEqual(['Aiko', 'Ren', 'Mika']);
+  });
+
   it('takes every image of a single character, and caps at the recipe maxRefs', () => {
     expect(orderRefs(RECIPES['anime-ref']!, [aiko], imagesOf).map((r) => r.imageId)).toEqual(['im_a1', 'im_a2']);
     const many = (c: Character): string[] => [`${c.name}-1`, `${c.name}-2`, `${c.name}-3`];

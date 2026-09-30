@@ -37,7 +37,7 @@ describe('llm.step panel-prompt', () => {
     expect(events.filter((e) => e.type === 'entity' && e.entity === 'panel' && e.op === 'updated')).toHaveLength(1);
   });
 
-  it('writes sentences with picture numbers when the panel routes to qwen-edit-ref', async () => {
+  it('writes sentences with picture numbers when the panel routes to klein-ref (the multiChar default)', async () => {
     const services = handlerServices(lib.store, comfy, {
       claude: { 'panel-prompt': () => ({ scene: 'The character from picture 1 shouts at the character from picture 2, no speech bubbles.' }) },
     });

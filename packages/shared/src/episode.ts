@@ -188,7 +188,9 @@ export const EDIT_TOO_LATE_MESSAGE = 'Re-run from this step instead';
  * Seconds per image, seeded from the live timings (M2 Task 24 live check / P1 bake-off):
  * anime-ref ~32 s per panel incl. ComfyUI overhead; anime ~30 s; qwen-edit-ref 115-135 s (8 steps x 11-13 s + model load);
  * klein-ref 6.5 s, anima 21.7 s, anima-turbo 3.8 s from the bake-off, each + ~10 s overhead; upscale ~10 s.
- * anime-pose and anime-refine are assumed, not measured. (A character portrait is ~15 s; it is not a panel recipe.) Revisit after the routing decision.
+ * anime-pose and anime-refine are assumed, not measured. (A character portrait is ~15 s; it is not a panel recipe.)
+ * The default routing (Roman's mixed-routing choice, 2026-09-30) sends multi-character panels to klein-ref (17 s) and keeps
+ * qwen-edit-ref (125 s) for the identity-drift retry.
  */
 export const RECIPE_AVG_SECONDS: Record<string, number> = {
   anime: 30, 'anime-ref': 32, 'anime-pose': 32 /* assumed, not measured */, 'anime-refine': 20 /* assumed, not measured */, 'qwen-edit-ref': 125, 'klein-ref': 17, anima: 32, 'anima-turbo': 14, upscale: 10,

@@ -52,6 +52,19 @@ The environment variables `MANGA_LIBRARY` and `MANGA_PORT` override `libraryPath
 
 Keep the library out of OneDrive-synced folders such as Documents, because syncing corrupts SQLite.
 
+## Image routing
+
+Each panel picks its image recipe from how many characters it has (Settings → Routing). The defaults are a mixed routing, chosen after the model bake-off:
+
+| Panel | Recipe |
+|---|---|
+| no characters | `anime` |
+| one character | `anime-ref` (reference weight 0.4; B&W books get the manga style) |
+| several characters | `klein-ref` (much faster than `qwen-edit-ref`; B&W panels come out grey-shaded, and the UI greyscales B&W panels, so there is no refine pass) |
+| identity-drift retry | `qwen-edit-ref`, only for panels whose characters have portraits |
+
+A library keeps the settings it was created with. If yours predates this default, switch **Several characters** to `klein-ref` in Settings → Routing (or `PATCH /api/settings` with `{"routing": {"multiChar": "klein-ref"}}`).
+
 ## Library folder
 
 ```

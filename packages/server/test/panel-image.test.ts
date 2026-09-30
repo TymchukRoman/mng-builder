@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { assemblePrompt, type ImageGeneratePayload } from '@manga/shared';
 import { generatePanelImage } from '../src/handlers/panel-image.js';
 import { ComfyClient } from '../src/imaging/comfy.js';
-import { nodesOf, type Link } from '../src/imaging/comfy-graph.js';
+import { nodesOf } from '../src/imaging/comfy-graph.js';
 import { RECIPES } from '../src/imaging/recipes/index.js';
 import { panelSize } from '../src/imaging/size.js';
 import { PermanentError } from '../src/jobs/index.js';
@@ -108,7 +108,7 @@ describe('image.generate (panel)', () => {
     expect(positive).toContain('no humans, kitten, no humans, box, rain');
   });
 
-  it('drops "no humans" on the natural path (qwen-edit-ref) too (M4 final S4)', async () => {
+  it('drops "no humans" on the natural path (klein-ref, the multiChar default) too (M4 final S4)', async () => {
     const { manga, panels } = seedManga(lib.store);
     const aiko = giveRefs(lib.store, seedCharacter(lib.store, manga.id, 'Aiko', '1girl, silver hair'), ['portrait']);
     const kitten = giveRefs(lib.store, seedCharacter(lib.store, manga.id, 'Kitten', 'no humans, kitten'), ['portrait']);
@@ -117,13 +117,13 @@ describe('image.generate (panel)', () => {
     });
     await run(panel.id);
     const graph = fake.graphs[0]!;
-    expect(nodesOf(graph, 'TextEncodeQwenImageEditPlus')).not.toHaveLength(0); // the natural-language recipe
+    expect(nodesOf(graph, 'ReferenceLatent')).not.toHaveLength(0); // the natural-language klein recipe
     const text = JSON.stringify(graph);
     expect(text).toContain('holds the kitten from picture 2');
     expect(text.toLowerCase()).not.toContain('no humans');
   });
 
-  it('routes two referenced characters through qwen-edit-ref, then refines B&W with anime-refine', async () => {
+  it('routes two referenced characters through klein-ref, then refines B&W with anime-refine', async () => {
     // F1b: DEFAULT_SETTINGS.routing.bwRefine is null now, so the refine pass must be turned on explicitly.
     lib.store.settings.patch({ routing: { bwRefine: 'anime-refine' } });
     const { manga, panels } = seedManga(lib.store);
@@ -135,18 +135,11 @@ describe('image.generate (panel)', () => {
     const result = await run(panel.id);
 
     expect(fake.graphs).toHaveLength(2);
-    const [qwen, refine] = fake.graphs;
-    const encode = nodesOf(qwen!, 'TextEncodeQwenImageEditPlus')[0]!;
-    // F4: the first reference now goes through FluxKontextImageScale before the encoder, so follow one more hop.
-    const loadName = (link: unknown): unknown => {
-      const node = qwen![(link as Link)[0]]!;
-      return node.class_type === 'FluxKontextImageScale' ? loadName(node.inputs['image']) : node.inputs['image'];
-    };
-    expect(loadName(encode.inputs['image1'])).toBe(`manga-builder/${aiko.refs.portrait}.png`);
-    expect(loadName(encode.inputs['image2'])).toBe(`manga-builder/${ren.refs.portrait}.png`);
+    const [klein, refine] = fake.graphs;
+    expect(nodesOf(klein!, 'LoadImage').map((n) => n.inputs['image'])).toEqual([`manga-builder/${aiko.refs.portrait}.png`, `manga-builder/${ren.refs.portrait}.png`]);
 
     const images = lib.store.images.listByOwner('panel', panel.id);
-    const first = images.find((i) => i.gen?.recipe === 'qwen-edit-ref')!;
+    const first = images.find((i) => i.gen?.recipe === 'klein-ref')!;
     const second = images.find((i) => i.gen?.recipe === 'anime-refine')!;
     expect(result.imageId).toBe(second.id);
     expect(second.gen).toMatchObject({ initImageId: first.id, denoise: 0.3 });
@@ -154,7 +147,7 @@ describe('image.generate (panel)', () => {
     expect(nodesOf(refine!, 'LoadImage')[0]!.inputs['image']).toBe(`manga-builder/${first.id}.png`);
     expect(lib.store.panels.require(panel.id).activeImageId).toBe(second.id);
     // F6: anime-refine is the same family (sdxl) as the manga's style recipe ('anime'), so it does carry the
-    // style LoRA (unlike the qwen-edit-ref pass above, which drops it both by family mismatch and supportsLoras).
+    // style LoRA (unlike the klein-ref pass above, which drops it both by family mismatch and supportsLoras).
     expect(nodesOf(refine!, 'LoraLoader').map((n) => n.inputs['lora_name'])).toEqual(['Mnga-illustriousXL_v01_V1-CAME.safetensors']);
   });
 
@@ -170,10 +163,21 @@ describe('image.generate (panel)', () => {
     expect(fake.graphs).toHaveLength(1);
     const images = lib.store.images.listByOwner('panel', panel.id);
     expect(images).toHaveLength(1);
-    expect(images[0]!.gen?.recipe).toBe('qwen-edit-ref');
+    expect(images[0]!.gen?.recipe).toBe('klein-ref');
     expect(images.some((i) => i.gen?.recipe === 'anime-refine')).toBe(false);
     expect(result.imageId).toBe(images[0]!.id);
     expect(lib.store.panels.require(panel.id).activeImageId).toBe(images[0]!.id);
+  });
+
+  it('passes a multi-character panel refs to klein-ref in cast order, one image each, within its 4-ref cap', async () => {
+    const { manga, panels } = seedManga(lib.store);
+    const cast = ['Aiko', 'Ren', 'Mika', 'Sora'].map((name) => giveRefs(lib.store, seedCharacter(lib.store, manga.id, name, '1girl'), ['portrait', 'fullbody']));
+    const panel = updatePanel(lib.store, panels[0]!.id, { characters: cast.map((c) => stage(c.id)) }, { refCharacterIds: cast.map((c) => c.id) });
+    await run(panel.id);
+    const graph = fake.graphs[0]!;
+    expect(RECIPES['klein-ref']!.maxRefs).toBeGreaterThanOrEqual(RECIPES['qwen-edit-ref']!.maxRefs);
+    expect(nodesOf(graph, 'ReferenceLatent')).toHaveLength(2 * 4); // positive + negative conditioning per ref
+    expect(nodesOf(graph, 'LoadImage').map((n) => n.inputs['image'])).toEqual(cast.map((c) => `manga-builder/${c.refs.portrait}.png`));
   });
 
   it('uses the portrait and full body of a single referenced character with anime-ref', async () => {

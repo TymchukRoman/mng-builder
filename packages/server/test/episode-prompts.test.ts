@@ -171,7 +171,7 @@ describe('step contexts', () => {
     updatePanel(lib.store, solo!.id, { characters: [stage(aiko.id, 'left')] }, { refCharacterIds: [aiko.id] });
 
     let ctx = buildStepContext(lib.store, run, 'prompts') as PromptsContext;
-    // Nobody has a portrait yet: two cast members still route to multiChar (qwen-edit-ref), one to oneChar (anime-ref).
+    // Nobody has a portrait yet: two cast members still route to multiChar (klein-ref), one to oneChar (anime-ref).
     expect(ctx.panels[0]).toMatchObject({ style: 'natural', pictures: ['picture 1 shows Aiko', 'picture 2 shows Mika'] });
     expect(ctx.panels[1]!.style).toBe('tags');
     expect(ctx.panels[1]).not.toHaveProperty('pictures');

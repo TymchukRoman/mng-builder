@@ -217,9 +217,10 @@ Settings are **ported from the `gen.py` presets validated in sub-project 1**. Wh
 |---|---|
 | 0 characters | `anime` |
 | 1 character with refs | `anime-ref` |
-| ≥ 2 characters with refs | `qwen-edit-ref`, then `anime-refine` when the manga is B&W |
+| ≥ 2 characters with refs | `klein-ref` (grey-shaded in B&W; no refine pass: `bwRefine` is null) |
+| Identity drift on retry | `qwen-edit-ref` (`driftFallback`; only when the panel has portrait refs) |
 
-The bake-off may change these defaults; the routing function reads them from settings, so no code change is needed.
+Roman chose mixed routing after the bake-off (2026-09-30): only `multiChar` moved, from `qwen-edit-ref` to `klein-ref`. The routing function reads these from settings, so a library can switch any of them in Settings → Routing.
 
 ### 6.2 Sizes
 

@@ -17,22 +17,26 @@ const panel = (recipe: string | null = null): Panel => ({
   id: 'pn_route00001', pageId: 'pg_route00001', script: EMPTY_SCRIPT, prompt: { scene: '', negative: '' }, recipe, seedLock: false, seed: 1,
   refCharacterIds: [], activeImageId: null, imageTransform: DEFAULT_TRANSFORM, createdAt: STAMP, updatedAt: STAMP,
 });
-const custom: Settings = { ...DEFAULT_SETTINGS, routing: { ...DEFAULT_SETTINGS.routing, multiChar: 'klein-ref', bwRefine: null } };
+const custom: Settings = { ...DEFAULT_SETTINGS, routing: { ...DEFAULT_SETTINGS.routing, multiChar: 'qwen-edit-ref', bwRefine: null } };
 const withRefine: Settings = { ...DEFAULT_SETTINGS, routing: { ...DEFAULT_SETTINGS.routing, bwRefine: 'anime-refine' } };
 
 describe('routeRecipe', () => {
+  it('ships the mixed routing default (Roman chose it after the bake-off, 2026-09-30)', () => {
+    expect(DEFAULT_SETTINGS.routing).toEqual({ noChars: 'anime', oneChar: 'anime-ref', multiChar: 'klein-ref', bwRefine: null, driftFallback: 'qwen-edit-ref' });
+  });
+
   const cases: Array<[string, Parameters<typeof routeRecipe>[0], ReturnType<typeof routeRecipe>]> = [
     ['no characters → noChars', { settings: DEFAULT_SETTINGS, manga: manga('bw'), panel: panel(), refCount: 0, charCount: 0 }, { recipe: 'anime', refineWith: null }],
     ['characters without refs → prompt-only', { settings: DEFAULT_SETTINGS, manga: manga('bw'), panel: panel(), refCount: 0, charCount: 2 }, { recipe: 'anime', refineWith: null }],
     ['an Anima manga keeps its engine for prompt-only panels', { settings: DEFAULT_SETTINGS, manga: manga('bw', 'anima'), panel: panel(), refCount: 0, charCount: 1 }, { recipe: 'anima', refineWith: null }],
     ['one character with refs → oneChar', { settings: DEFAULT_SETTINGS, manga: manga('bw'), panel: panel(), refCount: 1, charCount: 1 }, { recipe: 'anime-ref', refineWith: null }],
-    ['two characters with refs, B&W → multiChar without refine (default)', { settings: DEFAULT_SETTINGS, manga: manga('bw'), panel: panel(), refCount: 2, charCount: 2 }, { recipe: 'qwen-edit-ref', refineWith: null }],
-    ['two characters with refs, colour → no refine', { settings: DEFAULT_SETTINGS, manga: manga('color'), panel: panel(), refCount: 2, charCount: 2 }, { recipe: 'qwen-edit-ref', refineWith: null }],
-    ['one of two characters has refs → multiChar without refine (default)', { settings: DEFAULT_SETTINGS, manga: manga('bw'), panel: panel(), refCount: 1, charCount: 2 }, { recipe: 'qwen-edit-ref', refineWith: null }],
+    ['two characters with refs, B&W → multiChar without refine (default)', { settings: DEFAULT_SETTINGS, manga: manga('bw'), panel: panel(), refCount: 2, charCount: 2 }, { recipe: 'klein-ref', refineWith: null }],
+    ['two characters with refs, colour → no refine', { settings: DEFAULT_SETTINGS, manga: manga('color'), panel: panel(), refCount: 2, charCount: 2 }, { recipe: 'klein-ref', refineWith: null }],
+    ['one of two characters has refs → multiChar without refine (default)', { settings: DEFAULT_SETTINGS, manga: manga('bw'), panel: panel(), refCount: 1, charCount: 2 }, { recipe: 'klein-ref', refineWith: null }],
     ['panel override wins', { settings: DEFAULT_SETTINGS, manga: manga('bw'), panel: panel('anima-turbo'), refCount: 2, charCount: 2 }, { recipe: 'anima-turbo', refineWith: null }],
     ['panel override to klein still refines B&W when bwRefine is set', { settings: withRefine, manga: manga('bw'), panel: panel('klein-ref'), refCount: 0, charCount: 0 }, { recipe: 'klein-ref', refineWith: 'anime-refine' }],
-    ['routing comes from settings', { settings: custom, manga: manga('bw'), panel: panel(), refCount: 2, charCount: 3 }, { recipe: 'klein-ref', refineWith: null }],
-    ['two characters with refs, B&W → multiChar + refine when bwRefine is set', { settings: withRefine, manga: manga('bw'), panel: panel(), refCount: 2, charCount: 2 }, { recipe: 'qwen-edit-ref', refineWith: 'anime-refine' }],
+    ['routing comes from settings', { settings: custom, manga: manga('bw'), panel: panel(), refCount: 2, charCount: 3 }, { recipe: 'qwen-edit-ref', refineWith: null }],
+    ['two characters with refs, B&W → multiChar + refine when bwRefine is set', { settings: withRefine, manga: manga('bw'), panel: panel(), refCount: 2, charCount: 2 }, { recipe: 'klein-ref', refineWith: 'anime-refine' }],
   ];
   it.each(cases)('%s', (_name, input, expected) => {
     expect(routeRecipe(input)).toEqual(expected);
