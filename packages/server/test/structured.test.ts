@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { completeStructured, extractJson, jsonSchemaOf, parseAgainst, withJsonInstruction } from '../src/engines/structured.js';
+import { CUT_OFF_PROBLEM, completeStructured, extractJson, jsonSchemaOf, parseAgainst, repairJson, withJsonInstruction } from '../src/engines/structured.js';
 import { InvalidOutputError } from '../src/engines/errors.js';
 
 describe('extractJson (from cleopatra)', () => {
@@ -112,5 +112,98 @@ describe('completeStructured', () => {
     }, { ...req, signal: controller.signal }).catch((e: unknown) => e);
     expect(calls).toBe(1);
     expect(err).toBe(reason);
+  });
+});
+
+describe('repairJson (R3)', () => {
+  // Roman's two prompts-step answers (~1.4 KB) ended in `}]` with the final `}` missing.
+  const cutOff = '{"panels":[{"panelId":"pn_aaaaaaaaaa","scene":"1girl, rain, harbour street"},{"panelId":"pn_bbbbbbbbbb","scene":"cat, box, rain"}]';
+
+  it('appends the missing closing brace of a real cut-off answer', () => {
+    expect(JSON.parse(repairJson(cutOff)!)).toEqual({
+      panels: [{ panelId: 'pn_aaaaaaaaaa', scene: '1girl, rain, harbour street' }, { panelId: 'pn_bbbbbbbbbb', scene: 'cat, box, rain' }],
+    });
+  });
+
+  it('repairs the real failing shape: a panel with a negative field, ending in `}]` without the final brace', () => {
+    const real = '{"panels":[{"panelId":"pn_aaaaaaaaaa","scene":"1girl, rain","negative":"extra people"},{"panelId":"pn_bbbbbbbbbb","scene":"cat, box","negative": "extra people"}]';
+    const out = parseAgainst(real, z.object({ panels: z.array(z.object({ panelId: z.string(), scene: z.string(), negative: z.string() })) }));
+    expect(out.ok).toBe(true);
+  });
+
+  it('strips fences and prose before the first brace', () => {
+    expect(repairJson('Sure!\n```json\n{"a":[1,2')).toBe('{"a":[1,2]}');
+  });
+
+  it('removes trailing commas before a closer', () => {
+    expect(repairJson('{"a":[1,2,],"b":{"c":1,},}')).toBe('{"a":[1,2],"b":{"c":1}}');
+  });
+
+  it('closes a string left open at the end, dropping a dangling escape', () => {
+    expect(JSON.parse(repairJson('{"scene":"a rainy stre')!)).toEqual({ scene: 'a rainy stre' });
+    expect(JSON.parse(repairJson('{"scene":"say \\')!)).toEqual({ scene: 'say ' });
+  });
+
+  it('ignores brackets inside strings when it counts what to close', () => {
+    expect(JSON.parse(repairJson('{"scene":"a [b {c","x":[1')!)).toEqual({ scene: 'a [b {c', x: [1] });
+  });
+
+  it('cuts a dangling key or value back to the last complete entry', () => {
+    expect(JSON.parse(repairJson('{"a":1,"b"')!)).toEqual({ a: 1 });
+    expect(JSON.parse(repairJson('{"a":1,"b":')!)).toEqual({ a: 1 });
+    expect(JSON.parse(repairJson('{"a":1,"b":{"c"')!)).toEqual({ a: 1 });
+  });
+
+  it('keeps a complete object and ignores what follows it', () => {
+    expect(repairJson('{"a":1,} and more {"b":2}')).toBe('{"a":1}');
+  });
+
+  it('gives up (null) on text without an object, with mismatched closers, or with nothing complete to keep', () => {
+    expect(repairJson('no json here')).toBeNull();
+    expect(repairJson('{"a":[1}')).toBeNull();
+    expect(repairJson('{"ok":tr')).toBeNull(); // the only entry dangles: cutting it back leaves nothing
+    expect(repairJson('{')).toBe('{}'); // an empty object is not an invented value; the schema then rejects it
+  });
+});
+
+describe('parseAgainst with repair (R3)', () => {
+  const schema = z.object({ panels: z.array(z.object({ panelId: z.string(), scene: z.string() })).min(1) });
+
+  it('uses a repaired answer that then validates', () => {
+    const out = parseAgainst('{"panels":[{"panelId":"pn_a","scene":"rain"}]', schema);
+    expect(out).toEqual({ ok: true, data: { panels: [{ panelId: 'pn_a', scene: 'rain' }] } });
+  });
+
+  it('still validates a repaired answer against the schema', () => {
+    const out = parseAgainst('{"panels":[', schema);
+    expect(out.ok).toBe(false);
+    expect(out.ok ? '' : out.problems).toContain('panels');
+  });
+
+  it('says the answer was cut off when the repair fails', () => {
+    expect(parseAgainst('{"panels":[{"panelId":"pn_a"]', schema)).toEqual({ ok: false, problems: CUT_OFF_PROBLEM });
+  });
+
+  it('keeps the old messages for no object at all', () => {
+    expect(parseAgainst('no json', schema)).toEqual({ ok: false, problems: 'The answer contained no JSON object.' });
+  });
+});
+
+describe('completeStructured with repair (R3)', () => {
+  it('a cut-off first answer is repaired without a correction round', async () => {
+    const schema = z.object({ ok: z.boolean(), items: z.array(z.number()) });
+    const prompts: string[] = [];
+    const ask = async ({ prompt }: { system: string; prompt: string }): Promise<string> => { prompts.push(prompt); return '{"ok":true,"items":[1,2'; };
+    await expect(completeStructured(ask, { name: 't', task: 'story', system: 's', prompt: 'p', schema })).resolves.toEqual({ ok: true, items: [1, 2] });
+    expect(prompts).toHaveLength(1);
+  });
+
+  it('the correction round tells the model its answer was cut off', async () => {
+    const schema = z.object({ ok: z.boolean() });
+    const answers = ['{"ok":tr', '{"ok":true}'];
+    const prompts: string[] = [];
+    const ask = async ({ prompt }: { system: string; prompt: string }): Promise<string> => { prompts.push(prompt); return answers.shift()!; };
+    await expect(completeStructured(ask, { name: 't', task: 'story', system: 's', prompt: 'p', schema })).resolves.toEqual({ ok: true });
+    expect(prompts[1]).toContain(CUT_OFF_PROBLEM);
   });
 });
