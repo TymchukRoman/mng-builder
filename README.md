@@ -92,7 +92,7 @@ References take an id or a unique name or title, case-insensitive. A chapter can
 | `manga character generate <char> [--n 4] [--manga <m>]` | Generate portrait variants (AI); pick one with `character pick` |
 | `manga character sheet <char> [--manga <m>]` | Generate full-body, side and back reference views from the picked portrait (AI) |
 | `manga character suggest <char> --description "…" [--manga <m>]` | Turn a description into appearance tags (AI) |
-| `manga chapter add <manga> "<title>"` · `chapter list <manga>` · `chapter rm <chapter>` | Chapters |
+| `manga chapter add <manga> "<title>"` · `chapter list <manga>` · `chapter rm <chapter>` | Chapters. The title `"Untitled chapter"` leaves it to the AI: an episode's premise then names the chapter; any other title is kept |
 | `manga chapter edit <chapter> [--title] [--synopsis] [--number <n>]` | Change a chapter; the number must be free in the manga |
 | `manga layouts` | The 16 layout presets |
 | `manga page add <chapter> [--layout 2x2] [--at <index>]` | Add a page |
@@ -108,7 +108,7 @@ References take an id or a unique name or title, case-insensitive. A chapter can
 | `manga text add <page> --kind speech --text "…" [--speaker <char>] [--panel <panel>]` | Add a text frame |
 | `manga text edit <frame> [--text] [--box x,y,w,h] [--speaker <char>\|-] …` · `text rm <frame>` | Edit or delete a text frame |
 | `manga text auto <page>` | Auto-letter a page: add text frames for the dialogue lines that have none yet |
-| `manga episode start <chapter> --prompt "…" [--pages 8] [--chars a,b] [--tone "…"] [--autopilot]` | Generate the chapter from one prompt (AI). Without `--autopilot` it stops at the review points; with `--wait` it follows the run and prints each step's progress |
+| `manga episode start <chapter> --prompt "…" [--pages 8] [--chars a,b] [--tone "…"] [--autopilot]` | Generate the chapter from one prompt (AI). Without `--autopilot` it stops at the review points; with `--wait` it follows the run and prints each step's progress. The premise writes the chapter's synopsis, and its title only when the chapter is titled `"Untitled chapter"` (or with an earlier premise's title) |
 | `manga episode status <chapter>` · `episode approve <chapter>` · `episode autopilot <chapter>` · `episode cancel <chapter>` | Show the latest run, continue past a review point, run to the end, or cancel it and its jobs |
 | `manga episode edit <chapter> <step> --file <out.json>` · `episode rerun <chapter> <step> [--confirm]` | Replace a step's output, or run a step again (and every later step); `--confirm` allows replacing the chapter's pages |
 | `manga export <page\|chapter> [--format pdf\|png] [--out <dir>]` | Export a page, or a whole chapter (cover first, plus `chapter.pdf`), at print size; default folder `<library>/exports/<manga>/<chapter>` |

@@ -12,7 +12,7 @@ export function registerChapterCommands(program: Command, ctx: () => Promise<Cli
     .command('add')
     .description('add a chapter (numbered after the last one)')
     .argument('<manga>', 'id or title')
-    .argument('<title>')
+    .argument('<title>', 'the title; "Untitled chapter" leaves it to the premise of a later "manga episode start"')
     .option('--synopsis <text>', 'synopsis', '')
     .action(async (mangaRef: string, title: string, opts: { synopsis: string }) => {
       const c = await ctx();
