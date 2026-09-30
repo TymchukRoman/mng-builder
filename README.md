@@ -62,6 +62,8 @@ Keep the library out of OneDrive-synced folders such as Documents, because synci
 <library>/tmp/, <library>/.claude-cwd/         scratch folders
 ```
 
+Disk cost of print export: before exporting, every panel image that would print below 300 dpi is upscaled once (2x when that suffices, otherwise 4x) and the result is kept in the library as an `upscaled` image next to the original, so later exports reuse it. A 4x upscale is roughly 20-30 MB of PNG each; an episode of many low-resolution panels adds up quickly.
+
 ## CLI quick reference
 
 These global flags work before or after the command:
