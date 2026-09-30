@@ -1,6 +1,6 @@
 import { setMaxListeners } from 'node:events';
 import {
-  BreakdownOutputSchema, EDIT_NEEDS_PENDING_NEXT, EDIT_TOO_LATE_MESSAGE, EDITABLE_STEPS, EPISODE_STEPS, OutlineOutputSchema, PremiseOutputSchema, PromptsOutputSchema,
+  BreakdownOutputSchema, EPISODE_ACTIVE_STATUSES as ACTIVE, EDIT_NEEDS_PENDING_NEXT, EDIT_TOO_LATE_MESSAGE, EDITABLE_STEPS, EPISODE_STEPS, OutlineOutputSchema, PremiseOutputSchema, PromptsOutputSchema,
   REVIEW_POINTS, STEP_TASK, ScriptsOutputSchema, panelIds, stepIndex,
   type Chapter, type EpisodeInput, type EpisodeRun, type EpisodeStepName, type ImageGeneratePayload, type Job, type LlmStepPayload, type PremiseOutput,
 } from '@manga/shared';
@@ -26,8 +26,6 @@ export interface RunnerDeps { store: Store; bus: EventBus; queue: QueueLike; eng
 
 /** Outline acceptance queues this many portrait variants per new character (spec §8; the sheet stays manual, F36). */
 export const PORTRAITS_PER_NEW_CHARACTER = 4;
-
-const ACTIVE: ReadonlySet<EpisodeRun['status']> = new Set(['running', 'awaiting-review']);
 
 /** The premise output the run holds before a new one is applied (null when there is none, or it is unreadable). */
 function previousPremise(run: EpisodeRun): PremiseOutput | null {

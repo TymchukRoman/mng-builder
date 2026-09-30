@@ -168,12 +168,6 @@ export type RenderOutput = z.infer<typeof RenderOutputSchema>;
 export const LetteringOutputSchema = z.object({ frames: z.number().int().min(0) });
 export type LetteringOutput = z.infer<typeof LetteringOutputSchema>;
 
-/** Base (unrefined) schema per step: what the UI can check locally. The server validates edits with the refined ones. */
-export const STEP_OUTPUT_SCHEMAS: Record<EpisodeStepName, z.ZodType> = {
-  premise: PremiseOutputSchema, outline: OutlineOutputSchema, breakdown: BreakdownOutputSchema, scripts: ScriptsOutputSchema,
-  prompts: PromptsOutputSchema, render: RenderOutputSchema, lettering: LetteringOutputSchema,
-};
-
 /** Spec §8 "Task(s)". scripts writes all the dialogue, so it runs as 'dialogue' (keeps the Settings dialogue engine/model live). render/lettering are not LLM steps. */
 export const STEP_TASK: Record<EpisodeStepName, Task | null> = {
   premise: 'story', outline: 'story', breakdown: 'story', scripts: 'dialogue', prompts: 'prompts', render: null, lettering: null,

@@ -6,10 +6,6 @@ import { ConflictError } from '../../errors.js';
 export type LlmStepName = Exclude<EpisodeStepName, 'render' | 'lettering'>;
 export const LLM_STEPS: readonly LlmStepName[] = ['premise', 'outline', 'breakdown', 'scripts', 'prompts'];
 
-export function isLlmStep(name: EpisodeStepName): name is LlmStepName {
-  return name !== 'render' && name !== 'lettering';
-}
-
 /** Job progress label shown while a step runs (spec §7: "Writing outline…"). */
 export const STEP_PROGRESS: Record<EpisodeStepName, string> = {
   premise: 'Writing premise…', outline: 'Writing outline…', breakdown: 'Planning pages…', scripts: 'Writing scripts…',

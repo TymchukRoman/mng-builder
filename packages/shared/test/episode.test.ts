@@ -1,7 +1,7 @@
 // packages/shared/test/episode.test.ts
 import { describe, expect, it } from 'vitest';
 import {
-  EDITABLE_STEPS, OutlineOutputSchema, PremiseOutputSchema, RenderOutputSchema, STEP_OUTPUT_SCHEMAS, STEP_TASK,
+  EDITABLE_STEPS, OutlineOutputSchema, PremiseOutputSchema, STEP_TASK,
   breakdownSchemaFor, estimateSeconds, formatEstimate, promptsSchemaFor, sameName, scriptsSchemaFor, stepIndex,
   type PanelScriptDraft,
 } from '../src/episode.js';
@@ -151,7 +151,6 @@ describe('step tables and estimates', () => {
     expect(STEP_TASK).toEqual({ premise: 'story', outline: 'story', breakdown: 'story', scripts: 'dialogue', prompts: 'prompts', render: null, lettering: null });
     expect([...EDITABLE_STEPS]).toEqual(['premise', 'outline', 'breakdown', 'scripts', 'prompts']);
     expect(stepIndex('scripts')).toBe(3);
-    expect(STEP_OUTPUT_SCHEMAS.render).toBe(RenderOutputSchema);
   });
 
   it('compares names loosely', () => {

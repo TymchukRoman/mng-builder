@@ -186,6 +186,12 @@ export const EpisodeInputSchema = z.object({
 });
 export type EpisodeInput = z.infer<typeof EpisodeInputSchema>;
 export const EpisodeRunStatusSchema = z.enum(['running', 'awaiting-review', 'done', 'failed', 'cancelled']);
+/**
+ * A live run (M4 final M10, the one definition): running, or waiting at a review point; the others have ended. The
+ * server refuses a second live run per chapter, the UI shows the run controls, and the CLI's --wait stops at a review
+ * point or an end.
+ */
+export const EPISODE_ACTIVE_STATUSES: ReadonlySet<z.infer<typeof EpisodeRunStatusSchema>> = new Set(['running', 'awaiting-review']);
 export const EpisodeRunSchema = z.object({
   id: IdSchema, chapterId: IdSchema, input: EpisodeInputSchema, mode: z.enum(['review', 'autopilot']),
   steps: z.array(EpisodeStepSchema), currentStep: z.number().int().min(0), status: EpisodeRunStatusSchema, ...Timestamps,

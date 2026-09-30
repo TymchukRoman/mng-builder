@@ -1,4 +1,4 @@
-import { EDIT_NEEDS_PENDING_NEXT, EDITABLE_STEPS, EPISODE_STEPS, type EpisodeRun, type EpisodeStepName } from '@manga/shared';
+import { EDIT_NEEDS_PENDING_NEXT, EDITABLE_STEPS, EPISODE_ACTIVE_STATUSES, EPISODE_STEPS, type EpisodeRun, type EpisodeStepName } from '@manga/shared';
 import { ApiError } from '../api';
 import type { Barrier } from '../editor/HistoryBarrierContext';
 
@@ -19,7 +19,7 @@ const WORKING: Record<EpisodeStepName, string> = {
 };
 
 export function isLive(run: EpisodeRun): boolean {
-  return run.status === 'running' || run.status === 'awaiting-review';
+  return EPISODE_ACTIVE_STATUSES.has(run.status);
 }
 
 export function currentStepName(run: EpisodeRun): EpisodeStepName {

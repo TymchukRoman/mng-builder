@@ -1,8 +1,8 @@
 // packages/server/src/export/browser.ts
-import type { PageFormat } from '@manga/shared';
+import { printSizePx, type PageFormat } from '@manga/shared';
 import type { Browser } from 'playwright';
 import { PermanentError } from '../jobs/index.js';
-import { printPx, type ExportItem } from './paths.js';
+import type { ExportItem } from './paths.js';
 
 export const RENDER_TIMEOUT_MS = 60_000;
 
@@ -15,7 +15,7 @@ export type PageRenderer = (req: RenderRequest) => Promise<string[]>;
 /** The print route lays the page out at print pixels (2150 px wide); page.pdf must shrink that onto 182 mm (= 687.9 CSS px). */
 export function pdfScale(format: PageFormat): number {
   const cssWidth = (format.widthMm / 25.4) * 96;
-  return Math.min(2, Math.max(0.1, cssWidth / printPx(format).width));
+  return Math.min(2, Math.max(0.1, cssWidth / printSizePx(format).w));
 }
 
 const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -29,7 +29,7 @@ const firstLine = (text: string): string => text.split('\n', 1)[0] ?? text;
 export const renderWithChromium: PageRenderer = async (req) => {
   // F29: loaded here, not at the top, so importers of @manga/server (CLI, tests) do not load Playwright.
   const { chromium, errors } = await import('playwright');
-  const px = printPx(req.pageFormat);
+  const px = printSizePx(req.pageFormat);
   const timeout = req.timeoutMs ?? RENDER_TIMEOUT_MS;
   const cancelled = (): PermanentError => new PermanentError('Export cancelled');
   if (req.signal.aborted) throw cancelled();
@@ -42,7 +42,7 @@ export const renderWithChromium: PageRenderer = async (req) => {
   const onAbort = (): void => { void browser.close().catch(() => undefined); };
   req.signal.addEventListener('abort', onAbort, { once: true });
   try {
-    const context = await browser.newContext({ viewport: { width: px.width, height: px.height }, deviceScaleFactor: 1 });
+    const context = await browser.newContext({ viewport: { width: px.w, height: px.h }, deviceScaleFactor: 1 });
     const page = await context.newPage();
     if (req.format === 'pdf') await page.emulateMedia({ media: 'screen' });
     const files: string[] = [];

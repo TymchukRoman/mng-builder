@@ -1,8 +1,7 @@
 // packages/server/test/export-hires.test.ts
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { computeRects, type Image } from '@manga/shared';
+import { computeRects, printSizePx, type Image } from '@manga/shared';
 import { createPage, pageDetail } from '../src/domain/pages.js';
-import { printPx } from '../src/export/paths.js';
 import { bestUpscaled, planUpscales, printDetail } from '../src/export/hires.js';
 import { seedEpisodeWorld } from './helpers/episode-fixtures.js';
 import { openTestLibrary, type TestLibrary } from './helpers/library.js';
@@ -88,9 +87,9 @@ describe('planUpscales guards', () => {
     // splash panel at B5/300 dpi is about 1914 x 2752 px; an image of exactly that size covers it 1:1
     const probe = splashWith([1000, 1000]);
     const rect = computeRects(pageDetail(lib.store, probe.page.id).page.layout, probe.manga.pageFormat)[0]!.rect;
-    const px = printPx(probe.manga.pageFormat);
-    const w = rect.w * px.width;
-    const h = rect.h * px.height;
+    const px = printSizePx(probe.manga.pageFormat);
+    const w = rect.w * px.w;
+    const h = rect.h * px.h;
     const exact = splashWith([Math.ceil(w), Math.ceil(h)]);
     expect(planUpscales(lib.store, pageDetail(lib.store, exact.page.id), exact.manga.pageFormat)).toEqual([]);
     const below = splashWith([Math.ceil(w) - 10, Math.ceil(h) - 10]);

@@ -1,11 +1,9 @@
-import type { EpisodeRun, Job } from '@manga/shared';
+import { EPISODE_ACTIVE_STATUSES, type EpisodeRun, type Job } from '@manga/shared';
 import type { ApiClient } from './client.js';
-
-const SETTLED: ReadonlySet<EpisodeRun['status']> = new Set(['awaiting-review', 'done', 'failed', 'cancelled']);
 
 /** True when the run has stopped: waiting for review or ended. */
 export function isSettled(run: EpisodeRun): boolean {
-  return SETTLED.has(run.status);
+  return run.status === 'awaiting-review' || !EPISODE_ACTIVE_STATUSES.has(run.status);
 }
 
 /** Resolves after `ms`, or at once (clearing its timer) when `signal` aborts. */

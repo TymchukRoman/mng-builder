@@ -1,15 +1,9 @@
 import { join, resolve } from 'node:path';
-import { printSizePx, type Chapter, type ExportRenderPayload, type Manga, type Page, type PageFormat } from '@manga/shared';
+import type { Chapter, ExportRenderPayload, Manga, Page, PageFormat } from '@manga/shared';
 import { PermanentError } from '../jobs/index.js';
 import type { Store } from '../store/index.js';
 import { storyPages } from '../workflows/episode/chapter.js';
 import { slugify } from './slug.js';
-
-/** The print size of a page format in pixels (2150 x 3035 for B5 at 300 dpi). One implementation, shared with the UI print route. */
-export function printPx(format: PageFormat): { width: number; height: number } {
-  const { w, h } = printSizePx(format);
-  return { width: w, height: h };
-}
 
 export function chapterSlug(chapter: Chapter): string {
   return `${String(chapter.number).padStart(2, '0')}-${slugify(chapter.title, 'chapter')}`;

@@ -1,9 +1,9 @@
 // packages/server/test/export-paths.test.ts
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { DEFAULT_PAGE_FORMAT } from '@manga/shared';
+import { DEFAULT_PAGE_FORMAT, printSizePx } from '@manga/shared';
 import { createCoverPage, createPage } from '../src/domain/pages.js';
-import { chapterSlug, exportDir, mangaSlug, planExport, printPx } from '../src/export/paths.js';
+import { chapterSlug, exportDir, mangaSlug, planExport } from '../src/export/paths.js';
 import { slugify, transliterate } from '../src/export/slug.js';
 import { PermanentError } from '../src/jobs/index.js';
 import { TWO_PANEL_PRESET, seedEpisodeWorld } from './helpers/episode-fixtures.js';
@@ -70,7 +70,7 @@ describe('slugs', () => {
 
 describe('export paths', () => {
   it('computes the print pixel size of the page format', () => {
-    expect(printPx(DEFAULT_PAGE_FORMAT)).toEqual({ width: 2150, height: 3035 });
+    expect(printSizePx(DEFAULT_PAGE_FORMAT)).toEqual({ w: 2150, h: 3035 });
   });
 
   it('puts exports under <library>/exports/<manga>/<chapter>, or in outDir', () => {
