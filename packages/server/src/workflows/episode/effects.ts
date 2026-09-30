@@ -73,27 +73,48 @@ export function createOutlineCharacters({ store, bus }: EffectDeps, mangaId: str
   return created;
 }
 
-function byName(characters: Character[], name: string): Character {
-  const found = characters.find((c) => sameName(c.name, name));
-  if (!found) throw new ValidationError(`unknown character "${name}"`);
-  return found;
+function findByName(characters: Character[], name: string): Character | undefined {
+  return characters.find((c) => sameName(c.name, name));
 }
 
-export function draftToScript(draft: PanelScriptDraft, characters: Character[]): { script: PanelScript; refCharacterIds: string[] } {
-  const cast = draft.characters.map((c) => ({ characterId: byName(characters, c.name).id, pose: c.pose, expression: c.expression, position: c.position }));
-  const dialogue = draft.dialogue.map((d) => ({ speakerId: d.speaker === null ? null : byName(characters, d.speaker).id, kind: d.kind, text: d.text }));
+/**
+ * A panel draft → its script and refs. A name no character of the manga carries (an LLM answer may use one: an
+ * adaptation's cast the outline did not add) is dropped from the cast and refs, and its lines keep their kind and
+ * text with no speaker, so the bubble has no tail target; the action text still describes them. `dropped` lists them.
+ */
+export function draftToScript(
+  draft: PanelScriptDraft, characters: Character[],
+): { script: PanelScript; refCharacterIds: string[]; dropped: string[] } {
+  const dropped: string[] = [];
+  const idOf = (name: string): string | null => {
+    const found = findByName(characters, name);
+    if (!found) dropped.push(name.trim());
+    return found?.id ?? null;
+  };
+  const cast = draft.characters.flatMap((c) => {
+    const characterId = idOf(c.name);
+    return characterId === null ? [] : [{ characterId, pose: c.pose, expression: c.expression, position: c.position }];
+  });
+  const dialogue = draft.dialogue.map((d) => ({ speakerId: d.speaker === null ? null : idOf(d.speaker), kind: d.kind, text: d.text }));
   return {
     script: { action: draft.action, shot: draft.shot, angle: draft.angle, characters: cast, background: draft.background, dialogue },
     refCharacterIds: [...new Set(cast.map((c) => c.characterId))],
+    dropped,
   };
 }
 
-/** The two characters on stage most often (ties: first appearance), who lead the cover. */
+/** The distinct names, first spelling kept, in order of appearance. */
+function distinctNames(names: string[]): string[] {
+  return names.filter((n, i) => names.findIndex((m) => sameName(m, n)) === i);
+}
+
+/** The two characters on stage most often (ties: first appearance), who lead the cover. Unknown names are skipped. */
 function leadingCharacters(scripts: ScriptsOutput, characters: Character[]): string[] {
   const counts = new Map<string, number>();
   for (const page of scripts.pages) {
     for (const p of page.panels) {
-      for (const id of new Set(p.characters.map((c) => byName(characters, c.name).id))) counts.set(id, (counts.get(id) ?? 0) + 1);
+      const ids = p.characters.flatMap((c) => findByName(characters, c.name)?.id ?? []);
+      for (const id of new Set(ids)) counts.set(id, (counts.get(id) ?? 0) + 1);
     }
   }
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2).map(([id]) => id);
@@ -122,7 +143,10 @@ function prepareCover(
   return { pageId: detail.page.id, panelId: panel.id };
 }
 
-/** Step 4 (spec §8): "Materializes Pages and Panels" — all or nothing. */
+/**
+ * Step 4 (spec §8): "Materializes Pages and Panels" — all or nothing. Names the manga lacks are dropped (see
+ * draftToScript), with one server-log warning for the step that lists them.
+ */
 export function materializeScripts(
   { store, bus }: EffectDeps, chapterId: string, input: { breakdown: BreakdownOutput; scripts: ScriptsOutput; premise: PremiseOutput },
 ): { pageIds: string[]; coverPageId: string } {
@@ -138,6 +162,7 @@ export function materializeScripts(
   }
   const hadCover = chapter.coverPageId !== null && store.pages.get(chapter.coverPageId) !== null;
   const characters = store.characters.listByManga(manga.id);
+  const dropped: string[] = [];
   const result = store.tx(() => {
     const pageIds = input.breakdown.pages.map((bp, i) => {
       const detail = createPage(store, chapterId, bp.layoutPreset);
@@ -146,11 +171,18 @@ export function materializeScripts(
       if (slots.length !== drafts.length) {
         throw new ValidationError(`page ${i + 1}: layout "${bp.layoutPreset}" has ${slots.length} panels but the script has ${drafts.length}`);
       }
-      slots.forEach((panelId, j) => { store.panels.update(panelId, draftToScript(drafts[j]!, characters)); });
+      slots.forEach((panelId, j) => {
+        const { script, refCharacterIds, dropped: names } = draftToScript(drafts[j]!, characters);
+        store.panels.update(panelId, { script, refCharacterIds });
+        dropped.push(...names);
+      });
       return detail.page.id;
     });
     return { pageIds, cover: prepareCover(store, chapter, manga, input.premise, input.scripts, characters) };
   });
+  if (dropped.length > 0) {
+    console.warn(`[manga] episode scripts: chapter ${chapterId} names characters the manga does not have; they stay unattributed extras (no cast, refs or bubble tail): ${distinctNames(dropped).join(', ')}`);
+  }
   // A new page's `created` covers its fresh panels (M1: POST /api/chapters/:id/pages emits only the page).
   for (const id of result.pageIds) emitEntity(bus, 'page', id, 'created', manga.id);
   // F30: a new cover is created and set on the chapter, as POST /api/chapters/:id/cover does. An existing cover's page
@@ -164,7 +196,7 @@ export function materializeScripts(
   return { pageIds: result.pageIds, coverPageId: result.cover.pageId };
 }
 
-/** A user edit of the scripts output after materialization: rewrite the panel scripts in place. */
+/** A user edit of the scripts output after materialization: rewrite the panel scripts in place (every name must be known). */
 export function applyScripts({ store, bus }: EffectDeps, chapterId: string, scripts: ScriptsOutput): void {
   const chapter = store.chapters.require(chapterId);
   const manga = store.mangas.require(chapter.mangaId);
@@ -181,7 +213,12 @@ export function applyScripts({ store, bus }: EffectDeps, chapterId: string, scri
       if (slots.length !== drafts.length) {
         throw new ValidationError(`page ${i + 1} has ${slots.length} panels but its script has ${drafts.length}; re-run the scripts step instead`);
       }
-      slots.forEach((id, j) => { store.panels.update(id, draftToScript(drafts[j]!, characters)); });
+      slots.forEach((id, j) => {
+        const { script, refCharacterIds, dropped } = draftToScript(drafts[j]!, characters);
+        // The user's own edit: its schema already refuses a name the manga lacks (a typo); this keeps that true here too.
+        if (dropped.length > 0) throw new ValidationError(`unknown character "${dropped[0]}"`);
+        store.panels.update(id, { script, refCharacterIds });
+      });
     });
   });
   for (const page of pages) for (const id of panelIds(page.layout)) emitEntity(bus, 'panel', id, 'updated', manga.id);

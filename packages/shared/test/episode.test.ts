@@ -120,6 +120,16 @@ describe('scriptsSchemaFor', () => {
     expect(r.data?.pages[0]?.panels[0]?.dialogue[0]?.speaker).toBe('Aiko');
   });
 
+  it('with lenientNames (an LLM answer), accepts unknown characters and speakers but keeps the panel counts strict', () => {
+    const lenient = scriptsSchemaFor({ panelCounts: [2], knownNames: ['Aiko'], lenientNames: true });
+    const stranger = panel({
+      characters: [{ name: 'Naruto', pose: 'running', expression: 'grinning', position: 'left' }],
+      dialogue: [{ speaker: 'Naruto', kind: 'shout', text: 'Believe it!' }],
+    });
+    expect(lenient.safeParse({ pages: [{ panels: [stranger, panel()] }] }).success).toBe(true);
+    expect(issuesOf(lenient.safeParse({ pages: [{ panels: [stranger] }] }))).toEqual(['pages.0.panels: page 1 needs exactly 2 panels (from the breakdown), got 1']);
+  });
+
   it('rejects unknown characters and speakers with the valid names listed', () => {
     const stranger = panel({ dialogue: [{ speaker: 'Mika', kind: 'speech', text: 'Hi' }] });
     const r = schema.safeParse({ pages: [{ panels: [stranger, panel()] }] });

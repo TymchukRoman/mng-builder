@@ -1,7 +1,7 @@
 import { getEventListeners, getMaxListeners } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ZodError } from 'zod';
-import { CHAPTER_TITLE_FROM_PREMISE, type EpisodeInput, type NewCharacterDraft, type OutlineOutput, type ImageGeneratePayload, type Job, type LlmStepPayload, type ServerEvent } from '@manga/shared';
+import { CHAPTER_TITLE_FROM_PREMISE, readingOrder, type EpisodeInput, type NewCharacterDraft, type OutlineOutput, type ImageGeneratePayload, type Job, type LlmStepPayload, type ServerEvent } from '@manga/shared';
 import { EPISODE_FAKE_RESPONSES } from '../src/dev/fake-episode.js';
 import { FAKE_RESPONSES } from '../src/dev/fake-responses.js';
 import { createPage, NeedsConfirmError } from '../src/domain/pages.js';
@@ -15,7 +15,7 @@ import { EventBus } from '../src/events/bus.js';
 import { GpuArbiter, JobQueue } from '../src/jobs/index.js';
 import { storyPages } from '../src/workflows/episode/chapter.js';
 import { EpisodeRunner } from '../src/workflows/episode/runner.js';
-import { PREMISE, TWO_PANEL_PRESET, outline, seedEpisodeWorld, seedRun } from './helpers/episode-fixtures.js';
+import { PREMISE, STAMP, TWO_PANEL_PRESET, breakdown, outline, scripts, seedEpisodeWorld, seedRun } from './helpers/episode-fixtures.js';
 import { FakeQueue, fakeImaging, fakeJobContext } from './helpers/fake-queue.js';
 import { openTestLibrary, type TestLibrary } from './helpers/library.js';
 import { seedCharacter } from './helpers/seed.js';
@@ -703,7 +703,30 @@ describe("EpisodeRunner — an adaptation's cast (Roman's Naruto run)", () => {
     ],
     newCharacters: [draft('Naruto', '1boy, spiky blond hair, blue eyes, orange jumpsuit'), draft('Sasuke', '1boy, black hair, dark eyes, blue shirt'), ROGUE],
   });
+  /** A scripts answer naming the franchise's cast: Naruto stands beside the Rogue Ninja in every panel, and Naruto and Sasuke speak. */
+  const namedScripts: ScriptedResponse = () => {
+    const sc = scripts(breakdown(2), 'Rogue Ninja');
+    for (const page of sc.pages) {
+      for (const p of page.panels) {
+        p.characters.push({ name: 'Naruto', pose: 'running', expression: 'grinning', position: 'right' });
+        p.dialogue.push({ speaker: 'Naruto', kind: 'shout', text: 'Believe it!' }, { speaker: 'Sasuke', kind: 'speech', text: 'Hmph.' });
+      }
+    }
+    return sc;
+  };
   const input = (): EpisodeInput => ({ prompt: 'Adapt any episode of Naruto to a short episode of manga', characterIds: [], pages: 2, tone: '' });
+
+  /** Roman's failed run: the leaky outline passed (before this fix), Rogue Ninja exists, the scripts step failed on "Naruto". */
+  function failedRun() {
+    const { manga, chapter } = seedEpisodeWorld(lib.store);
+    seedCharacter(lib.store, manga.id, 'Rogue Ninja', ROGUE.appearanceTags);
+    const seeded = seedRun(lib.store, chapter.id, { input: input(), outputs: { premise: PREMISE, outline: leakyOutline(), breakdown: breakdown(2) } });
+    const steps = seeded.steps.map((s) => (s.name === 'scripts'
+      ? { ...s, status: 'failed' as const, error: 'unknown character "Naruto"; use one of: Rogue Ninja', startedAt: STAMP, finishedAt: STAMP }
+      : s));
+    const run = lib.store.episodes.update(seeded.id, { steps, status: 'failed' });
+    return { manga, chapter, run };
+  }
 
   it('an outline whose scenes name characters missing from newCharacters goes through the correction round', async () => {
     const { chapter, manga } = seedEpisodeWorld(lib.store);
@@ -731,5 +754,57 @@ describe("EpisodeRunner — an adaptation's cast (Roman's Naruto run)", () => {
     await queue.idle();
     expect(lib.store.characters.listByManga(manga.id).map((c) => c.name).sort()).toEqual(['Naruto', 'Rogue Ninja', 'Sasuke']);
     expect(runner.get(run.id)).toMatchObject({ status: 'awaiting-review', currentStep: 3 });
+  });
+
+  it('retrying the failed scripts step of an outline that already passed completes, with the unknown names as unattributed extras', async () => {
+    const { manga, chapter, run } = failedRun();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { runner, queue } = rig({ responses: { 'episode.scripts': namedScripts } });
+    runner.rerun(run.id, 'scripts', false);
+    await queue.idle();
+    expect(runner.get(run.id)).toMatchObject({ status: 'awaiting-review', currentStep: 3 });
+    expect(runner.get(run.id).steps[3]).toMatchObject({ status: 'awaiting-review', error: null });
+    const rogue = lib.store.characters.listByManga(manga.id)[0]!;
+    const pages = storyPages(lib.store, chapter.id);
+    expect(pages).toHaveLength(2);
+    const panel = lib.store.panels.require(readingOrder(pages[0]!.layout, manga.readingDirection)[0]!);
+    expect(panel.script.characters.map((c) => c.characterId)).toEqual([rogue.id]);
+    expect(panel.refCharacterIds).toEqual([rogue.id]);
+    expect(panel.script.dialogue.map((d) => [d.speakerId, d.text])).toEqual([[rogue.id, 'Line 1.1'], [null, 'Believe it!'], [null, 'Hmph.']]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]![0])).toContain('Naruto, Sasuke');
+  });
+
+  it('re-running the failed run from the outline gives the franchise cast real characters and portraits', async () => {
+    const { manga, chapter, run } = failedRun();
+    const { runner, queue } = rig({ responses: { 'episode.outline': () => closedOutline(), 'episode.scripts': namedScripts } });
+    runner.rerun(run.id, 'outline', false);
+    await queue.idle();
+    expect(runner.get(run.id)).toMatchObject({ status: 'awaiting-review', currentStep: 1 });
+    runner.approve(run.id);
+    await queue.idle();
+    const cast = lib.store.characters.listByManga(manga.id);
+    expect(cast.map((c) => c.name).sort()).toEqual(['Naruto', 'Rogue Ninja', 'Sasuke']);
+    const [naruto, sasuke, rogue] = ['Naruto', 'Sasuke', 'Rogue Ninja'].map((n) => cast.find((c) => c.name === n)!);
+    expect(portraitJobs(queue).filter((j) => (j.payload as { characterId: string }).characterId === naruto!.id)).toHaveLength(4);
+    expect(runner.get(run.id)).toMatchObject({ status: 'awaiting-review', currentStep: 3 });
+    const page = storyPages(lib.store, chapter.id)[0]!;
+    const panel = lib.store.panels.require(readingOrder(page.layout, manga.readingDirection)[0]!);
+    expect(panel.refCharacterIds).toEqual([rogue!.id, naruto!.id]);
+    expect(panel.script.dialogue.map((d) => d.speakerId)).toEqual([rogue!.id, naruto!.id, sasuke!.id]);
+  });
+
+  it('a user edit of the scripts that names a character the manga lacks is still refused', async () => {
+    const { chapter, input: aikoInput } = world();
+    const { runner, queue } = rig();
+    const run = runner.start(chapter.id, aikoInput, 'review');
+    await queue.idle();
+    runner.approve(run.id);
+    await queue.idle();
+    expect(runner.get(run.id).currentStep).toBe(3);
+    const before = runner.get(run.id).steps[3]!.output;
+    expect(() => runner.editOutput(run.id, 'scripts', scripts(breakdown(2), 'Aikoo'))).toThrow(ZodError);
+    expect(() => runner.editOutput(run.id, 'scripts', scripts(breakdown(2), 'Aikoo'))).toThrow('unknown character');
+    expect(runner.get(run.id).steps[3]!.output).toEqual(before);
   });
 });

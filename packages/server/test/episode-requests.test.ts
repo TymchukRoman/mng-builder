@@ -62,6 +62,15 @@ describe('stepRequests', () => {
     expect(issues(second.schema.safeParse({ pages: chunk.pages.slice(0, 3) }))).toEqual(['expected exactly 4 pages (pages 5–8 of the breakdown), got 3']);
   });
 
+  it('an LLM scripts chunk and the joined answer may name a character the manga lacks (materialization drops it)', () => {
+    const run = scriptsRun(10);
+    const whole = scripts(breakdown(10), 'Naruto');
+    const [first] = stepRequests(lib.store, run, 'scripts');
+    expect(first!.schema.safeParse({ pages: whole.pages.slice(0, 4) }).success).toBe(true);
+    const answers = [0, 4, 8].map((at) => ({ pages: whole.pages.slice(at, at + SCRIPTS_PAGES_PER_CALL) }));
+    expect(combineAnswers(lib.store, run, 'scripts', answers)).toEqual(whole);
+  });
+
   it('the outline request refuses a scene character that is neither in the manga nor in newCharacters', () => {
     const run = scriptsRun(2);
     const [only] = stepRequests(lib.store, run, 'outline');

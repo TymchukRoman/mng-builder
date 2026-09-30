@@ -129,6 +129,11 @@ export type ScriptsOutput = z.infer<typeof ScriptsOutputSchema>;
 export interface ScriptsRules {
   panelCounts: number[];
   knownNames: string[];
+  /**
+   * An LLM answer (true): a name outside knownNames is not an error; materialization drops it from the panel's cast and
+   * nulls its speaker, so one stray name never fails the step. A user edit (false) stays strict, so a typo is caught.
+   */
+  lenientNames?: boolean;
   /** For a chunk of the chapter (scripts run in page chunks): pages before it, so messages name absolute page numbers. */
   pageOffset?: number;
 }
@@ -148,6 +153,7 @@ export function scriptsSchemaFor(rules: ScriptsRules): z.ZodType<ScriptsOutput> 
       if (panels !== undefined && page.panels.length !== panels) {
         ctx.addIssue({ code: 'custom', path: ['pages', i, 'panels'], message: `page ${offset + i + 1} needs exactly ${panels} panels (from the breakdown), got ${page.panels.length}` });
       }
+      if (rules.lenientNames) return;
       page.panels.forEach((p, j) => {
         p.characters.forEach((c, k) => {
           if (!known(c.name)) ctx.addIssue({ code: 'custom', path: ['pages', i, 'panels', j, 'characters', k, 'name'], message: `unknown character "${c.name}"; use one of: ${valid}` });

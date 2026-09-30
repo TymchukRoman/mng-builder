@@ -138,7 +138,7 @@ export class EpisodeRunner {
     if (step.status === 'done' && EDIT_NEEDS_PENDING_NEXT.has(name) && run.steps[idx + 1]?.status !== 'pending') {
       throw new ConflictError(EDIT_TOO_LATE_MESSAGE);
     }
-    const value = validationSchema(this.deps.store, run, name).parse(output); // ZodError → 400 validation
+    const value = validationSchema(this.deps.store, run, name, { source: 'user' }).parse(output); // ZodError → 400 validation (a typed unknown name too)
     const fx = this.effectDeps();
     if (name === 'premise') applyPremise(fx, run.chapterId, PremiseOutputSchema.parse(value), premiseTitles(this.deps.store, run.chapterId));
     if (name === 'scripts') applyScripts(fx, run.chapterId, ScriptsOutputSchema.parse(value));

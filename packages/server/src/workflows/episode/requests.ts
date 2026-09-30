@@ -50,7 +50,7 @@ export function stepRequests(store: Store, run: EpisodeRun, step: LlmStepName): 
       const last = at + pages.length;
       out.push(request(
         { ...ctx, pages, pageRange: { first, last, total } },
-        scriptsSchemaFor({ panelCounts: pages.map((p) => p.panelCount), knownNames: names, pageOffset: at }),
+        scriptsSchemaFor({ panelCounts: pages.map((p) => p.panelCount), knownNames: names, lenientNames: true, pageOffset: at }),
         total <= SCRIPTS_PAGES_PER_CALL ? STEP_PROGRESS.scripts : `Writing scripts (pages ${first}–${last} of ${total})…`,
       ));
     }
@@ -70,15 +70,15 @@ export function stepRequests(store: Store, run: EpisodeRun, step: LlmStepName): 
       panels[0]!.isCover ? 'Writing image prompts (cover)…' : `Writing image prompts (page ${panels[0]!.page} of ${storyPages})…`,
     ));
   }
-  return [request(ctx, validationSchema(store, run, step), STEP_PROGRESS[step])];
+  return [request(ctx, validationSchema(store, run, step, { source: 'llm' }), STEP_PROGRESS[step])];
 }
 
-/** Joins the answers of `stepRequests` (in order) and validates the whole with the step's schema (ZodError when invalid). */
+/** Joins the answers of `stepRequests` (in order) and validates the whole with the step's LLM schema (ZodError when invalid). */
 export function combineAnswers(store: Store, run: EpisodeRun, step: LlmStepName, answers: unknown[]): unknown {
   let whole: unknown;
   if (step === 'scripts') whole = { pages: answers.flatMap((a) => ScriptsOutputSchema.parse(a).pages) };
   else if (step === 'prompts') whole = { panels: answers.flatMap((a) => PromptsOutputSchema.parse(a).panels) };
   else if (answers.length === 1) whole = answers[0];
   else throw new Error(`step ${step} makes one call, got ${answers.length} answers`);
-  return validationSchema(store, run, step).parse(whole);
+  return validationSchema(store, run, step, { source: 'llm' }).parse(whole);
 }

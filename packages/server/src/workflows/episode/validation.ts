@@ -8,8 +8,15 @@ import type { Store } from '../../store/index.js';
 import { chapterPanels } from './chapter.js';
 import { requireOutput } from './steps.js';
 
-/** The schema a step's output must satisfy right now (LLM answers and user edits alike). */
-export function validationSchema(store: Store, run: EpisodeRun, step: EpisodeStepName): z.ZodType<unknown> {
+/**
+ * Who wrote the output being validated (required, so every caller decides). `llm`: the step's own answer, whose scripts
+ * may name a character the manga lacks (materialization drops it, so one stray name never fails the run). `user`: an
+ * edit, where such a name is a typo and is refused.
+ */
+export interface ValidationOptions { source: 'llm' | 'user' }
+
+/** The schema a step's output must satisfy right now. LLM answers and user edits differ only in the scripts' names. */
+export function validationSchema(store: Store, run: EpisodeRun, step: EpisodeStepName, { source }: ValidationOptions): z.ZodType<unknown> {
   switch (step) {
     case 'premise':
       return PremiseOutputSchema;
@@ -21,6 +28,7 @@ export function validationSchema(store: Store, run: EpisodeRun, step: EpisodeSte
       return scriptsSchemaFor({
         panelCounts: requireOutput(run, 'breakdown', BreakdownOutputSchema).pages.map((p) => p.panelCount),
         knownNames: knownNames(store, run),
+        lenientNames: source === 'llm',
       });
     case 'prompts': {
       const chapter = store.chapters.require(run.chapterId);

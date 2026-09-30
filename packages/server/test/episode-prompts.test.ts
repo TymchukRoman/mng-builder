@@ -78,7 +78,7 @@ describe('step prompts', () => {
     for (const step of LLM_STEPS) {
       const system = renderedSystem(run, step);
       expect(system).not.toContain('<context>');
-      expect(withJsonInstruction(system, validationSchema(lib.store, run, step)).length).toBeLessThan(8000);
+      expect(withJsonInstruction(system, validationSchema(lib.store, run, step, { source: 'llm' })).length).toBeLessThan(8000);
     }
   });
 
@@ -234,17 +234,25 @@ describe('step contexts', () => {
 describe('validationSchema', () => {
   it("uses the run's page count and the manga's character names", () => {
     const { run } = fullWorld();
-    expect(validationSchema(lib.store, run, 'breakdown').safeParse(breakdown(1)).success).toBe(false);
-    expect(validationSchema(lib.store, run, 'breakdown').safeParse(breakdown(2)).success).toBe(true);
-    expect(validationSchema(lib.store, run, 'scripts').safeParse(scripts(breakdown(2), 'aiko')).success).toBe(true);
-    expect(validationSchema(lib.store, run, 'scripts').safeParse(scripts(breakdown(2), 'Mika')).success).toBe(false);
+    const user = { source: 'user' } as const;
+    expect(validationSchema(lib.store, run, 'breakdown', user).safeParse(breakdown(1)).success).toBe(false);
+    expect(validationSchema(lib.store, run, 'breakdown', user).safeParse(breakdown(2)).success).toBe(true);
+    expect(validationSchema(lib.store, run, 'scripts', user).safeParse(scripts(breakdown(2), 'aiko')).success).toBe(true);
+    expect(validationSchema(lib.store, run, 'scripts', user).safeParse(scripts(breakdown(2), 'Mika')).success).toBe(false);
   });
 
-  it("an outline scene may name only the manga's characters or the answer's new ones", () => {
+  it('an LLM scripts answer may name an unknown character (materialization drops it); the page and panel counts stay strict', () => {
+    const { run } = fullWorld();
+    const llm = validationSchema(lib.store, run, 'scripts', { source: 'llm' });
+    expect(llm.safeParse(scripts(breakdown(2), 'Naruto')).success).toBe(true);
+    expect(llm.safeParse(scripts(breakdown(1), 'Aiko')).success).toBe(false);
+  });
+
+  it("an outline scene may name only the manga's characters or the answer's new ones, for LLM answers and edits alike", () => {
     const { run } = fullWorld();
     const naruto = { name: 'Naruto', role: 'main' as const, personality: 'loud', speechStyle: 'shouts', appearanceTags: '1boy, spiky blond hair' };
-    {
-      const schema = validationSchema(lib.store, run, 'outline');
+    for (const source of ['llm', 'user'] as const) {
+      const schema = validationSchema(lib.store, run, 'outline', { source });
       const r = schema.safeParse(outline(['Aiko', 'Naruto']));
       expect(r.success).toBe(false);
       expect(r.error?.issues[0]).toMatchObject({ path: ['scenes', 0, 'characterNames', 1], message: expect.stringContaining('add "Naruto" to newCharacters') });
@@ -255,7 +263,7 @@ describe('validationSchema', () => {
   it('refuses to build a schema that needs a missing earlier output', () => {
     const { chapter } = seedEpisodeWorld(lib.store);
     const run = seedRun(lib.store, chapter.id, { outputs: { premise: PREMISE } });
-    expect(() => validationSchema(lib.store, run, 'breakdown')).toThrow(ConflictError);
-    expect(() => validationSchema(lib.store, run, 'breakdown')).toThrow('step outline has no output yet');
+    expect(() => validationSchema(lib.store, run, 'breakdown', { source: 'llm' })).toThrow(ConflictError);
+    expect(() => validationSchema(lib.store, run, 'breakdown', { source: 'llm' })).toThrow('step outline has no output yet');
   });
 });

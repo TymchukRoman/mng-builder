@@ -1,7 +1,7 @@
 // packages/server/test/episode-effects.test.ts
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CreateFrameSchema, readingOrder, type ScriptsOutput, type ServerEvent } from '@manga/shared';
 import { createFrame } from '../src/domain/frames.js';
 import { createCoverPage, createPage } from '../src/domain/pages.js';
@@ -23,7 +23,7 @@ beforeEach(() => {
   events = [];
   bus.on((e) => { events.push(e); });
 });
-afterEach(() => { lib.close(); });
+afterEach(() => { vi.restoreAllMocks(); lib.close(); });
 
 const entityEvents = () => events.flatMap((e) => (e.type === 'entity' ? [`${e.entity}:${e.op}`] : []));
 
@@ -215,14 +215,43 @@ describe('materializeScripts', () => {
     expect(entityEvents()).toEqual([]);
   });
 
-  it('rejects an unknown character name', () => {
-    const { chapter } = world();
+  it('drops a character the manga lacks from the cast and refs, nulls its speaker, keeps its lines and the action, and warns once', () => {
+    const { chapter, manga, aiko } = world();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const bd = breakdown(1);
-    expect(() => materializeScripts({ store: lib.store, bus }, chapter.id, { breakdown: bd, scripts: scripts(bd, 'Nobody'), premise: PREMISE }))
-      .toThrow(ValidationError);
-    expect(storyPages(lib.store, chapter.id)).toHaveLength(0);
-    expect(lib.store.chapters.require(chapter.id).coverPageId).toBeNull();
-    expect(entityEvents()).toEqual([]);
+    const sc = scripts(bd, 'Aiko');
+    for (const p of sc.pages[0]!.panels) {
+      p.characters.push({ name: 'Naruto', pose: 'running', expression: 'grinning', position: 'right' });
+      p.dialogue.push({ speaker: 'Naruto', kind: 'shout', text: 'Believe it!' }, { speaker: 'Sasuke', kind: 'speech', text: 'Hmph.' });
+    }
+    materializeScripts({ store: lib.store, bus }, chapter.id, { breakdown: bd, scripts: sc, premise: PREMISE });
+    const page = storyPages(lib.store, chapter.id)[0]!;
+    for (const [j, panelId] of readingOrder(page.layout, manga.readingDirection).entries()) {
+      const panel = lib.store.panels.require(panelId);
+      expect(panel.script.action).toBe(`Page 1 panel ${j + 1}`);
+      expect(panel.script.characters.map((c) => c.characterId)).toEqual([aiko.id]);
+      expect(panel.refCharacterIds).toEqual([aiko.id]);
+      expect(panel.script.dialogue).toEqual([
+        { speakerId: aiko.id, kind: 'speech', text: `Line 1.${j + 1}` },
+        { speakerId: null, kind: 'shout', text: 'Believe it!' },
+        { speakerId: null, kind: 'speech', text: 'Hmph.' },
+      ]);
+    }
+    const cover = lib.store.chapters.require(chapter.id).coverPageId!;
+    expect(lib.store.panels.listByPage(cover)[0]!.refCharacterIds).toEqual([aiko.id]); // the cover leads are known characters only
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]![0])).toMatch(/^\[manga\] episode scripts: .*Naruto, Sasuke/);
+  });
+
+  it('a script with only characters the manga lacks still materializes, with an empty cast and cover', () => {
+    const { chapter } = world();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const bd = breakdown(1);
+    materializeScripts({ store: lib.store, bus }, chapter.id, { breakdown: bd, scripts: scripts(bd, 'Nobody'), premise: PREMISE });
+    const page = storyPages(lib.store, chapter.id)[0]!;
+    expect(lib.store.panels.listByPage(page.id).map((p) => [p.script.characters, p.refCharacterIds, p.script.dialogue[0]!.speakerId]))
+      .toEqual([[[], [], null], [[], [], null]]);
+    expect(lib.store.panels.listByPage(lib.store.chapters.require(chapter.id).coverPageId!)[0]!.refCharacterIds).toEqual([]);
   });
 
   it('refuses scripts whose page count differs from the breakdown (M4)', () => {
@@ -249,6 +278,18 @@ describe('edits after materialization', () => {
     expect(entityEvents()).toEqual(['panel:updated', 'panel:updated']);
     expect(() => applyScripts({ store: lib.store, bus }, chapter.id, scripts(breakdown(2), 'Aiko')))
       .toThrow('the chapter has 1 pages but the scripts have 2; re-run the scripts step instead');
+  });
+
+  it('applyScripts (a user edit) still refuses a character the manga lacks and changes nothing', () => {
+    const { chapter } = world();
+    const bd = breakdown(1);
+    materializeScripts({ store: lib.store, bus }, chapter.id, { breakdown: bd, scripts: scripts(bd, 'Aiko'), premise: PREMISE });
+    events = [];
+    expect(() => applyScripts({ store: lib.store, bus }, chapter.id, scripts(bd, 'Aikoo'))).toThrow(ValidationError);
+    expect(() => applyScripts({ store: lib.store, bus }, chapter.id, scripts(bd, 'Aikoo'))).toThrow('unknown character "Aikoo"');
+    const page = storyPages(lib.store, chapter.id)[0]!;
+    expect(lib.store.panels.listByPage(page.id).every((p) => p.script.characters.length === 1)).toBe(true);
+    expect(entityEvents()).toEqual([]);
   });
 });
 

@@ -88,6 +88,21 @@ describe('episode routes', { timeout: 90_000 }, () => {
     expect([bad.status, bad.body.error.code]).toEqual([400, 'validation']);
   });
 
+  it('PUT scripts output answers 400 for a character the manga lacks (a typo), though an LLM answer may name one', async () => {
+    s = await startM4TestServer();
+    const { chapter } = await chapterOn(s);
+    const run = (await s.api<EpisodeRun>('POST', `/api/chapters/${chapter.id}/episode`, { input: { prompt: 'A cat', pages: 1 } })).body;
+    await runUntil(s, chapter.id, 'awaiting-review', 1);
+    expect((await s.api('POST', `/api/episodes/${run.id}/approve`)).status).toBe(200);
+    const atScripts = await runUntil(s, chapter.id, 'awaiting-review', 3);
+    const output = structuredClone(atScripts.steps[3]!.output) as { pages: Array<{ panels: Array<{ dialogue: Array<{ speaker: string | null }> }> }> };
+    const line = output.pages[0]!.panels[0]!.dialogue.find((d) => d.speaker !== null)!;
+    line.speaker = 'Mikka';
+    const bad = await s.api<ApiErrorBody>('PUT', `/api/episodes/${run.id}/steps/scripts/output`, { output });
+    expect([bad.status, bad.body.error.code]).toEqual([400, 'validation']);
+    expect(bad.body.error.message).toContain('unknown character "Mikka"; use one of: Mika');
+  });
+
   it('rerun answers 409 needs_confirm with the panel ids, and replaces the pages with confirm', async () => {
     s = await startM4TestServer();
     const { chapter } = await chapterOn(s);
