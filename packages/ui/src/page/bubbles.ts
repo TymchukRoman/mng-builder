@@ -1,4 +1,4 @@
-import type { FrameKind } from '@manga/shared';
+import { NARRATION_PAD, TEXT_INSET, type FrameKind } from '@manga/shared';
 
 /** Box in page pixels. BoxSchema guarantees w, h > 0. */
 export interface BoxPx { x: number; y: number; w: number; h: number }
@@ -101,19 +101,12 @@ function scaled(b: BoxPx, k: number): BoxPx {
 
 export function textBox(kind: FrameKind, b: BoxPx): BoxPx {
   switch (kind) {
-    case 'speech': return scaled(b, 0.7);
-    case 'thought': {
-      // Cloud's minimum normalized radius is ~0.77 (valley between bumps).
-      // k ≤ 0.77/√2 ≈ 0.545 keeps corners inside cloud.
-      return scaled(b, 0.54);
-    }
-    case 'shout': {
-      // Burst's inner ring at 0.74.
-      // k ≤ 0.74/√2 ≈ 0.523 keeps corners inside burst.
-      return scaled(b, 0.52);
-    }
+    case 'speech':
+    case 'thought': // cloud valleys keep the corners inside (see TEXT_INSET)
+    case 'shout': // burst inner ring keeps the corners inside (see TEXT_INSET)
+      return scaled(b, TEXT_INSET[kind]);
     case 'narration': {
-      const pad = 0.08 * Math.min(b.w, b.h);
+      const pad = NARRATION_PAD * Math.min(b.w, b.h);
       return { x: b.x + pad, y: b.y + pad, w: b.w - 2 * pad, h: b.h - 2 * pad };
     }
     case 'sfx':
