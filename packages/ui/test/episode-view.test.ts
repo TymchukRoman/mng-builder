@@ -3,7 +3,8 @@ import { EPISODE_STEPS, type EpisodeRun } from '@manga/shared';
 import { ApiError } from '../src/api';
 import { History } from '../src/editor/history';
 import {
-  STEP_STATUS_TEXT, currentStepName, isDirty, isLive, parseDraft, rerunLabel, rerunStep, runLabel, stepActions,
+  STEP_STATUS_TEXT, childPath, currentStepName, dirtySteps, isDirty, isLive, numberFromInput, parseDraft, rerunLabel, rerunStep, runLabel,
+  saveThen, statusChipClass, stepActions, stepKey, textRows, toggleRaw, type StepEdits,
 } from '../src/episode/episodeView';
 
 type StepStatus = EpisodeRun['steps'][number]['status'];
@@ -100,5 +101,77 @@ describe('re-running a step (F33)', () => {
     await expect(rerunStep(() => Promise.reject(conflict), false, barrier)).rejects.toBe(conflict);
     await expect(rerunStep(() => Promise.reject(needsConfirm), true, barrier)).rejects.toBe(needsConfirm);
     expect(barriers).toBe(1);
+  });
+});
+
+describe('step edits (review round 1)', () => {
+  it('reads a number field only when the text is a finite number (finding 2)', () => {
+    expect(numberFromInput('')).toBeNull();
+    expect(numberFromInput('  ')).toBeNull();
+    expect(numberFromInput('-')).toBeNull();
+    expect(numberFromInput('1e')).toBeNull();
+    expect(numberFromInput('abc')).toBeNull();
+    expect(numberFromInput('-3')).toBe(-3);
+    expect(numberFromInput(' 2.5 ')).toBe(2.5);
+    expect(numberFromInput('0')).toBe(0);
+  });
+
+  it('names nested fields by a readable path, numbered like the visible lists (finding 7)', () => {
+    expect(childPath('', 'pages')).toBe('pages');
+    expect(childPath('pages', 1)).toBe('pages[2]');
+    expect(childPath(childPath(childPath('pages', 1), 'panels'), 0)).toBe('pages[2].panels[1]');
+    expect(childPath('pages[2].panels[1]', 'scene')).toBe('pages[2].panels[1].scene');
+    expect(childPath('', 0)).toBe('[1]');
+  });
+
+  it('sizes a text field from its content', () => {
+    expect(textRows('short')).toBe(1);
+    expect(textRows('x'.repeat(130))).toBe(3);
+    expect(textRows('a\nb\nc')).toBe(3);
+    expect(textRows('x\n'.repeat(20))).toBe(6);
+  });
+
+  it('maps a finished run status to the shared status-chip modifiers (finding 5)', () => {
+    expect(statusChipClass('done')).toBe('status-chip--ready');
+    expect(statusChipClass('awaiting-review')).toBe('status-chip--generating');
+    expect(statusChipClass('failed')).toBe('status-chip--failed');
+    expect(statusChipClass('cancelled')).toBe('status-chip--failed');
+  });
+
+  it('keeps a draft per step and reports the steps with unsaved changes (finding 8)', () => {
+    const r = run('awaiting-review', 3, 'awaiting-review');
+    const edits: StepEdits = {
+      premise: { key: stepKey(r, 'premise'), draft: { any: 'changed' }, raw: null },
+      outline: { key: stepKey(r, 'outline'), draft: { any: 'thing' }, raw: null }, // same as saved
+      scripts: { key: stepKey(r, 'scripts'), draft: { any: 'thing' }, raw: '{"any":"edited"}' },
+      breakdown: { key: 'stale', draft: { any: 'old' }, raw: null }, // the step changed since: dropped
+    };
+    expect([...dirtySteps(r, edits)]).toEqual(['premise', 'scripts']);
+    // Approving the scripts changes their status, so their draft no longer counts.
+    const approved = run('running', 4, 'running');
+    expect([...dirtySteps(approved, edits)]).toEqual(['premise']);
+  });
+
+  it('switches between the form and raw JSON without losing edits', () => {
+    const form = { key: 'k', draft: { title: 'x' }, raw: null };
+    const raw = toggleRaw(form);
+    expect(raw).toEqual({ ok: true, edit: { key: 'k', draft: { title: 'x' }, raw: '{\n  "title": "x"\n}' } });
+    const back = toggleRaw({ key: 'k', draft: { title: 'x' }, raw: '{"title":"y"}' });
+    expect(back).toEqual({ ok: true, edit: { key: 'k', draft: { title: 'y' }, raw: null } });
+    expect(toggleRaw({ key: 'k', draft: null, raw: '{oops' })).toMatchObject({ ok: false });
+  });
+
+  it('Continue saves the draft of the step it approves first, and stops if the save fails (finding 8, 9)', async () => {
+    const calls: string[] = [];
+    const next = run('running', 4, 'running');
+    await expect(saveThen(async () => { calls.push('save'); }, async () => { calls.push('approve'); return next; })).resolves.toBe(next);
+    expect(calls).toEqual(['save', 'approve']);
+    calls.length = 0;
+    await saveThen(null, async () => { calls.push('approve'); return next; });
+    expect(calls).toEqual(['approve']);
+    calls.length = 0;
+    const invalid = new Error('scripts: Required');
+    await expect(saveThen(async () => { calls.push('save'); throw invalid; }, async () => { calls.push('approve'); return next; })).rejects.toBe(invalid);
+    expect(calls).toEqual(['save']);
   });
 });

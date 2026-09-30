@@ -12,3 +12,4 @@
 .status-chip { display: inline-flex; align-items: center; padding: var(--sp-half) var(--sp-2); border-radius: var(--r-full); font-size: var(--fs-xs); background: var(--surface-2); color: var(--text-2); }
 .status-chip--generating { background: var(--accent-wash); color: var(--accent); }
 .status-chip--ready { background: color-mix(in oklab, var(--ok) 16%, transparent); color: var(--ok); }
+.status-chip--failed { background: var(--danger-wash); color: var(--danger); }

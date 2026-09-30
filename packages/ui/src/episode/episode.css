@@ -1,11 +1,9 @@
 .episode { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-1) var(--sp-2) var(--sp-2); border-bottom: 1px solid var(--border-1); background: var(--surface); }
 .episode.is-collapsed { padding-bottom: var(--sp-1); }
 .episode__head { display: flex; align-items: center; gap: var(--sp-1); min-height: var(--control-h); min-width: 0; }
-.episode__status { min-width: 0; }
-.episode__status--done { background: color-mix(in oklab, var(--ok) 16%, transparent); color: var(--ok); }
-.episode__status--failed, .episode__status--cancelled { background: var(--danger-wash); color: var(--danger); }
-.episode__status--awaiting-review { background: var(--accent-wash); color: var(--accent); }
-.episode__steps { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin: 0; padding: 0; list-style: none; }
+.episode__status { display: flex; min-width: 0; }
+.episode__actions { display: flex; align-items: center; gap: var(--sp-1); }
+.episode__steps { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
 .episode__step { display: inline-flex; align-items: center; gap: var(--sp-1); height: calc(var(--control-h) - var(--sp-1)); padding: 0 var(--sp-2); border: 1px solid var(--border-2); border-radius: var(--r-full); background: transparent; color: var(--text-2); font-size: var(--fs-xs); cursor: pointer; }
 .episode__step:hover { background: var(--hover-wash); color: var(--text-1); }
 .episode__step.is-on { border-color: var(--accent); background: var(--accent-wash); color: var(--text-1); }
@@ -13,6 +11,8 @@
 .episode__step--done svg { color: var(--ok); }
 .episode__step--failed svg { color: var(--danger); }
 .episode__step--awaiting-review svg, .episode__step--running svg { color: var(--accent); }
+/* Unsaved changes on this step. */
+.episode__dot { flex: none; width: var(--sp-1); height: var(--sp-1); border-radius: var(--r-full); background: var(--warn); }
 .episode__body { display: flex; flex-direction: column; gap: var(--sp-2); max-height: 42vh; overflow: auto; }
 /* Long fields stay readable on a wide screen. */
 .episode__body > .jf-obj, .episode__body > .jf-list, .episode__json { max-width: 120ch; }
@@ -27,4 +27,5 @@
 .jf-list > li { padding-left: var(--sp-2); border-left: 1px solid var(--border-2); }
 .jf-list > li::marker { color: var(--text-2); font-size: var(--fs-xs); }
 .jf-num { max-width: 8em; }
-.jf-text { resize: vertical; }
+/* One element for every string (short or long), sized to its content. */
+.jf-text { min-height: var(--control-h); resize: none; field-sizing: content; max-height: calc(var(--control-h) * 6); }

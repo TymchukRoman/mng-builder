@@ -89,3 +89,75 @@ export async function rerunStep(send: (confirm: boolean) => Promise<EpisodeRun>,
     throw err;
   }
 }
+
+/** The chip modifier for a run that is not running (the running state shows a StatusLoader); the shared `.status-chip--*` set. */
+export function statusChipClass(status: EpisodeRun['status']): string {
+  switch (status) {
+    case 'done': return 'status-chip--ready';
+    case 'running':
+    case 'awaiting-review': return 'status-chip--generating';
+    case 'failed':
+    case 'cancelled': return 'status-chip--failed';
+  }
+}
+
+/** A number field's text, read only when it is a finite number: an empty or half-typed entry (`-`, `1e`) writes nothing. */
+export function numberFromInput(text: string): number | null {
+  const t = text.trim();
+  if (t === '') return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** The readable path of a nested output field, e.g. `pages[2].panels[1].scene`. List items count from 1, like the visible lists. */
+export function childPath(path: string, key: string | number): string {
+  if (typeof key === 'number') return `${path}[${key + 1}]`;
+  return path === '' ? key : `${path}.${key}`;
+}
+
+/** Rows for a text field: one per line, a wrapped line counting once per ~64 characters, at most 6 (then it scrolls). */
+export function textRows(value: string): number {
+  const rows = value.split('\n').reduce((n, line) => n + Math.max(1, Math.ceil(line.length / 64)), 0);
+  return Math.min(6, rows);
+}
+
+/** The user's unsaved edit of one step's output. It belongs to `key` (see `stepKey`) and is dropped when the step itself changes. */
+export interface StepEdit { key: string; draft: unknown; raw: string | null }
+export type StepEdits = Partial<Record<EpisodeStepName, StepEdit>>;
+
+/** Changes when the step gets a new status or token; a refetch of the same run leaves it alone. */
+export function stepKey(run: EpisodeRun, name: EpisodeStepName): string {
+  const step = run.steps[EPISODE_STEPS.indexOf(name)];
+  return `${run.id}:${name}:${step?.status ?? ''}:${step?.startedAt ?? ''}:${step?.finishedAt ?? ''}`;
+}
+
+/** The step's edit if it is still current, else a fresh one holding the saved output. */
+export function editOf(run: EpisodeRun, edits: StepEdits, name: EpisodeStepName): StepEdit {
+  const key = stepKey(run, name);
+  const edit = edits[name];
+  return edit?.key === key ? edit : { key, draft: run.steps[EPISODE_STEPS.indexOf(name)]?.output ?? null, raw: null };
+}
+
+/** The editable steps whose current draft differs from their saved output (their tabs are marked). */
+export function dirtySteps(run: EpisodeRun, edits: StepEdits): Set<EpisodeStepName> {
+  const out = new Set<EpisodeStepName>();
+  for (const name of EPISODE_STEPS) {
+    const edit = edits[name];
+    if (!edit || edit.key !== stepKey(run, name) || !stepActions(run, name).edit) continue;
+    if (isDirty(run.steps[EPISODE_STEPS.indexOf(name)]?.output ?? null, edit.draft, edit.raw)) out.add(name);
+  }
+  return out;
+}
+
+/** "Edit as JSON" and back: the form's draft becomes text; valid text becomes the form's draft, invalid text stays. */
+export function toggleRaw(edit: StepEdit): { ok: true; edit: StepEdit } | { ok: false; error: string } {
+  if (edit.raw === null) return { ok: true, edit: { ...edit, raw: JSON.stringify(edit.draft, null, 2) } };
+  const parsed = parseDraft(edit.raw);
+  return parsed.ok ? { ok: true, edit: { ...edit, draft: parsed.value, raw: null } } : { ok: false, error: parsed.error };
+}
+
+/** Continue and Run to end: save the approved step's draft first (when there is one), and move on only if that save succeeded. */
+export async function saveThen(save: (() => Promise<unknown>) | null, next: () => Promise<EpisodeRun>): Promise<EpisodeRun> {
+  if (save) await save();
+  return next();
+}
