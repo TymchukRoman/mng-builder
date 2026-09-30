@@ -17,6 +17,7 @@
     "dev": "tsc --build && concurrently -k -n tsc,server,ui -c gray,blue,magenta \"tsc --build --watch --preserveWatchOutput\" \"node --watch packages/server/dist/main.js\" \"npm run dev --workspace @manga/ui\"",
     "start": "node packages/server/dist/main.js",
     "e2e": "npm run build && playwright test",
+    "smoke": "node scripts/smoke.mjs",
     "link-cli": "npm link --workspace @manga/cli"
   },
   "devDependencies": {
