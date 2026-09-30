@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { create } from 'fontkit';
 import { BUNDLED_FONTS } from '@manga/shared';
+// @ts-expect-error -- a plain .mjs build script without type declarations
 import { excludeCodepoint } from '../scripts/fetch-fonts.mjs';
 
 const UI = join(dirname(fileURLToPath(import.meta.url)), '..');

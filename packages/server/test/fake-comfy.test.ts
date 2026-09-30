@@ -202,7 +202,7 @@ describe('FakeComfy', () => {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: graph }),
     });
     expect(res1.status).toBe(400);
-    const body1 = await res1.json();
+    const body1 = (await res1.json()) as { error: { type: string } };
     expect(body1.error.type).toBe('test_error');
 
     const res2 = await fetch(`${fake.url}/prompt`, {
