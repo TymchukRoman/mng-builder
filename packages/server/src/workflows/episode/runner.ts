@@ -100,6 +100,17 @@ export class EpisodeRunner {
     return saved;
   }
 
+  /**
+   * M4 final I1: the chapter is about to be deleted, and its runs with it (FK cascade). Every unfinished job of every
+   * run of the chapter is cancelled first, portraits included, so nothing keeps working on (and failing over) rows
+   * that are going. Returns the run ids; the caller emits `episodeRun deleted` for them once they are gone (G5).
+   */
+  cancelForChapter(chapterId: string): string[] {
+    const runs = this.deps.store.episodes.listByChapter(chapterId);
+    for (const run of runs) this.cancelJobs(run.id, { keepPortraits: false });
+    return runs.map((r) => r.id);
+  }
+
   editOutput(runId: string, name: EpisodeStepName, output: unknown): EpisodeRun {
     const run = this.get(runId);
     const idx = stepIndex(name);

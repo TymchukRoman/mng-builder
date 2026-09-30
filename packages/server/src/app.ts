@@ -16,7 +16,7 @@ import { GpuArbiter } from './jobs/gpu.js';
 import { JobQueue } from './jobs/queue.js';
 import { openStore } from './store/index.js';
 
-export type { AppModule, CoreDeps, StatusProviders } from './deps.js';
+export type { AppModule, ChapterDeleteHook, CoreDeps, StatusProviders } from './deps.js';
 export { defaultStatusProviders, NOT_CONFIGURED } from './deps.js';
 
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
@@ -83,7 +83,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   const bus = new EventBus();
   const gpu = new GpuArbiter();
   const queue = new JobQueue({ store, bus, gpu });
-  const deps: CoreDeps = { config, store, bus, queue, gpu, statusProviders: defaultStatusProviders() };
+  const deps: CoreDeps = { config, store, bus, queue, gpu, statusProviders: defaultStatusProviders(), chapterDeleteHooks: [] };
   const modules = opts.modules ? opts.modules(deps) : [];
 
   // Defined before the app so POST /api/shutdown can reach it; it only runs once listening, when `running` is set.

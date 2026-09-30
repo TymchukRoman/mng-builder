@@ -1,10 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { CreateMangaSchema, UpdateMangaSchema, type Manga, type PageDetail } from '@manga/shared';
-import type { CoreDeps } from '../deps.js';
+import { beforeChapterDelete, type CoreDeps } from '../deps.js';
 import { createCoverPage, createManga, deleteManga, updateManga } from '../domain/index.js';
 import { emitEntity, OK, type IdParams } from './util.js';
 
-export function registerMangaRoutes(app: FastifyInstance, { store, bus }: CoreDeps): void {
+export function registerMangaRoutes(app: FastifyInstance, deps: CoreDeps): void {
+  const { store, bus } = deps;
   app.get('/api/mangas', async (): Promise<Manga[]> => store.mangas.list());
 
   /**
@@ -29,8 +30,12 @@ export function registerMangaRoutes(app: FastifyInstance, { store, bus }: CoreDe
     return manga;
   });
 
+  /** The chapter delete hooks run first for every chapter of the manga (M4 final I1). */
   app.delete<IdParams>('/api/mangas/:id', async (req) => {
+    store.mangas.require(req.params.id);
+    const after = beforeChapterDelete(deps, store.chapters.listByManga(req.params.id).map((c) => c.id));
     const manga = deleteManga(store, req.params.id);
+    after();
     emitEntity(bus, 'manga', manga.id, 'deleted', manga.id);
     return OK;
   });

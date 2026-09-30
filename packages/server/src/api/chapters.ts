@@ -1,10 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { CreateChapterSchema, CreatePageSchema, ReorderSchema, UpdateChapterSchema, type Chapter, type Page, type PageDetail } from '@manga/shared';
-import type { CoreDeps } from '../deps.js';
+import { beforeChapterDelete, type CoreDeps } from '../deps.js';
 import { chapterPages, createChapter, createCoverPage, createPage, deleteChapter, reorderPages, updateChapter } from '../domain/index.js';
 import { emitEntity, OK, type IdParams } from './util.js';
 
-export function registerChapterRoutes(app: FastifyInstance, { store, bus }: CoreDeps): void {
+export function registerChapterRoutes(app: FastifyInstance, deps: CoreDeps): void {
+  const { store, bus } = deps;
   app.get<IdParams>('/api/mangas/:id/chapters', async (req): Promise<Chapter[]> => {
     store.mangas.require(req.params.id);
     return store.chapters.listByManga(req.params.id);
@@ -25,9 +26,15 @@ export function registerChapterRoutes(app: FastifyInstance, { store, bus }: Core
     return chapter;
   });
 
-  /** Emits `panel deleted` and `page deleted` (its cover included) for everything that went with the chapter. */
+  /**
+   * Emits `panel deleted` and `page deleted` (its cover included) for everything that went with the chapter. The
+   * chapter delete hooks run first (M4 final I1: the episode module cancels the chapter's run jobs).
+   */
   app.delete<IdParams>('/api/chapters/:id', async (req) => {
+    store.chapters.require(req.params.id);
+    const after = beforeChapterDelete(deps, [req.params.id]);
     const { chapter, pageIds, panelIds } = deleteChapter(store, req.params.id);
+    after();
     for (const id of panelIds) emitEntity(bus, 'panel', id, 'deleted', chapter.mangaId);
     for (const id of pageIds) emitEntity(bus, 'page', id, 'deleted', chapter.mangaId);
     emitEntity(bus, 'chapter', chapter.id, 'deleted', chapter.mangaId);

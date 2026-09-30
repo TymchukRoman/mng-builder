@@ -64,7 +64,7 @@ export interface Store {
   frames: Repo<TextFrame, NewFrame, FramePatch> & { listByPage(pageId: string): TextFrame[] };
   images: Repo<Image, NewImage, ImagePatch> & { listByOwner(ownerType: Image['ownerType'], ownerId: string): Image[]; listByManga(mangaId: string): Image[] };
   jobs: JobRepo;
-  episodes: Repo<EpisodeRun, NewEpisodeRun, EpisodePatch> & { latestByChapter(chapterId: string): EpisodeRun | null };
+  episodes: Repo<EpisodeRun, NewEpisodeRun, EpisodePatch> & { latestByChapter(chapterId: string): EpisodeRun | null; listByChapter(chapterId: string): EpisodeRun[] };
   settings: SettingsRepo;
   files: LibraryFiles;
   tx<T>(fn: () => T): T;

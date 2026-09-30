@@ -20,6 +20,7 @@ export async function makeTestApp(opts: { modules?: AppModule[]; uiDir?: string 
     store, bus, gpu,
     queue: new JobQueue({ store, bus, gpu, pollMs: 10 }),
     statusProviders: defaultStatusProviders(),
+    chapterDeleteHooks: [],
   };
   const app = await buildApp(deps, opts.modules ?? [], { uiDir: opts.uiDir ?? null, ...(opts.onShutdown ? { onShutdown: opts.onShutdown } : {}) });
   await app.ready();

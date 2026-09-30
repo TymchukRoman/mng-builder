@@ -149,6 +149,10 @@ export class EpisodeRepo extends TableRepo<EpisodeRun, NewEpisodeRun, EpisodePat
   latestByChapter(chapterId: string): EpisodeRun | null {
     return this.firstWhere('chapter_id = ?', 'created_at DESC, rowid DESC', chapterId);
   }
+
+  listByChapter(chapterId: string): EpisodeRun[] {
+    return this.listWhere('chapter_id = ?', chapterId);
+  }
 }
 
 export interface EntityRepos {
