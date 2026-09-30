@@ -53,7 +53,8 @@
   width: 100%; font-weight: 400; line-height: 1.12; white-space: pre-wrap; overflow-wrap: normal; word-break: normal;
 }
 .frame-text__measure { position: absolute; left: 0; top: 0; visibility: hidden; pointer-events: none; }
-.frame-text--sfx .frame-text__inner { -webkit-text-stroke: var(--stroke) var(--paper); paint-order: stroke fill; }
+/* Sfx and titles sit on the art with no frame shape, so a paper halo keeps them readable on dark areas. */
+.frame-text--sfx .frame-text__inner, .frame-text--title .frame-text__inner { -webkit-text-stroke: var(--stroke) var(--paper); paint-order: stroke fill; }
 .frame-text--title .frame-text__inner, .frame-text--title.frame-text__measure { font-weight: 700; }
 .frame-warn {
   position: absolute; z-index: 5; display: inline-flex; padding: 1px; border-radius: var(--r-full);
