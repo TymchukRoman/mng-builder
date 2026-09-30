@@ -41,6 +41,8 @@ async function show(c: CliContext, chapterId: string, run: EpisodeRun): Promise<
   const final = c.wait
     ? await followRun(c.api, chapterId, {
       onChange: (r) => { if (!c.json) c.io.stderr(`${runLine(r)}\n`); },
+      // M4 final M7: progress inside a step (the render estimate, n/m panels), on stderr unless --json.
+      ...(c.json ? {} : { onProgress: (label: string) => c.io.stderr(`  ${label}\n`) }),
       ...(c.io.signal ? { signal: c.io.signal } : {}),
     })
     : run;

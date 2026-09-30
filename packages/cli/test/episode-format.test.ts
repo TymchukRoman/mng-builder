@@ -50,6 +50,31 @@ describe('followRun', () => {
     expect(sleeps).toEqual([5, 5, 5]);
   });
 
+  it('reports the running step job\'s progress label each time it changes (M4 final M7)', async () => {
+    const runs = [run('running', 5), run('running', 5), run('running', 5), run('done', 6, 'done')];
+    const stepJob = (label: string, over: Record<string, unknown> = {}) => ({
+      id: `jb_${label}`, kind: 'llm.step', status: 'running', episodeRunId: 'er_1', payload: { type: 'episode', runId: 'er_1', step: 'render' },
+      progress: { label }, ...over,
+    });
+    const labels = [
+      [stepJob('Rendering 4 panels · est. ~2 min'), stepJob('other run', { episodeRunId: 'er_2' }), stepJob('a panel', { kind: 'image.generate' })],
+      [stepJob('Rendering 4 panels · est. ~2 min')],
+      [stepJob('Rendered 2/4 panels')],
+    ];
+    const paths: string[] = [];
+    const api = {
+      get: async <T>(path: string): Promise<T> => {
+        paths.push(path);
+        return (path.startsWith('/api/jobs') ? labels.shift() ?? [] : runs.shift()) as T;
+      },
+    };
+    const progress: string[] = [];
+    const final = await followRun(api, 'ch_1', { onProgress: (l) => progress.push(l), sleep: async () => undefined });
+    expect(final.status).toBe('done');
+    expect(progress).toEqual(['Rendering 4 panels · est. ~2 min', 'Rendered 2/4 panels']);
+    expect(paths.filter((p) => p.startsWith('/api/jobs'))).toEqual(Array(3).fill('/api/jobs?status=running'));
+  });
+
   it('throws when the chapter has no episode run', async () => {
     const api = { get: async <T>(): Promise<T> => null as T };
     await expect(followRun(api, 'ch_1', { sleep: async () => undefined })).rejects.toThrow('chapter ch_1 has no episode run');
