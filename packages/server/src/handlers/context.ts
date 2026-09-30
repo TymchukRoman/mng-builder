@@ -18,7 +18,7 @@ export function panelContext(store: Store, panelId: string): PanelContext {
   const characters = ids
     .map((id) => store.characters.get(id))
     .filter((c): c is Character => c !== null && c.mangaId === manga.id);
-  const hasRef = (c: Character): boolean => [c.refs.portrait, c.refs.fullbody].some((id) => id !== undefined && store.images.get(id) !== null);
+  const hasRef = (c: Character): boolean => refImages(store, c).length > 0;
   const refCharacters = panel.refCharacterIds
     .map((id) => characters.find((c) => c.id === id))
     .filter((c): c is Character => c !== undefined && hasRef(c));
@@ -27,18 +27,31 @@ export function panelContext(store: Store, panelId: string): PanelContext {
 
 export interface PickedRef { imageId: string; character: Character }
 
-/** One character → its portrait and full body; several → one image each (portrait first). Capped at recipe.maxRefs. */
-export function pickRefs(store: Store, recipe: Recipe, refCharacters: Character[]): PickedRef[] {
+/** A character's usable reference images, portrait first. */
+export function refImages(store: Store, character: Character): string[] {
+  return [character.refs.portrait, character.refs.fullbody].filter((id): id is string => id !== undefined && store.images.get(id) !== null);
+}
+
+/**
+ * The reference order (the "picture N" numbering): one character → all of its images; several → the first image of
+ * each. Capped at recipe.maxRefs. `imagesOf` lists a character's images, portrait first (the M4 prompts step passes
+ * an assumed portrait for characters whose portraits are not rendered yet).
+ */
+export function orderRefs(recipe: Recipe, refCharacters: Character[], imagesOf: (character: Character) => string[]): PickedRef[] {
   if (recipe.maxRefs === 0) return [];
-  const usable = (id: string | undefined): id is string => id !== undefined && store.images.get(id) !== null;
   const only = refCharacters.length === 1 ? refCharacters[0]! : null;
   const picked: PickedRef[] = only
-    ? [only.refs.portrait, only.refs.fullbody].filter(usable).map((imageId) => ({ imageId, character: only }))
+    ? imagesOf(only).map((imageId) => ({ imageId, character: only }))
     : refCharacters.flatMap((character) => {
-      const imageId = [character.refs.portrait, character.refs.fullbody].find(usable);
+      const imageId = imagesOf(character)[0];
       return imageId ? [{ imageId, character }] : [];
     });
   return picked.slice(0, recipe.maxRefs);
+}
+
+/** One character → its portrait and full body; several → one image each (portrait first). Capped at recipe.maxRefs. */
+export function pickRefs(store: Store, recipe: Recipe, refCharacters: Character[]): PickedRef[] {
+  return orderRefs(recipe, refCharacters, (c) => refImages(store, c));
 }
 
 /**
