@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   EDITABLE_STEPS, OutlineOutputSchema, PremiseOutputSchema, STEP_TASK,
-  breakdownSchemaFor, estimateSeconds, formatEstimate, promptsSchemaFor, sameName, scriptsSchemaFor, stepIndex,
+  REVIEW_AVG_SECONDS, breakdownSchemaFor, estimateReviewSeconds, estimateSeconds, formatEstimate, promptsSchemaFor, sameName, scriptsSchemaFor, stepIndex,
   type PanelScriptDraft,
 } from '../src/episode.js';
 import { PRESET_NAMES, presetPanelCount } from '../src/layout/index.js';
@@ -161,6 +161,11 @@ describe('step tables and estimates', () => {
 
   it('estimates render time from recipe averages', () => {
     expect(estimateSeconds(['anime', 'qwen-edit-ref', null, 'mystery'])).toBe(195);
+    // M4 final S5: review rounds. 4 images, 400 s of rendering, 2 rounds: 4 reviews + half re-rendered and reviewed
+    // again + a quarter re-rendered in the last round (not reviewed again).
+    expect(estimateReviewSeconds(400, 4, 2)).toBe(4 * REVIEW_AVG_SECONDS + 0.5 * 400 + 0.5 * 4 * REVIEW_AVG_SECONDS + 0.25 * 400);
+    expect(estimateReviewSeconds(400, 4, 0)).toBe(0);
+    expect(estimateReviewSeconds(0, 0, 2)).toBe(0);
     expect(formatEstimate(45)).toBe('~45 s');
     expect(formatEstimate(110)).toBe('~2 min');
     expect(formatEstimate(3900)).toBe('~1 h 5 min');

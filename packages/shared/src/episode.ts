@@ -199,6 +199,29 @@ export function estimateSeconds(recipes: Array<string | null>): number {
   return recipes.reduce((sum, r) => sum + (r !== null ? RECIPE_AVG_SECONDS[r] ?? DEFAULT_RECIPE_SECONDS : DEFAULT_RECIPE_SECONDS), 0);
 }
 
+/**
+ * M4 final S5: the review rounds of the render step. No live M2 review timing is stored, so these are constants:
+ * one review takes ~10 s (Task 22 live smoke: Claude reviews took 6–15 s each), and about half of the images are
+ * flagged per round (assumed: the smoke flagged 2–4 of 6 per round). Revisit with more live runs.
+ */
+export const REVIEW_AVG_SECONDS = 10;
+export const REVIEW_RETRY_SHARE = 0.5;
+
+/**
+ * The expected extra seconds of `rounds` review rounds over `images` images that take `renderSeconds` to render:
+ * round 1 reviews every image; in round k a REVIEW_RETRY_SHARE^k share is re-rendered and, before the last round
+ * ends, reviewed again (the render step does not review the last round's re-renders).
+ */
+export function estimateReviewSeconds(renderSeconds: number, images: number, rounds: number): number {
+  if (rounds <= 0 || images <= 0) return 0;
+  let total = images * REVIEW_AVG_SECONDS;
+  for (let k = 1; k <= rounds; k++) {
+    const share = REVIEW_RETRY_SHARE ** k;
+    total += share * renderSeconds + (k < rounds ? share * images * REVIEW_AVG_SECONDS : 0);
+  }
+  return total;
+}
+
 /** Rounds first, then picks the unit, so a value never renders as "~60 s" / "~60 min" / "1 h 60 min". 0 renders "~0 s" (a real, empty estimate). */
 export function formatEstimate(seconds: number): string {
   const s = Math.round(seconds);

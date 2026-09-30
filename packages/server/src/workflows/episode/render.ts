@@ -1,5 +1,5 @@
 import {
-  estimateSeconds, formatEstimate, hasNoHumansTag, stepIndex,
+  estimateReviewSeconds, estimateSeconds, formatEstimate, hasNoHumansTag, stepIndex,
   type Character, type EpisodeRun, type Image, type ImageGeneratePayload, type ImageGenerateResult, type ImageReviewPayload,
   type Job, type Manga, type Panel, type RenderOutput, type ReviewResult, type Settings,
 } from '@manga/shared';
@@ -126,13 +126,19 @@ export function retryPatch(issues: ReviewResult['issues'], settings: Settings, s
   };
 }
 
-/** Spec §8: "panels × recipe average", with the routing M2 would use right now (panelContext's counts, as the renderer). */
+/**
+ * Spec §8: "panels × recipe average", with the routing M2 would use right now (panelContext's counts, as the renderer),
+ * plus the expected review rounds when the episode reviews its images (M4 final S5: the live render took 2–4× the
+ * estimate that left them out).
+ */
 export function estimateRender(store: Store, settings: Settings, manga: Manga, panels: Panel[]): number {
-  return estimateSeconds(panels.flatMap((panel) => {
+  const renderSeconds = estimateSeconds(panels.flatMap((panel) => {
     const { characters, refCharacters } = panelContext(store, panel.id);
     const route = routeRecipe({ settings, manga, panel, refCount: refCharacters.length, charCount: characters.length });
     return route.refineWith ? [route.recipe, route.refineWith] : [route.recipe];
   }));
+  const rounds = settings.review.autoInEpisode ? settings.review.rounds : 0;
+  return renderSeconds + estimateReviewSeconds(renderSeconds, panels.length, rounds);
 }
 
 function renderedSince(store: Store, panel: Panel, token: string | null): boolean {

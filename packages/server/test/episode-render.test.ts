@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  DEFAULT_SETTINGS, stepIndex,
+  DEFAULT_SETTINGS, REVIEW_AVG_SECONDS, estimateReviewSeconds, stepIndex,
   type EpisodeRun, type ImageGeneratePayload, type ImageReviewPayload, type ServerEvent,
 } from '@manga/shared';
 import { EventBus } from '../src/events/bus.js';
@@ -8,7 +8,7 @@ import { chapterPanels } from '../src/workflows/episode/chapter.js';
 import { materializeScripts } from '../src/workflows/episode/effects.js';
 import { runLetteringStep } from '../src/workflows/episode/lettering.js';
 import {
-  ANATOMY_NEGATIVE, TEXT_NEGATIVE, castCount, countSentence, countTag, retryPatch, retryTarget, runRenderStep,
+  ANATOMY_NEGATIVE, TEXT_NEGATIVE, castCount, countSentence, countTag, estimateRender, retryPatch, retryTarget, runRenderStep,
   type DriverDeps, type RetryTarget,
 } from '../src/workflows/episode/render.js';
 import { nowIso, patchStep } from '../src/workflows/episode/steps.js';
@@ -149,6 +149,20 @@ describe('people count', () => {
     const updated = lib.store.panels.update(panel.id, { script: { ...panel.script, characters: [...panel.script.characters, ...extra] } });
     expect(manga.id).not.toBe(other.manga.id);
     expect(retryTarget(lib.store, DEFAULT_SETTINGS, updated)).toEqual({ cast: { girl: 1, boy: 0, other: 0 }, hasPortraitRefs: true, style: 'tags' });
+  });
+});
+
+describe('estimateRender (M4 final S5)', () => {
+  it('adds the expected review rounds when the episode reviews, and nothing when it does not', () => {
+    const { manga, panelIds } = renderWorld();
+    const panels = panelIds.map((id) => lib.store.panels.require(id));
+    const off = { ...DEFAULT_SETTINGS, review: { autoInEpisode: false, rounds: 2 } };
+    const on = { ...DEFAULT_SETTINGS, review: { autoInEpisode: true, rounds: 2 } };
+    const renderOnly = estimateRender(lib.store, off, manga, panels);
+    expect(renderOnly).toBeGreaterThan(0);
+    expect(estimateRender(lib.store, { ...on, review: { autoInEpisode: true, rounds: 0 } }, manga, panels)).toBe(renderOnly);
+    expect(estimateRender(lib.store, on, manga, panels)).toBe(renderOnly + estimateReviewSeconds(renderOnly, panels.length, 2));
+    expect(estimateRender(lib.store, on, manga, panels)).toBeGreaterThan(renderOnly + panels.length * REVIEW_AVG_SECONDS);
   });
 });
 
