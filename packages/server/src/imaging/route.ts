@@ -10,6 +10,11 @@ export function promptStyleFor(recipeId: string): PromptStyle {
   return family === 'qwen' || family === 'flux2' ? 'natural' : 'tags';
 }
 
+/** FLUX.2 klein zeroes its negative conditioning (ConditioningZeroOut); every other family encodes the negative prompt. */
+export function takesNegative(recipeId: string): boolean {
+  return RECIPES[recipeId]?.family !== 'flux2';
+}
+
 /** B&W books get an img2img pass after the reference recipes that lose the ink/screentone look. */
 export function refineFor(settings: Settings, manga: Manga, recipeId: string): string | null {
   return manga.colorMode === 'bw' && promptStyleFor(recipeId) === 'natural' ? settings.routing.bwRefine : null;

@@ -7,7 +7,10 @@ export function sortChapters(list: readonly Chapter[] | undefined): Chapter[] {
 }
 
 export function validLoras(draft: readonly LoraRef[]): LoraRef[] {
-  return draft.map((l) => ({ name: l.name.trim(), strength: l.strength })).filter((l) => l.name.length > 0);
+  // maleStrength (a preset's strength for male subjects) is kept, not editable here.
+  return draft
+    .map((l) => ({ name: l.name.trim(), strength: l.strength, ...(l.maleStrength !== undefined ? { maleStrength: l.maleStrength } : {}) }))
+    .filter((l) => l.name.length > 0);
 }
 
 export function mangaBadges(m: Manga): Array<{ text: string; tip: string }> {

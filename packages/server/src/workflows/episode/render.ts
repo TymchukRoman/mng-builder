@@ -1,5 +1,5 @@
 import {
-  estimateReviewSeconds, estimateSeconds, formatEstimate, hasNoHumansTag, stepIndex,
+  castCount, countSentence, countTag, estimateReviewSeconds, estimateSeconds, formatEstimate, stepIndex, type CastCount,
   type Character, type EpisodeRun, type Image, type ImageGeneratePayload, type ImageGenerateResult, type ImageReviewPayload,
   type Job, type Manga, type Panel, type RenderOutput, type ReviewResult, type Settings,
 } from '@manga/shared';
@@ -21,76 +21,18 @@ export const TEXT_NEGATIVE = 'text, letters, words, writing';
 /** F14: an anatomy flag goes into the negative prompt; the reviewer's note names the defect, not the wanted result. */
 export const ANATOMY_NEGATIVE = 'bad anatomy, extra arms, extra limbs, bad hands';
 export interface RetryPatch { seed: number; recipe?: string; negativeExtra?: string; sceneSuffix?: string }
-/** How many of a panel's cast are girls, boys and others (from the count tag in each character's appearanceTags). */
-export interface CastCount { girl: number; boy: number; other: number }
-/** What a retry needs to know about the flagged panel. `style` is the prompt style of the recipe the panel routes to. */
 export interface RetryTarget { cast: CastCount; hasPortraitRefs: boolean; style: PromptStyle }
 
-const MAX_COUNTED = 5;
-const NUMBER_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
-
 /**
- * Genders come from the `1girl`/`1boy` tag each character's appearanceTags starts with; anything else counts as other.
- * A `no humans` character (a pet, a creature) is not a person and is not counted: the live smoke's kitten turned a
- * one-girl panel into "Exactly two people", and the retry drew a second girl.
- */
-export function castCount(cast: Array<Pick<Character, 'appearanceTags'>>): CastCount {
-  const count: CastCount = { girl: 0, boy: 0, other: 0 };
-  for (const c of cast) {
-    if (hasNoHumansTag(c.appearanceTags)) continue; // any spelling: no_humans, No Humans, no human (M4 final S4)
-    const tags = c.appearanceTags.split(',').map((t) => t.trim().toLowerCase());
-    count[tags.includes('1girl') ? 'girl' : tags.includes('1boy') ? 'boy' : 'other'] += 1;
-  }
-  return count;
-}
-
-const total = (c: CastCount): number => c.girl + c.boy + c.other;
-const numberWord = (n: number): string => NUMBER_WORDS[n] ?? String(n);
-
-/**
- * The Danbooru people-count tag for the tags style (the M2 tag prompts' convention: `solo`, `2girls`, `1boy, 1girl`,
- * `multiple boys`, `no humans`).
- */
-export function countTag(count: CastCount): string {
-  const n = total(count);
-  if (n === 0) return 'no humans';
-  if (n === 1) return 'solo';
-  return (['boy', 'girl', 'other'] as const)
-    .filter((kind) => count[kind] > 0)
-    .map((kind) => {
-      const k = count[kind];
-      return k === 1 ? `1${kind}` : k <= MAX_COUNTED ? `${k}${kind}s` : `multiple ${kind}s`;
-    })
-    .join(', ');
-}
-
-/** The people count as a sentence for the natural style (qwen/klein scenes are plain English sentences). */
-export function countSentence(count: CastCount): string {
-  const n = total(count);
-  if (n === 0) return 'No people.';
-  if (n === 1) return 'Exactly one person.';
-  const head = `Exactly ${numberWord(n)} people`;
-  if (count.other === n) return `${head}.`;
-  const nouns: Record<keyof CastCount, [string, string]> = { girl: ['girl', 'girls'], boy: ['boy', 'boys'], other: ['other person', 'other people'] };
-  const parts = (['girl', 'boy', 'other'] as const)
-    .filter((kind) => count[kind] > 0)
-    .map((kind) => `${numberWord(count[kind])} ${nouns[kind][count[kind] === 1 ? 0 : 1]}`);
-  const list = parts.length === 1 ? parts[0]! : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)!}`;
-  return `${head}: ${list}.`;
-}
-
-/**
- * The retry facts of a panel: its script cast (the characters that exist in this manga, as panelCharacters keeps
- * them), whether a referenced character has a portrait (F31), and the prompt style of the recipe it routes to.
+ * The retry facts of a panel: its people count (panelCharacters, the cast the panel build counts, so a
+ * character-count retry repeats exactly the count the build already put first), whether a referenced character has
+ * a portrait (F31), and the prompt style of the recipe it routes to.
  */
 export function retryTarget(store: Store, settings: Settings, panel: Panel): RetryTarget {
   const { manga, characters, refCharacters } = panelContext(store, panel.id);
-  const cast = [...new Set(panel.script.characters.map((c) => c.characterId))]
-    .map((id) => store.characters.get(id))
-    .filter((c): c is Character => c !== null && c.mangaId === manga.id);
   const route = routeRecipe({ settings, manga, panel, refCount: refCharacters.length, charCount: characters.length });
   return {
-    cast: castCount(cast),
+    cast: castCount(characters),
     hasPortraitRefs: refCharacters.some((c) => c.refs.portrait !== undefined && store.images.get(c.refs.portrait) !== null),
     style: promptStyleFor(route.recipe),
   };
@@ -101,7 +43,8 @@ export function retryTarget(store: Store, settings: Settings, panel: Panel): Ret
  * - identity → the drift recipe, only when the panel references a character with a portrait (F31: it needs refs);
  * - text → a stronger negative; anatomy → the anatomy negative (F14);
  * - character-count → the panel's people count in the scene (F14, amended): a tag for the tags style, a sentence for the
- *   natural style, judged on the recipe the retry actually uses;
+ *   natural style, judged on the recipe the retry actually uses. For a cast with people the build already puts this
+ *   same count first (castPrompt, the same castCount), so the retry repeats it at the end as emphasis;
  * - script-mismatch / other → the reviewer's `fix` in the scene: the wanted state only (M4 final S1). Its `note`
  *   ("X instead of Y") is never used: in the positive prompt it asked for the defect again. A stored review without a
  *   `fix` adds no scene text.

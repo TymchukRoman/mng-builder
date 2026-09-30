@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  DEFAULT_SETTINGS, REVIEW_AVG_SECONDS, estimateReviewSeconds, stepIndex,
+  DEFAULT_SETTINGS, REVIEW_AVG_SECONDS, castCount, countSentence, countTag, estimateReviewSeconds, stepIndex,
   type EpisodeRun, type ImageGeneratePayload, type ImageReviewPayload, type ServerEvent,
 } from '@manga/shared';
 import { EventBus } from '../src/events/bus.js';
@@ -8,7 +8,7 @@ import { chapterPanels } from '../src/workflows/episode/chapter.js';
 import { materializeScripts } from '../src/workflows/episode/effects.js';
 import { runLetteringStep } from '../src/workflows/episode/lettering.js';
 import {
-  ANATOMY_NEGATIVE, TEXT_NEGATIVE, castCount, countSentence, countTag, estimateRender, retryPatch, retryTarget, runRenderStep,
+  ANATOMY_NEGATIVE, TEXT_NEGATIVE, estimateRender, retryPatch, retryTarget, runRenderStep,
   type DriverDeps, type RetryTarget,
 } from '../src/workflows/episode/render.js';
 import { nowIso, patchStep } from '../src/workflows/episode/steps.js';
@@ -83,7 +83,7 @@ describe('retryPatch', () => {
   it('writes the people count as a sentence for a natural-style recipe (F14, amended)', () => {
     const natural: RetryTarget = { cast: { girl: 1, boy: 1, other: 0 }, hasPortraitRefs: true, style: 'natural' };
     expect(retryPatch([{ kind: 'character-count', note: 'three people' }, { kind: 'script-mismatch', note: 'She stands.', fix: 'She sits on the bench.' }], s, 8, natural))
-      .toEqual({ seed: 8, sceneSuffix: 'Exactly two people: one girl and one boy. She sits on the bench.' });
+      .toEqual({ seed: 8, sceneSuffix: 'Exactly two people: one man and one woman. She sits on the bench.' });
   });
 
   it('puts only the wanted state in the scene, never the reviewer\'s "X instead of Y" note (M4 final S1)', () => {
@@ -98,9 +98,9 @@ describe('retryPatch', () => {
 
   it('judges the style on the recipe the retry uses: the drift recipe writes sentences', () => {
     expect(retryPatch([{ kind: 'identity', note: '' }, { kind: 'text', note: '' }, { kind: 'character-count', note: 'only one person' }], s, 5, solo))
-      .toEqual({ seed: 5, recipe: 'qwen-edit-ref', negativeExtra: TEXT_NEGATIVE, sceneSuffix: 'Exactly one person.' });
+      .toEqual({ seed: 5, recipe: 'qwen-edit-ref', negativeExtra: TEXT_NEGATIVE, sceneSuffix: 'Exactly one woman.' });
     expect(retryPatch([{ kind: 'identity', note: '' }, { kind: 'character-count', note: 'x' }], s, 9, { ...solo, hasPortraitRefs: false }))
-      .toEqual({ seed: 9, sceneSuffix: 'solo' });
+      .toEqual({ seed: 9, sceneSuffix: '1girl, solo' });
   });
 
   it('keeps the recipe for an identity issue on a panel without referenced portraits (F31)', () => {
@@ -111,29 +111,12 @@ describe('retryPatch', () => {
 describe('people count', () => {
   const c = (appearanceTags: string) => ({ appearanceTags });
 
-  it('derives the Danbooru people count tag from the cast', () => {
-    expect(countTag(castCount([]))).toBe('no humans');
-    expect(countTag(castCount([c('1boy, glasses')]))).toBe('solo');
-    expect(countTag(castCount([c('1girl'), c('1girl, tall')]))).toBe('2girls');
-    expect(countTag(castCount([c('1girl'), c('1boy')]))).toBe('1boy, 1girl');
-    expect(countTag(castCount([c('1girl'), c('1girl'), c('1boy'), c('')]))).toBe('1boy, 2girls, 1other');
-    expect(countTag(castCount(Array.from({ length: 7 }, () => c('1boy'))))).toBe('multiple boys');
-  });
-
-  it('writes the people count as a sentence', () => {
-    expect(countSentence(castCount([]))).toBe('No people.');
-    expect(countSentence(castCount([c('1boy')]))).toBe('Exactly one person.');
-    expect(countSentence(castCount([c('1girl'), c('1girl')]))).toBe('Exactly two people: two girls.');
-    expect(countSentence(castCount([c('1girl'), c('1boy'), c('')]))).toBe('Exactly three people: one girl, one boy and one other person.');
-    expect(countSentence(castCount([c(''), c('')]))).toBe('Exactly two people.');
-    expect(countSentence(castCount(Array.from({ length: 12 }, () => c('1girl'))))).toBe('Exactly 12 people: 12 girls.');
-  });
-
+  // The count wording itself (1boy, solo, male focus; men and women) is tested with the helpers in shared/test/gender.test.ts.
   it('does not count a non-human character (a `no humans` cast member, e.g. a pet) as a person (live smoke)', () => {
     const kitten = c('no humans, kitten, cat, small');
     expect(castCount([c('1girl, short black hair'), kitten])).toEqual({ girl: 1, boy: 0, other: 0 });
-    expect(countSentence(castCount([c('1girl'), kitten]))).toBe('Exactly one person.');
-    expect(countTag(castCount([c('1girl'), kitten]))).toBe('solo');
+    expect(countSentence(castCount([c('1girl'), kitten]))).toBe('Exactly one woman.');
+    expect(countTag(castCount([c('1girl'), kitten]))).toBe('1girl, solo');
     expect(countTag(castCount([kitten]))).toBe('no humans');
     expect(countSentence(castCount([c('No Humans, dog')]))).toBe('No people.');
     // Any spelling (M4 final S4, Task 22 review minor 1)
@@ -161,8 +144,8 @@ describe('people count', () => {
     const target = retryTarget(lib.store, DEFAULT_SETTINGS, withPet);
     expect(target.cast).toEqual({ girl: 1, boy: 0, other: 0 });
     const count = [{ kind: 'character-count' as const, note: 'a second girl sits in the box' }];
-    expect(retryPatch(count, DEFAULT_SETTINGS, 1, target).sceneSuffix).toBe(target.style === 'natural' ? 'Exactly one person.' : 'solo');
-    expect(retryPatch(count, DEFAULT_SETTINGS, 1, { ...target, style: 'natural' }).sceneSuffix).toBe('Exactly one person.');
+    expect(retryPatch(count, DEFAULT_SETTINGS, 1, target).sceneSuffix).toBe(target.style === 'natural' ? 'Exactly one woman.' : '1girl, solo');
+    expect(retryPatch(count, DEFAULT_SETTINGS, 1, { ...target, style: 'natural' }).sceneSuffix).toBe('Exactly one woman.');
   });
 });
 
@@ -256,7 +239,7 @@ describe('runRenderStep', () => {
         return [{ kind: 'character-count', note: 'two girls instead of one' }];
       },
     });
-    expect(panelJobs(target).at(-1)!.payload).toEqual({ target: 'panel', panelId: target, seed: 777, sceneSuffix: 'solo' });
+    expect(panelJobs(target).at(-1)!.payload).toEqual({ target: 'panel', panelId: target, seed: 777, sceneSuffix: '1girl, solo' });
   });
 
   it('writes the people count as a sentence for a panel on a natural-style recipe', async () => {
@@ -271,7 +254,7 @@ describe('runRenderStep', () => {
         return [{ kind: 'character-count', note: 'two girls instead of one' }];
       },
     });
-    expect(panelJobs(target).at(-1)!.payload).toEqual({ target: 'panel', panelId: target, seed: 777, sceneSuffix: 'Exactly one person.' });
+    expect(panelJobs(target).at(-1)!.payload).toEqual({ target: 'panel', panelId: target, seed: 777, sceneSuffix: 'Exactly one woman.' });
   });
 
   it('stops after settings.review.rounds', async () => {

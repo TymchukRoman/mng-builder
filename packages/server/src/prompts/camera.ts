@@ -62,7 +62,7 @@ export const CAMERA_TAGS: ReadonlySet<string> = new Set([
 ]);
 
 /** "(Cowboy_Shot:1.2)" → "cowboy shot". */
-const normalizeTag = (tag: string): string =>
+export const normalizeTag = (tag: string): string =>
   tag.toLowerCase().replace(/_/g, ' ').trim().replace(/^\(+|\)+$/g, '').replace(/:\s*[\d.]+$/, '').replace(/\s+/g, ' ').trim();
 
 /** Drops every camera tag (any case, `_` or weight syntax) from a comma-separated tag list. */

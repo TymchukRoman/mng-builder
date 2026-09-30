@@ -1,6 +1,6 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { assemblePrompt, type ImageGeneratePayload } from '@manga/shared';
+import { ANTI_FEMALE_NEGATIVE, assemblePrompt, type ImageGeneratePayload } from '@manga/shared';
 import { generatePanelImage } from '../src/handlers/panel-image.js';
 import { ComfyClient } from '../src/imaging/comfy.js';
 import { nodesOf } from '../src/imaging/comfy-graph.js';
@@ -33,7 +33,7 @@ const run = (panelId: string, extra: Omit<PanelPayload, 'target' | 'panelId'> = 
   generatePanelImage(jobContext(lib.store, 'image.generate', {}).ctx, services, { target: 'panel', panelId, ...extra });
 
 describe('image.generate (panel)', () => {
-  it('assembles the prompt from style, B&W tokens, verbatim character tags and the scene', async () => {
+  it('assembles the prompt from style, B&W tokens, the cast\'s people count, the character tags and the scene', async () => {
     const { manga, page, panels } = seedManga(lib.store, { layout: '2-rows' });
     const aiko = seedCharacter(lib.store, manga.id, 'Aiko', '1girl, silver hair, twintails');
     const panel = updatePanel(lib.store, panels[0]!.id, { characters: [stage(aiko.id)] }, { prompt: { scene: 'rooftop, sunset', negative: 'blurry background' } });
@@ -42,15 +42,81 @@ describe('image.generate (panel)', () => {
 
     expect(lib.store.panels.require(panel.id).activeImageId).toBe(result.imageId);
     const graph = fake.graphs[0]!;
-    const expected = assemblePrompt({ styleGuide: manga.styleGuide, colorMode: 'bw', characterTags: ['1girl, silver hair, twintails'], scene: 'rooftop, sunset', extraNegative: 'blurry background' });
+    const expected = assemblePrompt({ styleGuide: manga.styleGuide, colorMode: 'bw', characterTags: ['1girl, solo', 'silver hair, twintails'], scene: 'rooftop, sunset', extraNegative: 'blurry background' });
     expect(nodesOf(graph, 'CLIPTextEncode').map((n) => n.inputs['text'])).toEqual([expected.prompt, expected.negative]);
-    expect(expected.prompt).toContain('1girl, silver hair, twintails');
+    expect(expected.prompt).toContain('1girl, solo, silver hair, twintails, rooftop, sunset');
     expect(nodesOf(graph, 'LoraLoader').map((n) => n.inputs['lora_name'])).toEqual(['Mnga-illustriousXL_v01_V1-CAME.safetensors']);
     const [width, height] = panelSize(page, manga.pageFormat, panel.id, RECIPES['anime']!);
     expect(width).toBeGreaterThan(height);
     expect(nodesOf(graph, 'EmptyLatentImage')[0]!.inputs).toMatchObject({ width, height });
     expect(events).toContainEqual({ type: 'entity', entity: 'image', id: result.imageId, op: 'created', mangaId: manga.id });
     expect(events).toContainEqual({ type: 'entity', entity: 'panel', id: panel.id, op: 'updated', mangaId: manga.id });
+  });
+
+  describe('male subjects (Roman: men rendered as women)', () => {
+    const texts = (i = 0) => nodesOf(fake.graphs[i]!, 'CLIPTextEncode').map((n) => String(n.inputs['text']));
+    const loraStrengths = (i = 0) => nodesOf(fake.graphs[i]!, 'LoraLoader').map((n) => [n.inputs['lora_name'], n.inputs['strength_model']]);
+    const ROGUE_SCENE = 'upper body, 2girls, from side, crouching on a branch, forest, night';
+
+    it("replaces the LLM's 2girls on the Rogue Ninja panel with one male count set and the anti-female negative", async () => {
+      const { manga, panels } = seedManga(lib.store, { preset: 'manga-hatching' });
+      const rogue = seedCharacter(lib.store, manga.id, 'Rogue Ninja', '1boy, long dark hair, ninja headband, dark cloak');
+      const panel = updatePanel(lib.store, panels[0]!.id, { characters: [stage(rogue.id)] }, { prompt: { scene: ROGUE_SCENE, negative: '' } });
+      await run(panel.id);
+      const [positive, negative] = texts();
+      expect(positive).toContain('lineart, 1boy, solo, male focus, long dark hair, ninja headband, dark cloak, upper body, from side, crouching on a branch');
+      expect(positive).not.toContain('2girls');
+      expect(positive!.match(/\b(?:1boy|solo|male focus)\b/g)).toEqual(['1boy', 'solo', 'male focus']);
+      expect(negative!.endsWith(`, ${ANTI_FEMALE_NEGATIVE}`)).toBe(true);
+      expect(loraStrengths()).toEqual([['Ashpwright_style_mix-000033.safetensors', 0.8]]);
+    });
+
+    it("runs the 'manga' Mnga LoRA at 0.4 with a man in the panel and at 0.8 without one", async () => {
+      const { manga, panels } = seedManga(lib.store);
+      const deb = seedCharacter(lib.store, manga.id, 'Debil', '1other, fat man, long hair, wavy hair, aristocratic clothes');
+      const aiko = seedCharacter(lib.store, manga.id, 'Aiko', '1girl, silver hair');
+      const male = updatePanel(lib.store, panels[0]!.id, { characters: [stage(deb.id)] }, { prompt: { scene: 'ballroom', negative: '' } });
+      const female = updatePanel(lib.store, panels[1]!.id, { characters: [stage(aiko.id)] }, { prompt: { scene: 'ballroom', negative: '' } });
+      await run(male.id);
+      await run(female.id);
+      expect(loraStrengths(0)).toEqual([['Mnga-illustriousXL_v01_V1-CAME.safetensors', 0.4]]);
+      expect(texts(0)[0]).toContain('1boy, solo, male focus, fat man, long hair');
+      expect(loraStrengths(1)).toEqual([['Mnga-illustriousXL_v01_V1-CAME.safetensors', 0.8]]);
+      expect(texts(1)[1]).not.toContain(ANTI_FEMALE_NEGATIVE);
+      expect(lib.store.images.get(lib.store.panels.require(male.id).activeImageId!)!.gen!.loras).toEqual([{ name: 'Mnga-illustriousXL_v01_V1-CAME.safetensors', strength: 0.4 }]);
+    });
+
+    it('a mixed panel counts 1boy, 1girl, uses the male LoRA strength and no anti-female negative', async () => {
+      const { manga, panels } = seedManga(lib.store);
+      const ren = seedCharacter(lib.store, manga.id, 'Ren', '1boy, black hair');
+      const aiko = seedCharacter(lib.store, manga.id, 'Aiko', '1girl, silver hair');
+      const panel = updatePanel(lib.store, panels[0]!.id, { characters: [stage(ren.id), stage(aiko.id)] }, { prompt: { scene: '2girls, solo, park', negative: '' } });
+      await run(panel.id);
+      const [positive, negative] = texts();
+      expect(positive).toContain('lineart, 1boy, 1girl, black hair, silver hair, park');
+      expect(positive).not.toMatch(/2girls|solo|male focus/);
+      expect(negative).not.toContain(ANTI_FEMALE_NEGATIVE);
+      expect(loraStrengths()).toEqual([['Mnga-illustriousXL_v01_V1-CAME.safetensors', 0.4]]);
+    });
+
+    it("opens a natural scene with the count sentence and leaves klein's unused negative alone; the refine pass gets both", async () => {
+      lib.store.settings.patch({ routing: { bwRefine: 'anime-refine' } });
+      const { manga, panels } = seedManga(lib.store);
+      const naruto = giveRefs(lib.store, seedCharacter(lib.store, manga.id, 'Naruto', '1boy, spiky blond hair'), ['portrait']);
+      const sasuke = giveRefs(lib.store, seedCharacter(lib.store, manga.id, 'Sasuke', '1boy, black hair'), ['portrait']);
+      const panel = updatePanel(lib.store, panels[0]!.id, { characters: [stage(naruto.id, 'left'), stage(sasuke.id, 'right')] }, {
+        refCharacterIds: [naruto.id, sasuke.id], prompt: { scene: 'Medium shot at eye level. Two girls. The boy from picture 1 glares at the boy from picture 2.', negative: '' },
+      });
+      await run(panel.id);
+      const klein = lib.store.images.listByOwner('panel', panel.id).find((i) => i.gen?.recipe === 'klein-ref')!;
+      expect(klein.gen!.prompt).toContain('spiky blond hair, black hair, Exactly two men. Medium shot at eye level. The boy from picture 1 glares');
+      expect(klein.gen!.prompt).not.toContain('Two girls');
+      expect(klein.gen!.negative).not.toContain(ANTI_FEMALE_NEGATIVE);
+      const [refinePositive, refineNegative] = texts(1);
+      expect(refinePositive).toContain('lineart, 2boys, male focus, spiky blond hair, black hair');
+      expect(refineNegative).toContain(ANTI_FEMALE_NEGATIVE);
+      expect(loraStrengths(1)).toEqual([['Mnga-illustriousXL_v01_V1-CAME.safetensors', 0.4]]);
+    });
   });
 
   it('writes a fresh seed back when unlocked and keeps a locked one', async () => {
@@ -95,7 +161,7 @@ describe('image.generate (panel)', () => {
     });
     await run(panel.id);
     const [positive] = nodesOf(fake.graphs[0]!, 'CLIPTextEncode').map((n) => String(n.inputs['text']));
-    expect(positive).toContain('1girl, short black hair, kitten, grey tabby, solo, crouching, vending machine');
+    expect(positive).toContain('1girl, solo, short black hair, kitten, grey tabby, crouching, vending machine');
     expect(positive!.toLowerCase().replace(/_/g, ' ')).not.toMatch(/no\s+humans/);
   });
 
@@ -202,7 +268,7 @@ describe('image.generate (panel)', () => {
     const graph = fake.graphs[0]!;
     expect(nodesOf(graph, 'IPAdapterAdvanced')).toHaveLength(0);
     expect(nodesOf(graph, 'CheckpointLoaderSimple')).toHaveLength(1);
-    expect(String(nodesOf(graph, 'CLIPTextEncode')[0]!.inputs['text'])).toContain('1boy, black hair');
+    expect(String(nodesOf(graph, 'CLIPTextEncode')[0]!.inputs['text'])).toContain('1boy, solo, male focus, black hair');
     // F6: plain SDXL routing (no refs → the style's own recipe, 'anime') keeps the style LoRA, since the
     // families match.
     expect(nodesOf(graph, 'LoraLoader').map((n) => n.inputs['lora_name'])).toEqual(['Mnga-illustriousXL_v01_V1-CAME.safetensors']);

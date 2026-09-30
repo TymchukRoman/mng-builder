@@ -1,4 +1,4 @@
-import type { Character, LoraRef, Manga, Page, Panel } from '@manga/shared';
+import { styleLorasFor, type CastCount, type Character, type LoraRef, type Manga, type Page, type Panel } from '@manga/shared';
 import { RECIPES, type Recipe } from '../imaging/recipes/index.js';
 import type { Store } from '../store/index.js';
 
@@ -66,7 +66,9 @@ export function pickRefs(store: Store, recipe: Recipe, refCharacters: Character[
  * Style LoRAs (the manga/anima book-level LoRA in `manga.styleGuide.loras`) only make sense for a recipe built on
  * the same model family as the style guide's own recipe — WAI's manga LoRA on Anima (or vice versa) would either
  * no-op or corrupt the image. Apply it only when the families match; otherwise the recipe generates without it.
+ * With a male human in the subject or panel (`count.boy > 0`), a LoRA with a maleStrength runs at it (the Mnga
+ * LoRA at 0.8 drew men as women): every portrait, sheet and panel generation gets its style LoRAs here.
  */
-export function styleLoras(manga: Manga, recipeId: string): LoraRef[] {
-  return RECIPES[recipeId]?.family === RECIPES[manga.styleGuide.recipe]?.family ? manga.styleGuide.loras : [];
+export function styleLoras(manga: Manga, recipeId: string, count: CastCount): LoraRef[] {
+  return RECIPES[recipeId]?.family === RECIPES[manga.styleGuide.recipe]?.family ? styleLorasFor(manga.styleGuide.loras, count.boy > 0) : [];
 }

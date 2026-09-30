@@ -1,8 +1,9 @@
 import {
-  BASE_NEGATIVE, assemblePrompt,
+  BASE_NEGATIVE, allMale, antiFemaleNegative, assemblePrompt, castCount, withCountTag,
   type Character, type CharacterRefsPayload, type CharacterRefsResult, type ImageGenerateResult, type LoraRef, type Manga,
 } from '@manga/shared';
 import { generateImage } from '../imaging/generate.js';
+import { takesNegative } from '../imaging/route.js';
 import { PORTRAIT_SIZE } from '../imaging/size.js';
 import { PermanentError, type JobContext } from '../jobs/index.js';
 import { emitEntity, nonEmpty, styleLoras } from './context.js';
@@ -30,6 +31,24 @@ const PORTRAIT_RECIPES = new Set(['anime', 'anima', 'anima-turbo', 'klein-ref'])
 type Slot = 'fullbody' | 'side' | 'back';
 interface SlotSpec { recipe: string; prompt: string; negative: string; refImageIds: string[]; loras: LoraRef[] }
 
+interface SheetSubject { characterTags: string[]; scene: string; extraNegative: string; loras: LoraRef[] }
+
+/**
+ * A portrait or sheet view of one character: its tags with the count tag their words call for (a "1other, fat man"
+ * is a 1boy), and for a man "male focus" after "solo", the anti-female negative (when the recipe takes a negative)
+ * and the style LoRA at its male strength. Roman: the Mnga LoRA drew every man as a woman.
+ */
+function sheetSubject(manga: Manga, character: Character, recipe: string, scene: string, negative: string): SheetSubject {
+  const count = castCount([character]);
+  const antiFemale = takesNegative(recipe) ? antiFemaleNegative(count) : '';
+  return {
+    characterTags: [withCountTag(character.appearanceTags)].filter(nonEmpty),
+    scene: allMale(count) ? scene.replace(/^solo\b/, 'solo, male focus') : scene,
+    extraNegative: [negative, antiFemale].filter(nonEmpty).join(', '),
+    loras: styleLoras(manga, recipe, count),
+  };
+}
+
 function usableImage(ctx: JobContext, id: string | undefined): string | null {
   return id !== undefined && ctx.store.images.get(id) !== null ? id : null;
 }
@@ -38,16 +57,18 @@ function slotSpec(ctx: JobContext, character: Character, manga: Manga, slot: Slo
   const portrait = usableImage(ctx, character.refs.portrait);
   if (!portrait) throw new PermanentError(`${character.name} has no portrait yet: generate portraits and pick one first`);
   if (slot === 'fullbody') {
+    const subject = sheetSubject(manga, character, 'anime-ref', FULLBODY_SCENE, SHEET_NEGATIVE);
     const { prompt, negative } = assemblePrompt({
-      styleGuide: manga.styleGuide, colorMode: manga.colorMode, characterTags: [character.appearanceTags].filter(nonEmpty),
-      scene: FULLBODY_SCENE, extraNegative: SHEET_NEGATIVE,
+      styleGuide: manga.styleGuide, colorMode: manga.colorMode, characterTags: subject.characterTags,
+      scene: subject.scene, extraNegative: subject.extraNegative,
     });
-    return { recipe: 'anime-ref', prompt, negative, refImageIds: [portrait], loras: styleLoras(manga, 'anime-ref') };
+    return { recipe: 'anime-ref', prompt, negative, refImageIds: [portrait], loras: subject.loras };
   }
   const fullbody = usableImage(ctx, character.refs.fullbody);
   if (!fullbody) throw new PermanentError(`${character.name} has no full-body reference yet: generate the sheet's full-body view first`);
   const prompt = [VIEW_INSTRUCTION[slot], manga.colorMode === 'bw' ? BW_VIEW_STYLE : ''].filter(nonEmpty).join(' ');
-  return { recipe: 'qwen-edit-ref', prompt, negative: BASE_NEGATIVE, refImageIds: [portrait, fullbody], loras: [] };
+  const negative = [BASE_NEGATIVE, sheetSubject(manga, character, 'qwen-edit-ref', '', '').extraNegative].filter(nonEmpty).join(', ');
+  return { recipe: 'qwen-edit-ref', prompt, negative, refImageIds: [portrait, fullbody], loras: [] };
 }
 
 /**
@@ -65,14 +86,15 @@ export async function generatePortrait(
   const recipe = character.recipe && PORTRAIT_RECIPES.has(character.recipe)
     ? character.recipe
     : PORTRAIT_RECIPES.has(manga.styleGuide.recipe) ? manga.styleGuide.recipe : 'anime';
+  const subject = sheetSubject(manga, character, recipe, PORTRAIT_SCENE, SHEET_NEGATIVE);
   const { prompt, negative } = assemblePrompt({
-    styleGuide: manga.styleGuide, colorMode: manga.colorMode, characterTags: [character.appearanceTags].filter(nonEmpty),
-    scene: PORTRAIT_SCENE, extraNegative: SHEET_NEGATIVE,
+    styleGuide: manga.styleGuide, colorMode: manga.colorMode, characterTags: subject.characterTags,
+    scene: subject.scene, extraNegative: subject.extraNegative,
   });
   const [width, height] = PORTRAIT_SIZE;
   const image = await generateImage({ store: ctx.store, comfy: services.requireComfy(), gpu: ctx.gpu }, {
     mangaId: manga.id, owner: { type: 'character', id: character.id }, role: 'portrait', recipe, prompt, negative, width, height,
-    seed: p.seed ?? character.seed, loras: styleLoras(manga, recipe), refImageIds: [], control: null, initImageId: null, denoise: null, upscale: null,
+    seed: p.seed ?? character.seed, loras: subject.loras, refImageIds: [], control: null, initImageId: null, denoise: null, upscale: null,
   }, { signal: ctx.signal, progress: ctx.progress });
   emitEntity(ctx.bus, 'image', image.id, 'created', manga.id);
   return { imageId: image.id };

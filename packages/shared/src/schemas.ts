@@ -24,7 +24,8 @@ export const DEFAULT_PAGE_FORMAT: PageFormat = {
   gutterColMm: 3, gutterRowMm: 6, borderMm: 0.8,
 };
 
-export const LoraRefSchema = z.object({ name: z.string().min(1), strength: z.number().min(-2).max(2) });
+/** `maleStrength` (style LoRAs only): the strength used when the subject or panel has a male human (styles.ts). */
+export const LoraRefSchema = z.object({ name: z.string().min(1), strength: z.number().min(-2).max(2), maleStrength: z.number().min(-2).max(2).optional() });
 export type LoraRef = z.infer<typeof LoraRefSchema>;
 export const StyleGuideSchema = z.object({
   recipe: z.string().min(1),

@@ -1,12 +1,11 @@
 import type { ColorMode, LoraRef, StyleGuide } from './schemas.js';
 
-/**
- * A preset's style LoRA. `maleStrength` is the strength used when the subject (a portrait or sheet) or the panel has
- * a male human: the Mnga LoRA at 0.8 turned men into women even against "1boy, male focus" and an anti-female
- * negative (GPU tests A–C); at 0.4 it drew them male (E, J). Ashpwright keeps men male at 0.8 (F, G), so it has none.
+/*
+ * A style LoRA's `maleStrength` is the strength used when the subject (a portrait or sheet) or the panel has a male
+ * human: the Mnga LoRA at 0.8 turned men into women even against "1boy, male focus" and an anti-female negative (GPU
+ * tests A–C); at 0.4 it drew them male (E, J). Ashpwright keeps men male at 0.8 (F, G), so it has none.
  */
-export interface StyleLora extends LoraRef { maleStrength?: number }
-export interface StylePreset { id: string; label: string; colorMode: ColorMode; styleGuide: Omit<StyleGuide, 'loras'> & { loras: StyleLora[] } }
+export interface StylePreset { id: string; label: string; colorMode: ColorMode; styleGuide: StyleGuide }
 
 // (M2 F9) The shared negative gains the P1 style-LoRA negative token so a generation without an explicit
 // per-request negative still steers away from it.
@@ -43,11 +42,11 @@ const MALE_STRENGTH: ReadonlyMap<string, number> = new Map(
 /**
  * The style LoRAs as a generation applies them: with a male human in the subject or panel, a LoRA with a
  * `maleStrength` (its own, else its preset's by file name) runs at that strength when it is weaker than the set one.
- * Returns plain LoraRefs (no maleStrength), as the image's generation parameters record them.
+ * Returns the strengths applied (no maleStrength), as the image's generation parameters record them.
  */
 export function styleLorasFor(loras: readonly LoraRef[], hasMale: boolean): LoraRef[] {
   return loras.map((lora) => {
-    const male = (lora as StyleLora).maleStrength ?? MALE_STRENGTH.get(lora.name);
+    const male = lora.maleStrength ?? MALE_STRENGTH.get(lora.name);
     const strength = hasMale && male !== undefined && Math.abs(male) < Math.abs(lora.strength) ? male : lora.strength;
     return { name: lora.name, strength };
   });

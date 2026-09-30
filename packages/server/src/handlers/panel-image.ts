@@ -1,9 +1,10 @@
-import { assemblePrompt, dropNoHumansTags, hasNoHumansTag, type ImageGeneratePayload, type ImageGenerateResult } from '@manga/shared';
+import { antiFemaleNegative, assemblePrompt, dropNoHumansTags, hasNoHumansTag, type ImageGeneratePayload, type ImageGenerateResult } from '@manga/shared';
 import { generateImage, randomSeed, type GenerateRequest } from '../imaging/generate.js';
 import { RECIPES } from '../imaging/recipes/index.js';
-import { refineFor, routeRecipe } from '../imaging/route.js';
+import { promptStyleFor, refineFor, routeRecipe, takesNegative } from '../imaging/route.js';
 import { panelSize } from '../imaging/size.js';
 import { PermanentError, type JobContext } from '../jobs/index.js';
+import { castPrompt } from '../prompts/count.js';
 import { emitEntity, nonEmpty, panelContext, pickRefs, styleLoras } from './context.js';
 import type { HandlerServices } from './types.js';
 
@@ -27,9 +28,14 @@ export async function generatePanelImage(
   // M4 final S4: a person in the cast wins over a pet's "no humans" (the Task 22 smoke got "1girl, …, no humans, kitten"),
   // in the character tags and the scene alike, whatever the recipe's prompt style.
   const tidy = characters.some((c) => !hasNoHumansTag(c.appearanceTags)) ? dropNoHumansTags : (t: string): string => t;
-  const scene = tidy([panel.prompt.scene, p.sceneSuffix].filter(nonEmpty).join(', '));
-  const extraNegative = [panel.prompt.negative, p.negativeExtra].filter(nonEmpty).join(', ');
-  const characterTags = characters.map((c) => tidy(c.appearanceTags)).filter(nonEmpty);
+  // Male subjects: the cast decides the people count (the LLM's own is replaced, Rogue Ninja "1boy" + "2girls"), and
+  // with a man and no woman the negative steers away from a feminised look. A retry's suffix (its count comes from
+  // the same castCount) is added after, as written.
+  const subject = castPrompt(promptStyleFor(recipeId), characters, panel.prompt.scene);
+  const characterTags = subject.characterTags.map(tidy).filter(nonEmpty);
+  const scene = tidy([subject.scene, p.sceneSuffix].filter(nonEmpty).join(', '));
+  const antiFemale = antiFemaleNegative(subject.count);
+  const extraNegative = [panel.prompt.negative, p.negativeExtra, takesNegative(recipeId) ? antiFemale : ''].filter(nonEmpty).join(', ');
   const { prompt, negative } = assemblePrompt({
     styleGuide: manga.styleGuide, colorMode: manga.colorMode, characterTags, scene,
     ...(extraNegative ? { extraNegative } : {}),
@@ -43,7 +49,7 @@ export async function generatePanelImage(
   };
 
   const first = await generateImage(deps, {
-    ...base, recipe: recipeId, prompt, negative, width, height, loras: styleLoras(manga, recipeId),
+    ...base, recipe: recipeId, prompt, negative, width, height, loras: styleLoras(manga, recipeId, subject.count),
     refImageIds: pickRefs(store, recipe, refCharacters).map((r) => r.imageId), initImageId: null, denoise: null,
   }, io);
   emitEntity(bus, 'image', first.id, 'created', manga.id);
@@ -52,10 +58,13 @@ export async function generatePanelImage(
   if (refineWith) {
     ctx.progress('Refining ink and screentone');
     // F7: the refine pass reuses the style + B&W tokens + appearance tags, not the qwen/klein natural-language scene.
-    const refine = assemblePrompt({ styleGuide: manga.styleGuide, colorMode: manga.colorMode, characterTags, scene: '' });
+    const refine = assemblePrompt({
+      styleGuide: manga.styleGuide, colorMode: manga.colorMode, characterTags: castPrompt('tags', characters, '').characterTags.map(tidy).filter(nonEmpty), scene: '',
+      ...(antiFemale && takesNegative(refineWith) ? { extraNegative: antiFemale } : {}),
+    });
     active = await generateImage(deps, {
       ...base, recipe: refineWith, prompt: refine.prompt, negative: refine.negative, width: first.width, height: first.height,
-      loras: styleLoras(manga, refineWith), refImageIds: [], initImageId: first.id, denoise: REFINE_DENOISE,
+      loras: styleLoras(manga, refineWith, subject.count), refImageIds: [], initImageId: first.id, denoise: REFINE_DENOISE,
     }, io);
     emitEntity(bus, 'image', active.id, 'created', manga.id);
   }

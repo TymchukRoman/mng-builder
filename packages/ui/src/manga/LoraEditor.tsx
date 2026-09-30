@@ -13,7 +13,7 @@ export function LoraEditor({ loras, onChange }: { loras: LoraRef[]; onChange(nex
   const nextId = useRef(0);
   const withIds = (list: readonly LoraRef[]): Row[] => list.map((l) => ({ ...l, id: nextId.current++ }));
   const [rows, setRows] = useState<Row[]>(() => withIds(loras));
-  const plain = (list: readonly Row[]): LoraRef[] => list.map(({ name, strength }) => ({ name, strength }));
+  const plain = (list: readonly Row[]): LoraRef[] => list.map(({ id: _id, ...lora }) => lora);
   useEffect(() => {
     setRows((cur) => (JSON.stringify(validLoras(plain(cur))) === JSON.stringify(loras) ? cur : withIds(loras)));
   }, [loras]);

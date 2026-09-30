@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { ANTI_FEMALE_NEGATIVE, BASE_NEGATIVE } from '@manga/shared';
 import { BW_VIEW_STYLE, VIEW_INSTRUCTION, generateCharacterRefs, generatePortrait, generateSlot } from '../src/handlers/character-images.js';
 import { ComfyClient } from '../src/imaging/comfy.js';
 import { nodesOf, type Link } from '../src/imaging/comfy-graph.js';
@@ -40,6 +41,44 @@ describe('character images', () => {
     expect(lib.store.characters.require(aiko.id).refs).toEqual({});
     const second = await generatePortrait(ctx(), services, { characterId: aiko.id, seed: 77 });
     expect(lib.store.images.require(second.imageId).gen?.seed).toBe(77);
+  });
+
+  describe('male subjects (Roman: men rendered as women)', () => {
+    const loraStrengths = (i = 0) => nodesOf(fake.graphs[i]!, 'LoraLoader').map((n) => [n.inputs['lora_name'], n.inputs['strength_model']]);
+
+    it('draws a "1other, fat man" portrait as 1boy with male focus, the anti-female negative and the Mnga LoRA at 0.4', async () => {
+      const { manga } = seedManga(lib.store);
+      const deb = seedCharacter(lib.store, manga.id, 'Debil', '1other, fat man, long hair, wavy hair, aristocratic clothes');
+      const result = await generatePortrait(ctx(), services, { characterId: deb.id });
+      const gen = lib.store.images.require(result.imageId).gen!;
+      expect(gen.prompt).toContain('lineart, 1boy, fat man, long hair, wavy hair, aristocratic clothes, solo, male focus, upper body, portrait');
+      expect(gen.prompt).not.toContain('1other');
+      expect(gen.negative).toContain(`multiple views, 2girls, 2boys, multiple persons, cropped head, out of frame, ${ANTI_FEMALE_NEGATIVE}`);
+      expect(loraStrengths()).toEqual([['Mnga-illustriousXL_v01_V1-CAME.safetensors', 0.4]]);
+      expect(lib.store.characters.require(deb.id).appearanceTags).toBe('1other, fat man, long hair, wavy hair, aristocratic clothes');
+    });
+
+    it('leaves a female portrait as it was: no male focus, no anti-female negative, the Mnga LoRA at 0.8', async () => {
+      const { manga } = seedManga(lib.store);
+      const aiko = seedCharacter(lib.store, manga.id, 'Aiko', '1girl, silver hair');
+      const gen = lib.store.images.require((await generatePortrait(ctx(), services, { characterId: aiko.id })).imageId).gen!;
+      expect(gen.prompt).toContain('1girl, silver hair, solo, upper body');
+      expect(gen.prompt).not.toContain('male focus');
+      expect(gen.negative).not.toContain(ANTI_FEMALE_NEGATIVE);
+      expect(loraStrengths()).toEqual([['Mnga-illustriousXL_v01_V1-CAME.safetensors', 0.8]]);
+    });
+
+    it("gives a man's full body and side/back views the same treatment", async () => {
+      const { manga } = seedManga(lib.store);
+      const ren = giveRefs(lib.store, seedCharacter(lib.store, manga.id, 'Ren', 'king, beard, crown'), ['portrait']);
+      const fullbody = (await generateSlot(ctx(), services, { characterId: ren.id, slot: 'fullbody' })).imageId;
+      const full = lib.store.images.require(fullbody).gen!;
+      expect(full.prompt).toContain('1boy, king, beard, crown, solo, male focus, full body');
+      expect(full.negative).toContain(ANTI_FEMALE_NEGATIVE);
+      expect(loraStrengths()).toEqual([['Mnga-illustriousXL_v01_V1-CAME.safetensors', 0.4]]);
+      const side = (await generateSlot(ctx(), services, { characterId: ren.id, slot: 'side' })).imageId;
+      expect(lib.store.images.require(side).gen!.negative).toBe(`${BASE_NEGATIVE}, ${ANTI_FEMALE_NEGATIVE}`);
+    });
   });
 
   it("prefers the character's own recipe over the manga's style recipe when it can draw from tags alone", async () => {
