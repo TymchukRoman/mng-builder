@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activeJobs, isPortraitJob, jobProgress, jobStatusLabel, jobTargetsCharacter, jobTargetsPanel, kindLabel } from '../src/jobs/jobView';
+import { activeJobs, errorHeadline, isPortraitJob, jobProgress, jobStatusLabel, jobTargetsCharacter, jobTargetsPanel, kindLabel } from '../src/jobs/jobView';
 import { makeJob } from './fixtures';
 
 describe('jobView', () => {
@@ -21,6 +21,14 @@ describe('jobView', () => {
     // preflight F9: a queued job with an error is a re-queued retry, not a plain wait.
     expect(jobStatusLabel(makeJob({ status: 'queued', error: 'ComfyUI down' }))).toBe('Generating image: retrying (ComfyUI down)');
     expect(jobStatusLabel(makeJob({ status: 'failed', error: 'ComfyUI down' }))).toBe('Generating image failed: ComfyUI down');
+  });
+  it('toasts and labels only the first line of an error (M4 final M4)', () => {
+    const raw = 'scripts: the AI answer was not valid\n--- raw output ---\n{"pages": [' + 'x'.repeat(4000);
+    expect(errorHeadline(raw)).toBe('scripts: the AI answer was not valid');
+    expect(errorHeadline('\n  one line  ')).toBe('one line');
+    expect(errorHeadline('')).toBe('');
+    expect(jobStatusLabel(makeJob({ status: 'failed', kind: 'llm.step', error: raw }))).toBe('Writing failed: scripts: the AI answer was not valid');
+    expect(jobStatusLabel(makeJob({ status: 'queued', error: 'busy\nmore' }))).toBe('Generating image: retrying (busy)');
   });
   it('extracts numeric progress only when both ends are known', () => {
     expect(jobProgress(makeJob({ progress: { label: 'x', value: 3, max: 30 } }))).toEqual({ value: 3, max: 30 });

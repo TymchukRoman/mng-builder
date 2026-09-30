@@ -75,4 +75,5 @@
 .toast--error { border-left-color: var(--danger); }
 .toast--error > svg { color: var(--danger); margin-top: var(--sp-half); }
 .toast--info > svg { color: var(--ok); margin-top: var(--sp-half); }
-.toast__text { flex: 1; font-size: var(--fs-sm); line-height: 1.4; overflow-wrap: anywhere; }
+/* Clamped (M4 final M4): a long message never fills the screen. */
+.toast__text { flex: 1; font-size: var(--fs-sm); line-height: 1.4; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; overflow: hidden; }

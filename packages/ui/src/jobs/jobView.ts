@@ -27,15 +27,23 @@ export function kindLabel(kind: JobKind): string {
   return KIND_LABEL[kind];
 }
 
+/**
+ * The first line of a job error, for toasts and labels (M4 final M4). A failed episode step's error carries the model's
+ * raw output after its first line (F25); the stepper shows that whole error in its scroll box.
+ */
+export function errorHeadline(error: string): string {
+  return error.trimStart().split('\n', 1)[0]!.trim();
+}
+
 export function jobStatusLabel(job: Job): string {
   const kind = kindLabel(job.kind);
   switch (job.status) {
     case 'running': return job.progress?.label || kind;
     // preflight F9: a queued job with an error is a re-queued retry (the worker requeues on
     // failure up to maxAttempts), so show that instead of a plain "(queued)".
-    case 'queued': return job.error ? `${kind}: retrying (${job.error})` : `${kind} (queued)`;
+    case 'queued': return job.error ? `${kind}: retrying (${errorHeadline(job.error)})` : `${kind} (queued)`;
     case 'succeeded': return `${kind}: done`;
-    case 'failed': return `${kind} failed${job.error ? `: ${job.error}` : ''}`;
+    case 'failed': return `${kind} failed${job.error ? `: ${errorHeadline(job.error)}` : ''}`;
     case 'cancelled': return `${kind}: cancelled`;
   }
 }

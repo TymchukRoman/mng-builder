@@ -4,7 +4,7 @@ import type { Job, Page, ServerEvent } from '@manga/shared';
 import { api, seg } from './api';
 import { createStore, useStore } from './lib/store';
 import { cacheLookup, keysForEntity, qk, type EntityEvent } from './queryKeys';
-import { TERMINAL, kindLabel } from './jobs/jobView';
+import { TERMINAL, errorHeadline, kindLabel } from './jobs/jobView';
 import { pushToast } from './ui/toasts';
 
 export function eventsUrl(loc: { protocol: string; host: string }): string {
@@ -102,7 +102,7 @@ export interface EventDeps {
 const defaultDeps: EventDeps = {
   waiters: jobWaiters,
   fetchJob,
-  onJobFailed: (job) => pushToast('error', `${kindLabel(job.kind)} failed${job.error ? `: ${job.error}` : ''}`),
+  onJobFailed: (job) => pushToast('error', `${kindLabel(job.kind)} failed${job.error ? `: ${errorHeadline(job.error)}` : ''}`),
   reported: new Set<string>(),
   helloSeen: { value: false },
 };
