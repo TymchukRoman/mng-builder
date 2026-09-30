@@ -206,4 +206,11 @@ describe('story memory in requests (W1 Q1)', () => {
     expect(contexts.at(-1)!.panels[0]!.isCover).toBe(true);
     expect(contexts.at(-1)!.previousPage).toBeUndefined();
   });
+
+  it('the breakdown prompt aims for 3–5 panels per page and never more than 6', () => {
+    const { system } = loadStepPrompt('breakdown');
+    expect(system).toContain('3–5 panels');
+    expect(system).toContain('never has more than 6 panels');
+    expect(system).not.toContain('9');
+  });
 });
