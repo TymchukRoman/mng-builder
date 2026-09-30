@@ -10,3 +10,4 @@ export * from './fonts.js';
 export * from './jobs.js';
 export * from './episode.js';
 export * from './letter.js';
+export * from './gender.js';

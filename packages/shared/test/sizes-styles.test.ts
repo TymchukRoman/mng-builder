@@ -13,6 +13,7 @@ import {
   SDXL_SIZES,
   STYLE_PRESETS,
   StyleGuideSchema,
+  styleLorasFor,
 } from '@manga/shared';
 
 describe('pickSize', () => {
@@ -57,7 +58,7 @@ describe('STYLE_PRESETS', () => {
     }
     expect(STYLE_PRESETS['manga-bw']?.styleGuide).toMatchObject({
       recipe: 'anime', stylePrompt: 'masterpiece, best quality, clean lineart, detailed background, hatching (texture)',
-      loras: [{ name: 'Mnga-illustriousXL_v01_V1-CAME.safetensors', strength: 0.8 }],
+      loras: [{ name: 'Mnga-illustriousXL_v01_V1-CAME.safetensors', strength: 0.8, maleStrength: 0.4 }],
     });
     expect(STYLE_PRESETS['manga-hatching']?.styleGuide).toMatchObject({
       stylePrompt: 'masterpiece, best quality, clean lineart, detailed background, ashpwright',
@@ -82,5 +83,25 @@ describe('printSizePx', () => {
     expect(printSizePx(DEFAULT_PAGE_FORMAT)).toEqual({ w: 2150, h: 3035 });
     expect(printSizePx(DEFAULT_PAGE_FORMAT, 0.5)).toEqual({ w: 1075, h: 1518 });
     expect(printSizePx({ ...DEFAULT_PAGE_FORMAT, widthMm: 25.4, heightMm: 50.8, dpi: 100 })).toEqual({ w: 100, h: 200 });
+  });
+});
+
+describe('styleLorasFor (the style LoRA strength for a male subject)', () => {
+  const mnga = STYLE_PRESETS['manga-bw']!.styleGuide.loras;
+  const ash = STYLE_PRESETS['manga-hatching']!.styleGuide.loras;
+
+  it("runs the 'manga' Mnga LoRA at 0.4 with a male in the subject or panel, and at 0.8 otherwise", () => {
+    expect(styleLorasFor(mnga, true)).toEqual([{ name: 'Mnga-illustriousXL_v01_V1-CAME.safetensors', strength: 0.4 }]);
+    expect(styleLorasFor(mnga, false)).toEqual([{ name: 'Mnga-illustriousXL_v01_V1-CAME.safetensors', strength: 0.8 }]);
+  });
+
+  it('keeps Ashpwright at 0.8 for men (it has no maleStrength)', () => {
+    expect(styleLorasFor(ash, true)).toEqual([{ name: 'Ashpwright_style_mix-000033.safetensors', strength: 0.8 }]);
+  });
+
+  it("finds the preset's maleStrength by file name for a manga stored before it existed, and never raises a weaker set strength", () => {
+    expect(styleLorasFor([{ name: 'Mnga-illustriousXL_v01_V1-CAME.safetensors', strength: 0.8 }], true)[0]!.strength).toBe(0.4);
+    expect(styleLorasFor([{ name: 'Mnga-illustriousXL_v01_V1-CAME.safetensors', strength: 0.3 }], true)[0]!.strength).toBe(0.3);
+    expect(styleLorasFor([{ name: 'custom.safetensors', strength: 0.7 }], true)).toEqual([{ name: 'custom.safetensors', strength: 0.7 }]);
   });
 });
