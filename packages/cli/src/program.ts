@@ -1,12 +1,15 @@
 import { Command, CommanderError } from 'commander';
 import { registerAiCommands } from './commands/ai.js';
 import { registerChapterCommands } from './commands/chapters.js';
+import { registerEpisodeCommands } from './commands/episode.js';
+import { registerExportCommands } from './commands/export.js';
 import { registerCharacterCommands } from './commands/characters.js';
 import { registerJobCommands } from './commands/jobs.js';
 import { registerMangaCommands } from './commands/mangas.js';
 import { registerPageCommands } from './commands/pages.js';
 import { registerPanelCommands } from './commands/panels.js';
 import { registerServerCommands } from './commands/server.js';
+import { registerTextAutoCommand } from './commands/text-auto.js';
 import { registerTextCommands } from './commands/text.js';
 import { createContext, type CliContext } from './context.js';
 import { CliError } from './errors.js';
@@ -39,6 +42,9 @@ export function buildProgram(io: CliIo = processIo, factory: ContextFactory = de
   registerTextCommands(program, ctx);
   registerJobCommands(program, ctx);
   registerAiCommands(program, ctx);
+  registerEpisodeCommands(program, ctx);
+  registerExportCommands(program, ctx);
+  registerTextAutoCommand(program, ctx);
   return program;
 }
 
