@@ -144,8 +144,7 @@ export function applyServerEvent(qc: QueryClient, e: ServerEvent, deps: EventDep
       return;
     }
     case 'status':
-      // F10: the server does not emit this yet (status only reaches the UI via the 30 s poll in
-      // queries.ts), but the branch is kept ready for when it does.
+      // W1 R2: the server emits this on every lane pause, resume or expiry; the 30 s poll in queries.ts is the fallback.
       qc.setQueryData(qk.status(), e.status);
       return;
     case 'entity': {

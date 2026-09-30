@@ -4,10 +4,13 @@ import { registerImagingRoutes } from '../api/imaging-routes.js';
 import { startFakeComfy } from '../dev/fake-comfy.js';
 import { registerImagingJobs } from '../handlers/index.js';
 import { ComfyClient } from '../imaging/comfy.js';
+import { GpuMonitor } from '../imaging/gpu-monitor.js';
 import { ComfyLauncher } from '../imaging/launcher.js';
 import { servicesFor, type M2Services } from './services.js';
 
 export function imagingModule(deps: CoreDeps, services: M2Services = servicesFor(deps)): AppModule {
+  /** W1 R2: resumes the gpu lane once ComfyUI has room again after a GPU-busy pause. */
+  let monitor: GpuMonitor | null = null;
   return {
     name: 'imaging',
     async register(app): Promise<void> {
@@ -31,8 +34,13 @@ export function imagingModule(deps: CoreDeps, services: M2Services = servicesFor
       deps.statusProviders.comfy = () => comfy.health();
       registerImagingJobs(deps.queue, services);
       registerImagingRoutes(app, deps, services);
+      monitor = new GpuMonitor({ queue: deps.queue, probe: comfy });
+    },
+    start(): void {
+      monitor?.start();
     },
     async stop(): Promise<void> {
+      monitor?.stop();
       await services.fakeComfy?.close();
     },
   };
