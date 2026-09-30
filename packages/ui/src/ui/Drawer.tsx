@@ -6,11 +6,11 @@ import { useOverlay } from './useOverlay';
 
 export function Drawer({ open, onClose, title, actions, children }: { open: boolean; onClose(): void; title: string; actions?: ReactNode; children: ReactNode }): JSX.Element | null {
   const ref = useRef<HTMLElement>(null);
-  useOverlay(open, onClose, ref);
+  useOverlay(open, onClose, ref, 'container');
   if (!open) return null;
   return createPortal(
     <div className="overlay-scrim overlay-scrim--light" onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <aside ref={ref} role="dialog" aria-modal="true" aria-label={title} className="drawer">
+      <aside ref={ref} role="dialog" aria-modal="true" aria-label={title} className="drawer" tabIndex={-1}>
         <header className="drawer__head">
           <h2>{title}</h2>
           <div className="row">{actions}<IconButton icon={X} label="Close" size="sm" onClick={onClose} /></div>

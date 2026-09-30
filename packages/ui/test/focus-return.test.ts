@@ -35,4 +35,11 @@ describe('initialFocusIndex (I2: a dialog opens on its first field, not on the h
   it('returns -1 when nothing is focusable', () => {
     expect(initialFocusIndex([])).toBe(-1);
   });
+  it('for a drawer with no data-autofocus, returns -1 (its own container), not the first control', () => {
+    expect(initialFocusIndex([close, field, field], 'container')).toBe(-1);
+    expect(initialFocusIndex([close], 'container')).toBe(-1);
+  });
+  it('for a drawer, still prefers the element marked data-autofocus (a create form keeps its first field)', () => {
+    expect(initialFocusIndex([close, field, marked], 'container')).toBe(2);
+  });
 });

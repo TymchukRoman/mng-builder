@@ -45,6 +45,28 @@ test('create dialogs open on their first field: typing fills it and Enter does n
   expect(errors.all()).toEqual([]);
 });
 
+test('the Manga settings drawer opens on its container, so a stray Enter or Space changes nothing; Escape closes it and returns focus', async ({ page, request }) => {
+  const errors = collectErrors(page);
+  const { mangaId } = await seedManga(request, 'E2E drawer focus');
+  await page.goto(`/m/${mangaId}`);
+  const trigger = page.getByRole('button', { name: 'Manga settings' });
+  await trigger.click();
+  const drawer = page.getByRole('dialog', { name: 'Manga settings' });
+  await expect(drawer).toBeVisible();
+  await expect(drawer).toBeFocused();
+  const english = drawer.getByRole('radio', { name: 'English' });
+  const ukrainian = drawer.getByRole('radio', { name: 'Українська' });
+  const before = await english.getAttribute('aria-checked');
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Space');
+  expect(await english.getAttribute('aria-checked')).toBe(before);
+  expect(await ukrainian.getAttribute('aria-checked')).not.toBe(before);
+  await page.keyboard.press('Escape');
+  await expect(drawer).toBeHidden();
+  await expect(trigger).toBeFocused();
+  expect(errors.all()).toEqual([]);
+});
+
 const INJECTED = { status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'internal', message: 'Injected failure' } }) };
 
 test('a failed load says so and offers Retry, which recovers once the server answers (M1, M2)', async ({ page, request }) => {

@@ -1,12 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
-import { initialFocusIndex } from './focusReturn';
+import { initialFocusIndex, type FocusFallback } from './focusReturn';
 
 // Exported so Popover (which manages its own focus lifecycle instead of calling this hook, since it
 // already owns outside-click and Escape handling) can reuse the same definition of "focusable".
 export const FOCUSABLE = '[data-autofocus], input:not([type="hidden"]), textarea, select, button:not([aria-disabled="true"])';
 
-/** Focus the first field on open (`data-autofocus`, else the body's first control; see initialFocusIndex), close on Escape (unless a popover consumed it), restore focus on close. */
-export function useOverlay(open: boolean, onClose: () => void, ref: RefObject<HTMLElement | null>): void {
+/** Focus the `data-autofocus` field on open, else per `fallback` (see initialFocusIndex: the body's first control, or the container itself), close on Escape (unless a popover consumed it), restore focus on close. */
+export function useOverlay(open: boolean, onClose: () => void, ref: RefObject<HTMLElement | null>, fallback: FocusFallback = 'first-control'): void {
   const closeRef = useRef(onClose);
   useLayoutEffect(() => { closeRef.current = onClose; });
   useEffect(() => {
@@ -16,7 +16,8 @@ export function useOverlay(open: boolean, onClose: () => void, ref: RefObject<HT
     if (root) {
       const els = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE));
       const body = root.querySelector('.modal__body, .drawer__body');
-      els[initialFocusIndex(els.map((el) => ({ autofocus: el.hasAttribute('data-autofocus'), inBody: body?.contains(el) ?? false })))]?.focus();
+      const index = initialFocusIndex(els.map((el) => ({ autofocus: el.hasAttribute('data-autofocus'), inBody: body?.contains(el) ?? false })), fallback);
+      (els[index] ?? root).focus();
     }
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); closeRef.current(); }
@@ -26,5 +27,5 @@ export function useOverlay(open: boolean, onClose: () => void, ref: RefObject<HT
       window.removeEventListener('keydown', onKey);
       previous?.focus();
     };
-  }, [open, ref]);
+  }, [open, ref, fallback]);
 }
