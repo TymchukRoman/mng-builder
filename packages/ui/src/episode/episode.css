@@ -35,6 +35,7 @@
 .ai-section__tone { flex: 1; min-width: 0; }
 .ai-section__tone .input { flex: 1; min-width: 0; }
 .ai-section__pages { width: 64px; }
+.ai-section__estimate { font-size: var(--fs-xs); color: var(--text-2); }
 .ai-section__chars { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1); }
 .ai-section__chars-icon { display: inline-flex; color: var(--text-2); }
 .ai-section__chip { max-width: 100%; height: calc(var(--control-h) - var(--sp-1)); padding: 0 var(--sp-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--border-2); border-radius: var(--r-full); background: transparent; color: var(--text-2); font: inherit; font-size: var(--fs-sm); cursor: pointer; }

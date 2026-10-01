@@ -11,8 +11,8 @@ describe('AI section model', () => {
   });
 
   it('builds the StartEpisode body', () => {
-    expect(toStartEpisode({ open: true, prompt: '  A cat in the rain ', pages: 3, tone: ' gentle ', characterIds: ['cr_a'], autopilot: true })).toEqual({
-      input: { prompt: 'A cat in the rain', pages: 3, tone: 'gentle', characterIds: ['cr_a'] }, mode: 'autopilot',
+    expect(toStartEpisode({ open: true, prompt: '  A cat in the rain ', pages: 3, tone: ' gentle ', characterIds: ['cr_a'], autopilot: true, previewFirst: true })).toEqual({
+      input: { prompt: 'A cat in the rain', pages: 3, tone: 'gentle', characterIds: ['cr_a'], previewFirst: true }, mode: 'autopilot',
     });
     expect(toStartEpisode({ ...EMPTY_AI_INPUT, open: true, prompt: 'x' })?.mode).toBe('review');
   });
@@ -23,6 +23,14 @@ describe('AI section model', () => {
     expect(StartEpisodeSchema.parse(toStartEpisode({ ...EMPTY_AI_INPUT, open: true, prompt: 'x' }))).toEqual({
       input: { prompt: 'x', pages: 8, tone: '', characterIds: [], previewFirst: true }, mode: 'review',
     });
+  });
+
+  it('previewFirst is on by default and goes into the start body (W1 Q2)', () => {
+    const v = { ...EMPTY_AI_INPUT, open: true, prompt: 'A cat' };
+    expect(EMPTY_AI_INPUT.previewFirst).toBe(true);
+    expect(toStartEpisode(v)?.input.previewFirst).toBe(true);
+    expect(toStartEpisode({ ...v, previewFirst: false })?.input.previewFirst).toBe(false);
+    expect(StartEpisodeSchema.parse(toStartEpisode({ ...v, previewFirst: false })).input.previewFirst).toBe(false);
   });
 
   it('keeps pages within 1..30 and toggles characters', () => {
@@ -52,7 +60,7 @@ describe('AI section model', () => {
       await start?.('ch_abc');
       expect(post).toHaveBeenCalledTimes(1);
       expect(post).toHaveBeenCalledWith('/api/chapters/ch_abc/episode', {
-        input: { prompt: 'A cat', pages: 3, tone: 'soft', characterIds: ['cr_a'] }, mode: 'autopilot',
+        input: { prompt: 'A cat', pages: 3, tone: 'soft', characterIds: ['cr_a'], previewFirst: true }, mode: 'autopilot',
       });
     });
 

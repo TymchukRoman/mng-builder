@@ -4,9 +4,13 @@ import { seg } from '../api';
 
 export type StartEpisodeBody = z.input<typeof StartEpisodeSchema>;
 
-export interface AiChapterInput { open: boolean; prompt: string; pages: number; tone: string; characterIds: string[]; autopilot: boolean }
+export interface AiChapterInput {
+  open: boolean; prompt: string; pages: number; tone: string; characterIds: string[]; autopilot: boolean;
+  /** W1 Q2: render the cover and page 1 first, then wait for Continue. */
+  previewFirst: boolean;
+}
 
-export const EMPTY_AI_INPUT: AiChapterInput = { open: false, prompt: '', pages: 8, tone: '', characterIds: [], autopilot: false };
+export const EMPTY_AI_INPUT: AiChapterInput = { open: false, prompt: '', pages: 8, tone: '', characterIds: [], autopilot: false, previewFirst: true };
 
 /** EpisodeInputSchema allows 1..30 pages; an unreadable number falls back to the default 8. */
 export function clampPages(n: number): number {
@@ -28,7 +32,7 @@ export function toStartEpisode(v: AiChapterInput): StartEpisodeBody | null {
   const prompt = v.prompt.trim();
   if (!v.open || prompt === '') return null;
   return {
-    input: { prompt, pages: clampPages(v.pages), tone: v.tone.trim(), characterIds: v.characterIds },
+    input: { prompt, pages: clampPages(v.pages), tone: v.tone.trim(), characterIds: v.characterIds, previewFirst: v.previewFirst },
     mode: v.autopilot ? 'autopilot' : 'review',
   };
 }

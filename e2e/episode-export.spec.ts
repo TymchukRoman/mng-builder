@@ -9,13 +9,6 @@ test('a chapter generated in autopilot from the create modal exports as one PDF'
   const manga = (await (await request.post('/api/mangas', { data: { title: `E2E Episode ${Date.now()}` } })).json()) as { id: string };
   await request.post(`/api/mangas/${manga.id}/characters`, { data: { name: 'Aiko', appearanceTags: '1girl, short black hair' } });
 
-  // W1 Task 4: the API previews page 1 by default; this run goes straight through (Task 10 replaces this with the UI toggle).
-  await page.route(/\/api\/chapters\/ch_[a-z2-7]+\/episode$/, async (route) => {
-    const body = route.request().postDataJSON() as { input: Record<string, unknown> } | null;
-    if (route.request().method() !== 'POST' || body === null) return route.continue();
-    return route.continue({ postData: JSON.stringify({ ...body, input: { ...body.input, previewFirst: false } }) });
-  });
-
   // Create the chapter with the AI section in autopilot
   await page.goto(`/m/${manga.id}`);
   await page.getByRole('button', { name: 'New chapter' }).click();
@@ -28,6 +21,12 @@ test('a chapter generated in autopilot from the create modal exports as one PDF'
   await expect(autopilot).toHaveAttribute('aria-pressed', 'false');
   await autopilot.click();
   await expect(autopilot).toHaveAttribute('aria-pressed', 'true');
+  // W1 Q2: the section previews page 1 first by default; this run goes straight through.
+  const preview = page.getByRole('button', { name: 'Preview page 1 first', exact: true });
+  await expect(preview).toHaveAttribute('aria-pressed', 'true');
+  await preview.click();
+  await expect(preview).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByTestId('ai-estimate')).toHaveText(/^2 pages ≈ 9 panels ≈ /);
   await page.getByRole('button', { name: 'Create chapter' }).click();
   await expect(page).toHaveURL(/\/c\/ch_[a-z2-7]+/);
 
