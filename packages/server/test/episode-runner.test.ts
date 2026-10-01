@@ -1422,6 +1422,7 @@ describe('EpisodeRunner — pause and resume (W1 C1)', () => {
     const character = lib.store.characters.listByManga(lib.store.chapters.require(run.chapterId).mangaId)[0]!;
     const portrait = queue.enqueue({ kind: 'image.generate', lane: 'gpu', payload: { target: 'character-portrait', characterId: character.id }, episodeRunId: run.id });
     runner.pause(run.id);
+    await queue.idle(); // the cancelled driver unwinds
     expect(lib.store.jobs.require(portrait.id).status).toBe('queued');
     expect(panelJobs(queue).every((j) => j.status === 'cancelled')).toBe(true);
     runner.stop();
@@ -1438,6 +1439,7 @@ describe('EpisodeRunner — pause and resume (W1 C1)', () => {
     const [first] = panelJobs(queue);
     lib.store.jobs.update(first!.id, { status: 'running', startedAt: new Date().toISOString() }); // the gpu lane is rendering it
     runner.pause(run.id);
+    await queue.idle(); // the cancelled driver unwinds
     expect(lib.store.jobs.require(first!.id).status).toBe('running'); // a running image finishes
     lib.store.jobs.update(first!.id, { status: 'queued', startedAt: null }); // the shutdown put it back in line
     runner.stop();
@@ -1472,6 +1474,8 @@ describe('EpisodeRunner — pause and resume (W1 C1)', () => {
     expect(again!.payload).toMatchObject({ panelId: flaggedPanel, negativeExtra: 'bad anatomy, extra arms, extra limbs, bad hands' });
     // Only the flagged panel is rendered again: the others were rendered (and passed) since the token.
     expect(panelJobs(queue).filter((j) => j.status === 'queued').map(panelOf)).toEqual([flaggedPanel]);
+    runner.cancel(run.id); // ends the driver waiting for that render, before the library closes
+    await queue.idle();
     runner.stop();
   });
 });
