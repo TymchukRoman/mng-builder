@@ -67,7 +67,9 @@ A library keeps the settings it was created with. If yours predates this default
 
 ### Troubleshooting: slow or stalled images
 
-Close games and other GPU-heavy apps before a long render. When another app holds most of the VRAM, ComfyUI spills into system RAM and a single image can take tens of minutes. Before each image the job checks the GPU, and the job bar says "GPU memory low (x.x GB free)" when less than 3 GB is left for ComfyUI. The job still runs.
+Close games and other GPU-heavy apps before a long render. When another app holds most of the VRAM, ComfyUI spills into system RAM and a single image can take tens of minutes. Before each image the job checks the GPU, and the job bar says "GPU memory low (x.x GB free)" when less than 3 GB is left for ComfyUI. The job then does not run: its lane pauses (the top bar shows "GPU queue paused — GPU busy"), and the job waits without spending an attempt. A stalled image pauses the lane the same way when another app still holds the memory. The queue resumes by itself once ComfyUI has about 8 GB of VRAM again.
+
+The jobs popover has a Pause GPU queue button ("Pause GPU queue (images and local AI)"; `manga queue pause gpu` does the same). The GPU lane holds ComfyUI images and the local (ollama) engine's jobs, so a pause holds both. A manual pause ("GPU queue paused") is never lifted automatically; press Resume GPU queue. Pauses are kept in memory only, so a manual pause does not survive a server restart: the queue is running again after one.
 
 A run with no progress for 3 minutes (10 minutes before the first sampling step, while models load) is stopped with "GPU stalled". The models are unloaded, and the job retries later with the usual backoff, so the images queued behind it keep going. `manga status` shows the free VRAM.
 

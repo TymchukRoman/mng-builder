@@ -4,6 +4,7 @@ import { useJobs } from '../queries';
 import { IconButton } from '../ui/IconButton';
 import { ListChecks, LoaderCircle } from '../ui/icons';
 import { Popover } from '../ui/Popover';
+import { GpuQueueControl } from './GpuQueueControl';
 import { JobRow } from './JobRow';
 
 export function JobsIndicator(): JSX.Element {
@@ -24,6 +25,7 @@ export function JobsIndicator(): JSX.Element {
         onClick={() => setOpen((o) => !o)}
       />
       <Popover anchor={ref} open={open} onClose={() => setOpen(false)} align="end" label="Jobs" className="jobs-popover">
+        <GpuQueueControl />
         {recent.length === 0 ? <p className="muted">No jobs yet</p> : <ul className="job-list">{recent.map((j) => <JobRow key={j.id} job={j} />)}</ul>}
       </Popover>
     </>

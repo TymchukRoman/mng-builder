@@ -10,6 +10,7 @@
 .topbar__brand { display: inline-flex; align-items: center; gap: var(--sp-2); color: var(--text-1); padding: var(--sp-1); border-radius: var(--r-sm); }
 .topbar__brand:hover { background: var(--hover-wash); }
 .topbar__conn { margin-right: var(--sp-2); }
+.topbar__gpu { margin-right: var(--sp-2); }
 .logo { color: var(--accent); }
 
 .engine-switch { display: inline-flex; align-items: center; gap: var(--sp-2); margin-right: var(--sp-2); }
@@ -20,6 +21,7 @@
 
 .jobs-indicator--busy svg { animation: mb-spin 0.9s linear infinite; }
 .jobs-popover { width: 360px; }
+.gpu-queue { display: flex; align-items: center; gap: var(--sp-2); padding-bottom: var(--sp-2); margin-bottom: var(--sp-2); border-bottom: 1px solid var(--border-1); }
 .job-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-half); }
 .job-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); min-height: var(--control-h); padding: var(--sp-half) var(--sp-1); border-radius: var(--r-sm); font-size: var(--fs-sm); color: var(--text-2); }
 .job-row:hover { background: var(--hover-wash); }

@@ -5,6 +5,7 @@ import { IconButton } from '../ui/IconButton';
 import { Settings } from '../ui/icons';
 import { StatusLoader } from '../ui/StatusLoader';
 import { EngineSwitch } from './EngineSwitch';
+import { GpuPausedChip } from './GpuQueueControl';
 import { JobsIndicator } from './JobsIndicator';
 import { Logo } from './Logo';
 import { ThemeToggle } from './ThemeToggle';
@@ -19,6 +20,7 @@ export function TopBar(): JSX.Element {
       </Link>
       <div className="spacer" />
       {connection === 'closed' && <StatusLoader label="Reconnecting to server" className="topbar__conn" />}
+      <GpuPausedChip />
       <EngineSwitch />
       <JobsIndicator />
       <ThemeToggle />

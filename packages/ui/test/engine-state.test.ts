@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { ServiceStatus } from '@manga/shared';
-import { engineIndicator, formatClock, pausedBanner } from '../src/shell/engineState';
+import { GPU_BUSY_REASON, GPU_MANUAL_PAUSE_REASON, type ServiceStatus } from '@manga/shared';
+import { engineIndicator, formatClock, gpuPause, gpuPauseLabel, pausedBanner } from '../src/shell/engineState';
 
 function status(over: Partial<ServiceStatus> = {}): ServiceStatus {
   return {
@@ -29,5 +29,28 @@ describe('engine indicator', () => {
   });
   it('formats local clock time', () => {
     expect(formatClock(new Date(2026, 0, 1, 9, 7).toISOString())).toBe('09:07');
+  });
+});
+
+describe('gpu lane pause (W1 R2, F9)', () => {
+  const gpuStatus = (pausedLanes: ServiceStatus['queue']['pausedLanes']): ServiceStatus => status({ ollama: { ok: true, detail: 'ready' }, queue: { queued: 0, running: 0, pausedLanes } });
+
+  it('names the busy pause and a manual one', () => {
+    expect(gpuPause(gpuStatus([]))).toBeNull();
+    expect(gpuPause(undefined)).toBeNull();
+    const busy = gpuPause(gpuStatus([{ lane: 'gpu', until: null, reason: GPU_BUSY_REASON }]))!;
+    expect(gpuPauseLabel(busy)).toBe('GPU queue paused — GPU busy');
+    expect(gpuPauseLabel(gpuPause(gpuStatus([{ lane: 'gpu', until: null, reason: GPU_MANUAL_PAUSE_REASON }]))!)).toBe('GPU queue paused');
+  });
+
+  it('the banner leaves the gpu lane to the top bar chip', () => {
+    expect(pausedBanner(gpuStatus([{ lane: 'gpu', until: null, reason: GPU_BUSY_REASON }]))).toBeNull();
+    expect(pausedBanner(gpuStatus([{ lane: 'claude', until: null, reason: 'quota' }]))).toBe('Claude jobs paused: quota');
+  });
+
+  it('the engine indicator skips the busy and manual gpu pauses, since the chip covers them', () => {
+    for (const reason of [GPU_BUSY_REASON, GPU_MANUAL_PAUSE_REASON]) {
+      expect(engineIndicator('local', gpuStatus([{ lane: 'gpu', until: null, reason }]))).toEqual({ tone: 'ok', tip: 'Local (ollama) ready: ready' });
+    }
   });
 });
