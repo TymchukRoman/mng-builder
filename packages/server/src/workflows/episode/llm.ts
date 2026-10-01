@@ -1,7 +1,7 @@
 import { ZodError } from 'zod';
 import type { EpisodeRun } from '@manga/shared';
 import { InvalidOutputError } from '../../engines/errors.js';
-import { parseAgainst } from '../../engines/structured.js';
+import { accepted, parseAgainst } from '../../engines/structured.js';
 import type { Engines } from '../../engines/resolve.js';
 import { PermanentError, type JobContext } from '../../jobs/index.js';
 import type { Store } from '../../store/index.js';
@@ -46,7 +46,7 @@ export async function executeLlmStep(
         // and the prompts effect writes those scenes from the cast (Roman's Ukrainian run).
         const kept = err instanceof InvalidOutputError && relaxed ? parseAgainst(err.raw, relaxed) : null;
         if (!kept?.ok) throw err;
-        answers.push(kept.data);
+        answers.push(accepted(kept, name));
       }
     }
   } catch (err) {

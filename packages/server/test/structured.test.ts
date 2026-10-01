@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { z } from 'zod';
 import { CUT_OFF_PROBLEM, completeStructured, extractJson, jsonSchemaOf, parseAgainst, repairJson, withJsonInstruction } from '../src/engines/structured.js';
 import { InvalidOutputError } from '../src/engines/errors.js';
@@ -139,6 +139,21 @@ describe('repairJson (R3)', () => {
     expect(repairJson('{"a":[1,2,],"b":{"c":1,},}')).toBe('{"a":[1,2],"b":{"c":1}}');
   });
 
+  it('closes a cut-off string that ends with a comma, keeping the comma inside it (Task 1 F3)', () => {
+    expect(repairJson('{"a":"x,')).toBe('{"a":"x,"}');
+  });
+
+  it('trims a trailing comma followed by whitespace before a closer (Task 1 F1: by index)', () => {
+    expect(repairJson('{"a":[1,2,\n  ],\n}')).toBe('{"a":[1,2]}');
+  });
+
+  it('stays fast on a long malformed answer (Task 1 F1)', () => {
+    const text = `{"a":[${'[1,2],'.repeat(100_000)}`; // 100k closers: seconds with a regex trim per closer
+    const started = Date.now();
+    expect(repairJson(text)).not.toBeNull();
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
   it('closes a string left open at the end, dropping a dangling escape', () => {
     expect(JSON.parse(repairJson('{"scene":"a rainy stre')!)).toEqual({ scene: 'a rainy stre' });
     expect(JSON.parse(repairJson('{"scene":"say \\')!)).toEqual({ scene: 'say ' });
@@ -169,9 +184,34 @@ describe('repairJson (R3)', () => {
 describe('parseAgainst with repair (R3)', () => {
   const schema = z.object({ panels: z.array(z.object({ panelId: z.string(), scene: z.string() })).min(1) });
 
-  it('uses a repaired answer that then validates', () => {
+  it('uses a repaired answer that then validates, and says it was repaired', () => {
     const out = parseAgainst('{"panels":[{"panelId":"pn_a","scene":"rain"}]', schema);
-    expect(out).toEqual({ ok: true, data: { panels: [{ panelId: 'pn_a', scene: 'rain' }] } });
+    expect(out).toEqual({ ok: true, data: { panels: [{ panelId: 'pn_a', scene: 'rain' }] }, repaired: 'mended' });
+  });
+
+  it('marks a repair that closed a cut-off string as clipped (W1 final M2)', () => {
+    const out = parseAgainst('{"panels":[{"panelId":"pn_a","scene":"rai', schema);
+    expect(out).toEqual({ ok: true, data: { panels: [{ panelId: 'pn_a', scene: 'rai' }] }, repaired: 'clipped' });
+  });
+
+  it('a closed string that the cut-back then dropped is not clipped (W1 final M2)', () => {
+    const out = parseAgainst('{"panels":[{"panelId":"pn_a","scene":"rain"}],"no', schema);
+    expect(out).toEqual({ ok: true, data: { panels: [{ panelId: 'pn_a', scene: 'rain' }] }, repaired: 'mended' });
+  });
+
+  it('a valid answer is not marked as repaired', () => {
+    expect(parseAgainst('{"panels":[{"panelId":"pn_a","scene":"rain"}]}', schema)).toEqual({ ok: true, data: { panels: [{ panelId: 'pn_a', scene: 'rain' }] } });
+  });
+
+  it('repairs a balanced but malformed object (a trailing comma) through parseAgainst (Task 1 F3)', () => {
+    const flat = z.object({ a: z.number() });
+    expect(parseAgainst('{"a":1,}', flat)).toEqual({ ok: true, data: { a: 1 }, repaired: 'mended' });
+  });
+
+  it('keeps the "did not parse" message when the repair of a balanced object fails (Task 1 F3)', () => {
+    const out = parseAgainst("{'a':1}", z.object({ a: z.number() }));
+    expect(out.ok).toBe(false);
+    expect(out.ok ? '' : out.problems).toMatch(/^The JSON did not parse: /);
   });
 
   it('still validates a repaired answer against the schema', () => {
@@ -190,12 +230,42 @@ describe('parseAgainst with repair (R3)', () => {
 });
 
 describe('completeStructured with repair (R3)', () => {
-  it('a cut-off first answer is repaired without a correction round', async () => {
+  let warn: MockInstance<typeof console.warn>;
+  beforeEach(() => { warn = vi.spyOn(console, 'warn').mockImplementation(() => {}); });
+  afterEach(() => { warn.mockRestore(); });
+
+  it('a cut-off first answer is repaired without a correction round, and the repair is logged (W1 final M2)', async () => {
     const schema = z.object({ ok: z.boolean(), items: z.array(z.number()) });
     const prompts: string[] = [];
     const ask = async ({ prompt }: { system: string; prompt: string }): Promise<string> => { prompts.push(prompt); return '{"ok":true,"items":[1,2'; };
     await expect(completeStructured(ask, { name: 't', task: 'story', system: 's', prompt: 'p', schema })).resolves.toEqual({ ok: true, items: [1, 2] });
     expect(prompts).toHaveLength(1);
+    expect(warn.mock.calls).toEqual([['[manga] structured: repaired a cut-off answer for t']]);
+  });
+
+  it('logs nothing for an answer that needed no repair', async () => {
+    const ask = async (): Promise<string> => '{"ok":true}';
+    await completeStructured(ask, { name: 't', task: 'story', system: 's', prompt: 'p', schema: z.object({ ok: z.boolean() }) });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('prefers the correction round over a repair that clipped a string (W1 final M2)', async () => {
+    const schema = z.object({ text: z.string() });
+    const answers = ['{"text":"Hel', '{"text":"Hello there."}'];
+    const prompts: string[] = [];
+    const ask = async ({ prompt }: { system: string; prompt: string }): Promise<string> => { prompts.push(prompt); return answers.shift()!; };
+    await expect(completeStructured(ask, { name: 'dialogue', task: 'story', system: 's', prompt: 'p', schema })).resolves.toEqual({ text: 'Hello there.' });
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain(CUT_OFF_PROBLEM);
+    expect(warn).not.toHaveBeenCalled(); // the value used was not repaired
+  });
+
+  it('uses the clipped repair only when the correction round fails too, and logs it (W1 final M2)', async () => {
+    const schema = z.object({ text: z.string() });
+    const answers = ['{"text":"Hel', 'still nothing'];
+    const ask = async (): Promise<string> => answers.shift()!;
+    await expect(completeStructured(ask, { name: 'dialogue', task: 'story', system: 's', prompt: 'p', schema })).resolves.toEqual({ text: 'Hel' });
+    expect(warn.mock.calls).toEqual([['[manga] structured: repaired a cut-off answer for dialogue']]);
   });
 
   it('the correction round tells the model its answer was cut off', async () => {

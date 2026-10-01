@@ -46,9 +46,17 @@ const parses = (s: string): boolean => {
   }
 };
 
-/** `out` without trailing whitespace and a trailing comma, then every open level closed, innermost first. */
+/** `out` without a trailing comma (and the whitespace after it), found by index from the end (Task 1 F1). The scan does
+ *  not call it per closer (reading a string built by appending flattens it); it tracks the trailing comma's index instead. */
+function trimTrailingComma(out: string): string {
+  let i = out.length - 1;
+  while (i >= 0 && /\s/.test(out[i]!)) i--;
+  return i >= 0 && out[i] === ',' ? out.slice(0, i) : out;
+}
+
+/** `out` without a trailing comma, then every open level closed, innermost first. */
 function closeAll(out: string, levels: readonly Level[]): string {
-  return out.replace(/,\s*$/, '') + levels.map((l) => l.closer).reverse().join('');
+  return trimTrailingComma(out) + levels.map((l) => l.closer).reverse().join('');
 }
 
 /**
@@ -61,12 +69,21 @@ function closeAll(out: string, levels: readonly Level[]): string {
  * Only a result that parses is returned; the caller still validates it against the schema.
  */
 export function repairJson(text: string): string | null {
+  return repairJsonDetailed(text)?.json ?? null;
+}
+
+/** repairJson's result, and whether it had to close a string the cut left open (its value is then clipped). */
+interface Repair { json: string; closedString: boolean }
+
+function repairJsonDetailed(text: string): Repair | null {
   const start = text.indexOf('{');
   if (start === -1) return null;
   let out = '';
   const levels: Level[] = [];
   let inString = false;
   let escaped = false;
+  /** Task 1 F1: the index in `out` of a comma that nothing but whitespace has followed yet, else -1. */
+  let trailingComma = -1;
   for (let i = start; i < text.length; i++) {
     const ch = text[i]!;
     if (inString) {
@@ -76,27 +93,37 @@ export function repairJson(text: string): string | null {
       else if (ch === '"') inString = false;
       continue;
     }
-    if (ch === '"') { inString = true; out += ch; continue; }
+    if (ch === '"') { inString = true; trailingComma = -1; out += ch; continue; }
     if (ch === '{' || ch === '[') {
       levels.push({ closer: ch === '{' ? '}' : ']', openAt: out.length, commas: [] });
+      trailingComma = -1;
       out += ch;
       continue;
     }
     if (ch === '}' || ch === ']') {
       if (levels.at(-1)?.closer !== ch) return null; // mismatched closer: not a cut-off we can mend
-      out = out.replace(/,\s*$/, '') + ch;
+      if (trailingComma >= 0) out = out.slice(0, trailingComma);
+      trailingComma = -1;
+      out += ch;
       levels.pop();
-      if (levels.length === 0) return parses(out) ? out : null;
+      if (levels.length === 0) return parses(out) ? { json: out, closedString: false } : null;
       continue;
     }
-    if (ch === ',') levels.at(-1)!.commas.push(out.length);
+    if (ch === ',') {
+      levels.at(-1)!.commas.push(out.length);
+      trailingComma = out.length;
+    } else if (!/\s/.test(ch)) {
+      trailingComma = -1;
+    }
     out += ch;
   }
   // Cut off before the object ended.
+  const closedString = inString;
   if (inString) out = `${escaped ? out.slice(0, -1) : out}"`;
+  const openAt = out.length; // a cut-back to before this point dropped the string that was closed
   for (;;) {
     const candidate = closeAll(out, levels);
-    if (parses(candidate)) return candidate;
+    if (parses(candidate)) return { json: candidate, closedString: closedString && out.length >= openAt };
     const top = levels.at(-1);
     if (top === undefined) return null;
     const comma = top.commas.pop();
@@ -110,12 +137,17 @@ export function repairJson(text: string): string | null {
   }
 }
 
-export type Parsed<T> = { ok: true; data: T } | { ok: false; problems: string };
+/**
+ * `repaired` (W1 final M2) is set only when repairJson produced the value: 'mended' (brackets, commas or a dropped
+ * half-written entry) or 'clipped' (a string value the cut left open was closed, so that value is cut short).
+ */
+export type Parsed<T> = { ok: true; data: T; repaired?: 'mended' | 'clipped' } | { ok: false; problems: string };
 
 export function parseAgainst<T>(raw: string, schema: z.ZodType<T>): Parsed<T> {
   const json = extractJson(raw);
   let value: unknown;
   let parseProblem: string | null = null;
+  let repaired: 'mended' | 'clipped' | undefined;
   if (json !== null) {
     try {
       value = JSON.parse(json);
@@ -125,15 +157,16 @@ export function parseAgainst<T>(raw: string, schema: z.ZodType<T>): Parsed<T> {
   }
   if (json === null || parseProblem !== null) {
     // R3: a cut-off or slightly malformed answer is repaired before the correction round is spent on it.
-    const repaired = repairJson(raw);
-    if (repaired === null) {
+    const repair = repairJsonDetailed(raw);
+    if (repair === null) {
       const problems = parseProblem ?? (raw.includes('{') ? CUT_OFF_PROBLEM : 'The answer contained no JSON object.');
       return { ok: false, problems };
     }
-    value = JSON.parse(repaired);
+    value = JSON.parse(repair.json);
+    repaired = repair.closedString ? 'clipped' : 'mended';
   }
   const result = schema.safeParse(value);
-  if (result.success) return { ok: true, data: result.data };
+  if (result.success) return { ok: true, data: result.data, ...(repaired ? { repaired } : {}) };
   return { ok: false, problems: result.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ') };
 }
 
@@ -151,18 +184,29 @@ export function correctionPrompt(prompt: string, raw: string, problems: string):
 
 export type Ask = (input: { system: string; prompt: string }) => Promise<string>;
 
-/** Both engines: prompt → extract JSON → zod safeParse → one correction round → InvalidOutputError. */
+/** W1 final M2: a parsed answer's value; a repaired one is accepted, but never silently. */
+export function accepted<T>(parsed: { data: T; repaired?: 'mended' | 'clipped' }, name: string): T {
+  if (parsed.repaired) console.warn(`[manga] structured: repaired a cut-off answer for ${name}`);
+  return parsed.data;
+}
+
+/**
+ * Both engines: prompt → extract JSON (repaired if needed, R3) → zod safeParse → one correction round → InvalidOutputError.
+ * W1 final M2: a first answer whose repair had to close a cut-off string (that value would be clipped) goes to the
+ * correction round too; its repaired value is used only when the correction round fails as well.
+ */
 export async function completeStructured<T>(ask: Ask, req: JsonRequest<T>): Promise<T> {
   req.signal?.throwIfAborted();
   const system = withJsonInstruction(req.system, req.schema);
   const first = await ask({ system, prompt: req.prompt });
   const a = parseAgainst(first, req.schema);
-  if (a.ok) return a.data;
+  if (a.ok && a.repaired !== 'clipped') return accepted(a, req.name);
   req.signal?.throwIfAborted();
   req.onProgress?.('Correcting the answer');
-  const second = await ask({ system, prompt: correctionPrompt(req.prompt, first, a.problems) });
+  const second = await ask({ system, prompt: correctionPrompt(req.prompt, first, a.ok ? CUT_OFF_PROBLEM : a.problems) });
   const b = parseAgainst(second, req.schema);
-  if (b.ok) return b.data;
+  if (b.ok) return accepted(b, req.name);
+  if (a.ok) return accepted(a, req.name);
   throw new InvalidOutputError(
     `${req.name}: the answer still did not match after one correction round (${b.problems}). Raw output: ${second.slice(0, 2000)}`,
     second,
