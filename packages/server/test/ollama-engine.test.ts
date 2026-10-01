@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { MAX_NUM_CTX, MIN_NUM_CTX, OllamaEngine, numCtxFor } from '../src/engines/ollama.js';
 import { EngineUnavailableError } from '../src/engines/errors.js';
-import { GpuArbiter } from '../src/jobs/index.js';
+import { GpuArbiter, GpuBusyError, TransientError, type GpuProbe } from '../src/jobs/index.js';
 import { startFakeOllama, type FakeOllama } from './fakes/fake-ollama.js';
 
 let fo: FakeOllama;
@@ -91,6 +91,55 @@ describe('OllamaEngine', () => {
     await engine({ gpu }).completeJson(req);
     expect(freed).toEqual(['comfy']);
     expect(gpu.current).toBe('ollama');
+  });
+
+  describe('GPU busy on the gpu lane (W1 final I1)', () => {
+    const probe = (vram: { free: number | null }): GpuProbe => ({ availableVram: async () => vram.free });
+    const quick = { vramWaitMs: 60, vramPollMs: 20 };
+
+    it('refuses with a GpuBusyError (not stalled) while another app holds the GPU memory; nothing is asked', async () => {
+      const labels: string[] = [];
+      const err = await engine({ probe: probe({ free: 1e9 }), ...quick })
+        .completeJson({ ...req, onProgress: (l) => labels.push(l) }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(GpuBusyError);
+      expect((err as GpuBusyError).stalled).toBe(false);
+      expect((err as Error).message).toBe('GPU busy: only 1.0 GB of GPU memory free (GPU memory is probably full; close games or other GPU apps)');
+      expect(labels).toEqual([(err as Error).message]);
+      expect(fo.requests.some((r) => r.path === '/api/chat')).toBe(false);
+    });
+
+    it('counts the VRAM of its own loaded model as available', async () => {
+      fo.loaded.add('qwen3:14b');
+      fo.sizeVram = 10e9; // ollama itself holds 10 GB; 1 GB is free beside it
+      fo.replies.push('{"scene":"x"}');
+      await expect(engine({ probe: probe({ free: 1e9 }), ...quick }).completeJson(req)).resolves.toEqual({ scene: 'x' });
+    });
+
+    it('asks as usual when the VRAM cannot be read (ComfyUI not running yet)', async () => {
+      fo.replies.push('{"scene":"x"}');
+      await expect(engine({ probe: probe({ free: null }), ...quick }).completeJson(req)).resolves.toEqual({ scene: 'x' });
+    });
+
+    it('a timeout while another app holds the memory is a stalled GpuBusyError, and the model is unloaded', async () => {
+      const vram = { free: 5e9 }; // enough to start (3 GB or more), not enough to count as free (below 8 GB)
+      fo.chatDelayMs = 2_000;
+      const err = await engine({ probe: probe(vram), ...quick, timeoutMs: 50 }).completeJson(req).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(GpuBusyError);
+      expect((err as GpuBusyError).stalled).toBe(true);
+      expect((err as Error).message).toBe('ollama did not answer within 0 s (GPU memory is probably full; close games or other GPU apps)');
+      expect(fo.requests.filter((r) => r.path === '/api/generate').map((r) => r.body)).toEqual([{ model: 'qwen3:14b', keep_alive: 0 }]);
+    });
+
+    it('a timeout with the memory free, or unreadable, stays a plain TransientError', async () => {
+      fo.chatDelayMs = 2_000;
+      for (const free of [15e9, null]) {
+        const err = await engine({ probe: probe({ free }), ...quick, timeoutMs: 50 }).completeJson(req).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(TransientError);
+        expect(err).not.toBeInstanceOf(GpuBusyError);
+        expect((err as Error).message).toBe('ollama did not answer within 0 s');
+      }
+      expect(fo.requests.some((r) => r.path === '/api/generate')).toBe(false);
+    });
   });
 
   it('names a model that is not pulled', async () => {

@@ -1,13 +1,10 @@
 import { GPU_BUSY_REASON } from '@manga/shared';
-import type { JobQueue } from '../jobs/index.js';
+import { GPU_RESUME_FREE_BYTES, type GpuProbe, type JobQueue } from '../jobs/index.js';
 
-/** W1 R2: the gpu lane resumes once ComfyUI could use this much VRAM: enough for the largest routed recipe. A stall
- *  with less than this left after the unload counts as caused by another app (W1 F1). */
-export const GPU_RESUME_FREE_BYTES = 8e9;
+/** W1 R2: the gpu lane resumes once ComfyUI could use GPU_RESUME_FREE_BYTES of VRAM (jobs/gpu-room.ts, the GPU-room
+ *  check shared by imaging and AI). Re-exported here with the probe type. */
+export { GPU_RESUME_FREE_BYTES, type GpuProbe };
 export const GPU_MONITOR_INTERVAL_MS = 30_000;
-
-/** The VRAM ComfyUI could use now, in bytes, or null when ComfyUI cannot be reached (ComfyClient.availableVram). */
-export interface GpuProbe { availableVram(): Promise<number | null> }
 
 export interface GpuMonitorOptions {
   queue: Pick<JobQueue, 'pauseOf' | 'resumeLane' | 'onLanesChanged'>;

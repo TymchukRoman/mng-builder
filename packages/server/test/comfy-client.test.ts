@@ -204,7 +204,8 @@ describe('ComfyClient.run stall watchdog', () => {
     expect(err).toBeInstanceOf(TransientError);
     // W1 F1: 15 GB free after the models were unloaded: not another app, so a plain TransientError (spends an attempt).
     expect(err).not.toBeInstanceOf(GpuBusyError);
-    expect((err as Error).message).toMatch(/^GPU stalled: no progress for 250 ms \(GPU memory is probably full; close games or other GPU apps\)$/);
+    // Task 3 M1: the memory is not low, so the reason does not blame it.
+    expect((err as Error).message).toBe('GPU stalled: no progress for 250 ms');
     const id = fake.promptIds[0]!;
     expect(fake.calls).toContainEqual({ method: 'POST', path: '/interrupt', body: { prompt_id: id } });
     expect(fake.calls).toContainEqual({ method: 'POST', path: '/queue', body: { delete: [id] } });
@@ -243,8 +244,19 @@ describe('ComfyClient.run stall watchdog', () => {
     const err = await watched().run(miniGraph(), { onProgress }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(GpuBusyError);
     expect((err as GpuBusyError).stalled).toBe(true);
-    expect((err as Error).message).toMatch(/^GPU stalled: no progress for 250 ms/);
+    expect((err as Error).message).toBe('GPU stalled: no progress for 250 ms (GPU memory is probably full; close games or other GPU apps)');
+    expect(rec.steps.map((s) => s.label)).toContain((err as Error).message);
     expect(fake.calls.some((c) => c.path === '/free')).toBe(true);
+  });
+
+  it('a stall whose VRAM read afterwards fails counts as busy (W1 final M3: slow under the load of a game)', async () => {
+    fake.stallNext = 1;
+    const onProgress = (label: string): void => {
+      if (label === 'Sampling') fake.statsUp = false; // /system_stats stops answering while the prompt samples
+    };
+    const err = await watched().run(miniGraph(), { onProgress }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(GpuBusyError);
+    expect((err as GpuBusyError).stalled).toBe(true);
   });
 
   it('refuses to start a run while another app holds the GPU memory: GpuBusyError, nothing submitted (W1 R2)', async () => {

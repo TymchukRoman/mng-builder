@@ -286,7 +286,10 @@ export class JobQueue {
   private finish(id: string, run: Running, outcome: Outcome): void {
     if (run.cancelled) return; // cancel() already recorded, published and settled it
     const current = this.store.jobs.get(id);
-    if (current === null || current.status !== 'running') return;
+    if (current === null || current.status !== 'running') {
+      this.stallRequeues.delete(id); // Task 3 M4: the job ended elsewhere (removed, or no longer running)
+      return;
+    }
     const nowIso = this.now().toISOString();
 
     if (outcome.ok) {
@@ -299,26 +302,38 @@ export class JobQueue {
       return;
     }
     const message = messageOf(outcome.error);
-    if (outcome.error instanceof GpuBusyError && this.mayRequeueBusy(id, outcome.error)) {
+    const busy = outcome.error instanceof GpuBusyError;
+    if (outcome.error instanceof GpuBusyError && current.lane === 'gpu' && this.mayRequeueBusy(id, outcome.error)) {
       // W1 R2: another app holds the GPU. Put the job back at once without spending an attempt (it waits for the lane,
       // not for a backoff), then pause the lane; a pause already there (e.g. the user's) stays as it is. F23: the error
       // is cleared, since nothing is retried: the lane chip tells why the job waits. The job is written first, so the
-      // `status` event of the pause counts it as queued.
+      // `status` event of the pause counts it as queued. W1 final M6: the busy pause is always on the gpu lane by name:
+      // only gpu has a monitor that resumes it, and a UI control.
       const requeued = this.store.jobs.update(id, {
         status: 'queued', error: null, startedAt: null, nextRunAt: nowIso, attempts: Math.max(0, current.attempts - 1),
       });
-      if (!this.paused.has(current.lane)) this.pauseLane(current.lane, null, GPU_BUSY_REASON);
+      this.pauseGpuBusy();
       this.publish(requeued);
       return;
     }
+    // W1 final M6: a GpuBusyError from a job outside the gpu lane still pauses gpu, but the job itself is handled as the
+    // plain TransientError it extends: put back at once in a lane that is not paused, it would run again right away.
+    const busyElsewhere = busy && current.lane !== 'gpu';
     if (outcome.error instanceof TransientError && current.attempts < current.maxAttempts) {
       const delay = this.backoffMs[Math.min(current.attempts - 1, this.backoffMs.length - 1)] ?? 0;
       this.publish(this.store.jobs.update(id, {
         status: 'queued', error: message, startedAt: null, nextRunAt: new Date(this.now().getTime() + delay).toISOString(),
       }));
+      if (busyElsewhere) this.pauseGpuBusy();
       return;
     }
     this.complete(this.store.jobs.update(id, { status: 'failed', error: message, finishedAt: nowIso }));
+    if (busyElsewhere) this.pauseGpuBusy();
+  }
+
+  /** W1 R2: pauses the gpu lane as busy (GpuMonitor resumes it); a pause already there (e.g. the user's) stays. */
+  private pauseGpuBusy(): void {
+    if (!this.paused.has('gpu')) this.pauseLane('gpu', null, GPU_BUSY_REASON);
   }
 
   /**

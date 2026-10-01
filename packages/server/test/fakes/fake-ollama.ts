@@ -14,6 +14,10 @@ export interface FakeOllama {
   models: string[];
   /** Models currently loaded (/api/ps): added by /api/chat, removed by keep_alive 0. */
   loaded: Set<string>;
+  /** /api/ps size_vram of each loaded model, in bytes. Default 0. */
+  sizeVram: number;
+  /** Delay before /api/chat answers (a call that crawls, e.g. offloaded to the CPU). Default 0. */
+  chatDelayMs: number;
   close(): Promise<void>;
 }
 
@@ -22,6 +26,7 @@ export async function startFakeOllama(opts: { models?: string[]; replies?: FakeO
   const replies: FakeOllamaReply[] = [...(opts.replies ?? [])];
   const models = opts.models ?? ['qwen3:14b', 'qwen3-vl:8b'];
   const loaded = new Set<string>();
+  const timers = new Set<ReturnType<typeof setTimeout>>();
   const server = createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on('data', (c: Buffer) => chunks.push(c));
@@ -36,15 +41,21 @@ export async function startFakeOllama(opts: { models?: string[]; replies?: FakeO
       };
       const model = typeof body?.['model'] === 'string' ? body['model'] : '';
       if (path === '/api/tags') return json(200, { models: models.map((name) => ({ name, model: name })) });
-      if (path === '/api/ps') return json(200, { models: [...loaded].map((name) => ({ name, model: name })) });
+      if (path === '/api/ps') return json(200, { models: [...loaded].map((name) => ({ name, model: name, size_vram: fake.sizeVram })) });
       if (path === '/api/chat') {
         if (!models.includes(model)) return json(404, { error: `model "${model}" not found, try pulling it first` });
         loaded.add(model);
-        const reply = replies.shift() ?? '{}';
-        const message = typeof reply === 'string'
-          ? { role: 'assistant', content: reply }
-          : { role: 'assistant', content: reply.content, ...(reply.thinking !== undefined ? { thinking: reply.thinking } : {}) };
-        return json(200, { model, message, done: true });
+        const answer = (): void => {
+          const reply = replies.shift() ?? '{}';
+          const message = typeof reply === 'string'
+            ? { role: 'assistant', content: reply }
+            : { role: 'assistant', content: reply.content, ...(reply.thinking !== undefined ? { thinking: reply.thinking } : {}) };
+          json(200, { model, message, done: true });
+        };
+        if (fake.chatDelayMs <= 0) return answer();
+        const timer = setTimeout(() => { timers.delete(timer); if (!res.destroyed) answer(); }, fake.chatDelayMs);
+        timers.add(timer);
+        return undefined;
       }
       if (path === '/api/generate') {
         if (body?.['keep_alive'] === 0) loaded.delete(model);
@@ -55,8 +66,13 @@ export async function startFakeOllama(opts: { models?: string[]; replies?: FakeO
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address() as AddressInfo;
-  return {
-    url: `http://127.0.0.1:${port}`, requests, replies, models, loaded,
-    close: () => new Promise<void>((resolve) => { server.closeAllConnections(); server.close(() => resolve()); }),
+  const fake: FakeOllama = {
+    url: `http://127.0.0.1:${port}`, requests, replies, models, loaded, sizeVram: 0, chatDelayMs: 0,
+    close: () => new Promise<void>((resolve) => {
+      for (const timer of timers) clearTimeout(timer);
+      server.closeAllConnections();
+      server.close(() => resolve());
+    }),
   };
+  return fake;
 }

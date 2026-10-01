@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import type { ServiceState, Settings } from '@manga/shared';
-import { PermanentError, TransientError, type GpuArbiter } from '../jobs/index.js';
+import {
+  GPU_BUSY_ADVICE, GpuBusyError, PermanentError, TransientError, busyAfterStall, ensureGpuRoom, type GpuArbiter, type GpuProbe,
+} from '../jobs/index.js';
 import { abortError } from '../util/abort.js';
 import { EngineUnavailableError } from './errors.js';
 import { completeStructured, jsonSchemaOf } from './structured.js';
@@ -11,6 +13,15 @@ export interface OllamaEngineOptions {
   models: () => Settings['ollama'];
   /** Local LLM work shares the GPU with ComfyUI; null in unit tests. */
   gpu: GpuArbiter | null;
+  /**
+   * W1 final I1: the gpu lane's VRAM probe (ComfyClient.availableVram, shared with imaging). With it, a call refuses
+   * with a GpuBusyError while another app (a game) holds the GPU memory, and a timeout while it does is a stalled
+   * GpuBusyError, so the queue pauses the gpu lane instead of spending attempts. Null or absent: no check.
+   */
+  probe?: GpuProbe | null;
+  /** The bound on re-reading a low VRAM value before refusing (W1 F13, as ComfyClient); default 15 s. */
+  vramWaitMs?: number;
+  vramPollMs?: number;
   keepAlive?: string;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
@@ -105,8 +116,54 @@ export class OllamaEngine implements TextEngine {
       : { ok: false, detail: `model ${missing.join(', ')} not pulled (run: ollama pull ${missing[0]})` };
   }
 
+  /**
+   * W1 final I1: the VRAM this engine could use now, or null when it cannot be read (no probe, ComfyUI not reachable).
+   * The probe sees the whole device and counts ollama's own loaded models as taken, so their VRAM is added back: only
+   * other apps hold memory that matters here.
+   */
+  private async room(signal?: AbortSignal): Promise<number | null> {
+    const comfy = await this.opts.probe?.availableVram(signal) ?? null;
+    if (comfy === null) return null;
+    return comfy + await this.residentVram(signal);
+  }
+
+  /** The VRAM ollama's loaded models hold (/api/ps size_vram); 0 when it cannot be read. */
+  private async residentVram(signal?: AbortSignal): Promise<number> {
+    try {
+      const timeout = AbortSignal.timeout(5_000);
+      const res = await this.http(`${this.url}/api/ps`, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+      const body = (await res.json()) as { models?: Array<{ size_vram?: unknown }> };
+      return (body.models ?? []).reduce((sum, m) => sum + (typeof m.size_vram === 'number' ? m.size_vram : 0), 0);
+    } catch {
+      if (signal?.aborted) throw abortError(signal);
+      return 0;
+    }
+  }
+
+  /**
+   * W1 final I1: an ollama call that timed out while another app holds the GPU memory is a stalled GpuBusyError (the
+   * queue pauses the gpu lane; MAX_STALL_REQUEUES bounds it). The model, likely loaded partly on the CPU while the memory
+   * was taken, is unloaded so the next call loads it afresh. An unreadable value is not busy here: ComfyUI, the probe,
+   * may simply not be running yet. Otherwise a plain TransientError (an attempt is spent).
+   */
+  private async timedOut(timeoutMs: number): Promise<Error> {
+    const message = `ollama did not answer within ${Math.round(timeoutMs / 1000)} s`;
+    if (!this.opts.probe) return new TransientError(message);
+    const after = await this.room();
+    if (!busyAfterStall(after, false)) return new TransientError(message);
+    await this.unload();
+    return new GpuBusyError(`${message} (${GPU_BUSY_ADVICE})`, { stalled: true });
+  }
+
   private async chat(system: string, prompt: string, input: ChatInput): Promise<string> {
     await this.opts.gpu?.acquire('ollama', input.signal);
+    // W1 final I1: after the arbiter released ComfyUI, refuse while another app holds the GPU memory.
+    if (this.opts.probe) {
+      await ensureGpuRoom((signal) => this.room(signal), {
+        waitMs: this.opts.vramWaitMs ?? 15_000, pollMs: this.opts.vramPollMs ?? 400,
+        ...(input.onProgress ? { onBusy: input.onProgress } : {}), ...(input.signal ? { signal: input.signal } : {}),
+      });
+    }
     const { textModel, visionModel } = this.opts.models();
     const paths = input.images ?? [];
     const model = paths.length > 0 ? visionModel : textModel;
@@ -127,7 +184,7 @@ export class OllamaEngine implements TextEngine {
       });
     } catch {
       if (input.signal?.aborted) throw abortError(input.signal);
-      if (timeout.aborted) throw new TransientError(`ollama did not answer within ${Math.round(timeoutMs / 1000)} s`);
+      if (timeout.aborted) throw await this.timedOut(timeoutMs);
       throw new EngineUnavailableError(`ollama not reachable at ${this.url}`);
     }
     const text = await res.text();

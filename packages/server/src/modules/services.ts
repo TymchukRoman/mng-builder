@@ -57,7 +57,11 @@ export function servicesFor(deps: CoreDeps, opts: M2Options = {}): M2Services {
     }));
   const local = opts.local ?? (fakes
     ? new ScriptedEngine('local', FAKE_RESPONSES)
-    : new OllamaEngine({ url: deps.config.ollamaUrl, models: () => settings().ollama, gpu: deps.gpu }));
+    : new OllamaEngine({
+      url: deps.config.ollamaUrl, models: () => settings().ollama, gpu: deps.gpu,
+      // W1 final I1: the gpu lane's VRAM probe is the ComfyUI client (set later by imagingModule.register); null until then.
+      probe: { availableVram: (signal) => services.comfy?.availableVram(signal) ?? Promise.resolve(null) },
+    }));
   const services: M2Services = {
     fakes, claude, local,
     engines: new Engines({ settings, claude, local }),

@@ -26,6 +26,8 @@ export interface FakeComfy {
   torchVramTotal: number;
   /** GET /system_stats → devices[0].vram_free. Default 15e9 (an idle 16 GB card). */
   vramFree: number;
+  /** false → GET /system_stats alone answers 503 (a stats read that fails while the rest of ComfyUI works). */
+  statsUp: boolean;
   /** Delay before POST /free drops torchVramTotal to 0, mimicking ComfyUI's async unload (its prompt worker
    *  applies the flag on its next wake-up, not immediately on the POST). Default 0 (drops right away). */
   freeDelayMs: number;
@@ -137,6 +139,7 @@ class FakeComfyServer implements FakeComfy {
   up = true;
   torchVramTotal = 0;
   vramFree = 15e9;
+  statsUp = true;
   freeDelayMs = 0;
   rejectNext: FakeComfyRejection | null = null;
   failNext: string | null = null;
@@ -235,6 +238,7 @@ class FakeComfyServer implements FakeComfy {
     if (!this.up) return send(res, 503, { error: 'fake comfy is down' });
     const route = `${req.method ?? 'GET'} ${url.pathname}`;
     if (route === 'GET /system_stats') {
+      if (!this.statsUp) return send(res, 503, { error: 'fake comfy stats are down' });
       return send(res, 200, {
         system: { os: 'fake', comfyui_version: 'fake' },
         devices: [{ name: 'FakeGPU', type: 'cuda', index: 0, vram_total: 16e9, vram_free: this.vramFree, torch_vram_total: this.torchVramTotal }],

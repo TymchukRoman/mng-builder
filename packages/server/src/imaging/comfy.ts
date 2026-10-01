@@ -3,10 +3,11 @@ import { readFile, rm } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import WebSocket from 'ws';
 import type { ServiceState } from '@manga/shared';
-import { GpuBusyError, PermanentError, TransientError } from '../jobs/index.js';
+import {
+  GPU_BUSY_ADVICE, GPU_PAUSE_FREE_BYTES, GpuBusyError, PermanentError, TransientError, busyAfterStall, ensureGpuRoom,
+} from '../jobs/index.js';
 import { abortError, raceAbort, sleep } from '../util/abort.js';
 import type { ComfyGraph } from './comfy-graph.js';
-import { GPU_RESUME_FREE_BYTES } from './gpu-monitor.js';
 import type { ComfyLauncher } from './launcher.js';
 
 export type { ComfyGraph } from './comfy-graph.js';
@@ -77,12 +78,13 @@ export const FIRST_PROGRESS_TIMEOUT_MS = 10 * 60_000;
 /** Stall watchdog: once sampling started, the longest allowed gap between two progress signals of the prompt. Live
  *  case: with a game holding most of the VRAM, ComfyUI spilled to system RAM and sat at "Sampling 3/8" for 21 min. */
 export const STALL_TIMEOUT_MS = 3 * 60_000;
-/** W1 R2: below this much VRAM left for ComfyUI (free plus what it holds itself), a run does not start: another app is
- *  using the GPU, and the run would crawl. The job pauses the gpu lane instead. Generic: every image model family needs more. */
-export const GPU_PAUSE_FREE_BYTES = 3e9;
+/** W1 R2: below this much VRAM left for ComfyUI (free plus what it holds itself), a run does not start (jobs/gpu-room.ts,
+ *  shared with the ollama engine since W1 final I1). Re-exported here for the imaging callers. */
+export { GPU_PAUSE_FREE_BYTES };
 /** Socket messages that show the prompt is moving. */
 const PROGRESS_SIGNALS: ReadonlySet<string> = new Set(['progress', 'executing', 'executed', 'execution_cached']);
-const STALL_ADVICE = 'GPU memory is probably full; close games or other GPU apps';
+/** W1 final M3: the read before a run gets longer than the GPU monitor's 3 s; a game's load can slow /system_stats. */
+const ROOM_READ_TIMEOUT_MS = 10_000;
 
 function span(ms: number): string {
   if (ms >= 60_000) return `${Math.round(ms / 60_000)} min`;
@@ -238,12 +240,9 @@ export class ComfyClient {
     const waitSignal = signal ? AbortSignal.any([signal, stalled.signal]) : stalled.signal;
     let accepted = false;
     try {
-      const room = await this.roomForRun(signal);
-      if (room !== null && room < this.pauseFreeBytes) {
-        const reason = `GPU busy: only ${(room / 1e9).toFixed(1)} GB of GPU memory free (${STALL_ADVICE})`;
-        say(reason);
-        throw new GpuBusyError(reason); // nothing submitted: the catch below has no prompt to cancel
-      }
+      // W1 R2: refuses with a GpuBusyError while another app holds the memory. Nothing is submitted yet, so the catch
+      // below has no prompt to cancel.
+      await this.roomForRun(signal, say);
       say('Queued');
       watch.submittedAt = Date.now();
       watch.lastSignalAt = watch.submittedAt;
@@ -275,9 +274,15 @@ export class ComfyClient {
         await this.cancelPrompt(promptId);
         await this.free();
         const stall = abortError(stalled.signal);
-        // W1 F1: only a stall while another app still holds the memory (read after the unload) pauses the lane.
+        // W1 F1: only a stall while another app still holds the memory (read after the unload) pauses the lane. W1
+        // final M3: ComfyUI answered a moment ago, so a read that fails now (slow under a game's load) counts as busy;
+        // the stall cap bounds it. Task 3 M1: only then does the reason name the GPU memory.
         const after = await this.vramAvailable(undefined, 3_000);
-        if (after !== null && after < GPU_RESUME_FREE_BYTES) throw new GpuBusyError(stall.message, { stalled: true });
+        if (busyAfterStall(after, true)) {
+          const reason = `${stall.message} (${GPU_BUSY_ADVICE})`;
+          say(reason);
+          throw new GpuBusyError(reason, { stalled: true });
+        }
         throw stall;
       }
       // M6: whatever failed after ComfyUI accepted the prompt, take it out of ComfyUI's queue before the job is
@@ -293,7 +298,7 @@ export class ComfyClient {
    * Checks `watch` a few times per limit. Before the first sampling step the prompt gets `firstProgressTimeoutMs`
    * from submission (model loading); after it, at most `stallTimeoutMs` between two progress signals. A tripped limit
    * shows its reason as the progress label and aborts `stalled` with a TransientError carrying it (run() turns it into a
-   * GpuBusyError when another app holds the memory, W1 F1).
+   * GpuBusyError, with the advice about the GPU memory, when another app holds the memory, W1 F1 and Task 3 M1).
    */
   private startWatchdog(
     watch: { submittedAt: number; lastSignalAt: number; stepped: boolean },
@@ -305,9 +310,9 @@ export class ComfyClient {
       const now = Date.now();
       let reason: string | null = null;
       if (watch.stepped) {
-        if (now - watch.lastSignalAt > this.stallTimeoutMs) reason = `GPU stalled: no progress for ${span(this.stallTimeoutMs)} (${STALL_ADVICE})`;
+        if (now - watch.lastSignalAt > this.stallTimeoutMs) reason = `GPU stalled: no progress for ${span(this.stallTimeoutMs)}`;
       } else if (now - watch.submittedAt > this.firstProgressTimeoutMs) {
-        reason = `GPU stalled: no progress for ${span(this.firstProgressTimeoutMs)} after queueing (${STALL_ADVICE})`;
+        reason = `GPU stalled: no progress for ${span(this.firstProgressTimeoutMs)} after queueing`;
       }
       if (reason === null) return;
       clearInterval(timer);
@@ -395,20 +400,14 @@ export class ComfyClient {
   }
 
   /**
-   * W1 F13: the VRAM available for a run, read again every `pollMs` until the `vramWaitMs` bound while it is below
-   * `pauseFreeBytes`: memory that is being released right now (the GPU arbiter's ollama unload does not wait for the
-   * drop) must not pause the lane. Null when it can't be read; rejects only with the abort error.
+   * W1 R2: throws a GpuBusyError when the VRAM available for a run stays below `pauseFreeBytes`. W1 F13: it is read
+   * again every `pollMs` until the `vramWaitMs` bound first, so memory that is being released right now (the GPU
+   * arbiter's ollama unload does not wait for the drop) does not pause the lane. An unreadable value means go.
    */
-  private async roomForRun(signal: AbortSignal | undefined): Promise<number | null> {
-    const deadline = Date.now() + this.vramWaitMs;
-    let room = await this.vramAvailable(signal, 3_000);
-    while (room !== null && room < this.pauseFreeBytes) {
-      const left = deadline - Date.now();
-      if (left <= 0) break;
-      await sleep(Math.min(this.pollMs, left), signal);
-      room = await this.vramAvailable(signal, 3_000);
-    }
-    return room;
+  private async roomForRun(signal: AbortSignal | undefined, onBusy: (reason: string) => void): Promise<void> {
+    await ensureGpuRoom((s) => this.vramAvailable(s, ROOM_READ_TIMEOUT_MS), {
+      pauseFreeBytes: this.pauseFreeBytes, waitMs: this.vramWaitMs, pollMs: this.pollMs, onBusy, ...(signal ? { signal } : {}),
+    });
   }
 
   /** W1 R2 (the GPU monitor): the VRAM ComfyUI could use now, or null when ComfyUI cannot be reached. */

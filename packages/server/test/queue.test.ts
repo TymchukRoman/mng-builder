@@ -470,6 +470,42 @@ describe('JobQueue — GPU busy (W1 R2)', () => {
     expect(q.pauseOf('gpu')).toBeNull();
   });
 
+  it('a GpuBusyError from a job outside the gpu lane pauses gpu, and the job spends an attempt (W1 final M6)', async () => {
+    const q = makeQueue();
+    let calls = 0;
+    q.register('llm.step', async () => {
+      calls++;
+      if (calls === 1) throw new GpuBusyError('GPU busy: only 1.0 GB of GPU memory free');
+      return 'ran';
+    });
+    const job = q.enqueue({ kind: 'llm.step', lane: 'cpu', payload: null });
+    q.start();
+    expect(await q.waitFor(job.id)).toMatchObject({ status: 'succeeded', attempts: 2, result: 'ran' });
+    expect(q.pauseOf('gpu')?.reason).toBe(GPU_BUSY_REASON);
+    expect(q.pauseOf('cpu')).toBeNull(); // never a lane without a monitor or a UI control
+  });
+
+  it('forgets the busy requeues of a stalled job when the job ends outside finish (Task 3 M4)', async () => {
+    const q = makeQueue();
+    const counts = (): Map<string, number> => (q as unknown as { stallRequeues: Map<string, number> }).stallRequeues;
+    let calls = 0;
+    const release = deferred();
+    q.register('image.generate', async (ctx) => {
+      calls++;
+      if (calls === 1) throw new GpuBusyError('GPU stalled', { stalled: true });
+      t.store.jobs.update(ctx.job.id, { status: 'failed', error: 'ended elsewhere', finishedAt: new Date().toISOString() });
+      await release.promise;
+      throw new Error('late');
+    });
+    q.onLanesChanged(() => { if (q.pauseOf('gpu')) setImmediate(() => q.resumeLane('gpu')); });
+    const job = gpuJob(q);
+    q.start();
+    await vi.waitFor(() => expect(calls).toBe(2));
+    expect(counts().get(job.id)).toBe(1);
+    release.resolve();
+    await vi.waitFor(() => expect(counts().has(job.id)).toBe(false));
+  });
+
   it('never caps a refusal before submitting: it put nothing on the GPU', async () => {
     const q = makeQueue();
     let calls = 0;
