@@ -37,10 +37,9 @@ export const useMissingPanels = (chapterId: string | undefined) =>
 export const useJobs = () =>
   useQuery({ queryKey: qk.jobs(), queryFn: () => api.get<Job[]>('/api/jobs?limit=50'), refetchInterval: 30_000 });
 export const useSettings = () => useQuery({ queryKey: qk.settings(), queryFn: () => api.get<Settings>('/api/settings') });
-// F10: the server never emits `status` events (see events.ts), so this poll is the only thing that
-// keeps the quota banner and status dot current. Its 30 s interval means the banner can lag reality
-// by up to 30 s after ComfyUI/Ollama/Claude flips state; the `status` socket event is applied too,
-// ready for when the server starts sending it.
+// F10: the server emits a `status` event when a lane pauses or resumes (W1 R2, api/system.ts), and events.ts applies it.
+// Service state changes (ComfyUI/Ollama/Claude up or down) have no event, so this 30 s poll is the fallback that keeps
+// the status dot and the banners current; they can lag reality by up to 30 s.
 export const useStatus = () =>
   useQuery({ queryKey: qk.status(), queryFn: () => api.get<ServiceStatus>('/api/status'), refetchInterval: 30_000 });
 export const useLayouts = () =>

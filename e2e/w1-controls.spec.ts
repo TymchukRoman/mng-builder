@@ -3,17 +3,21 @@ import { collectErrors, seedManga } from './helpers';
 
 test('the jobs popover pauses and resumes the GPU queue, and the top bar chip follows (W1 R2)', async ({ page, request }) => {
   const errors = collectErrors(page);
-  await page.goto('/');
-  await page.getByRole('button', { name: /^(Jobs|\d+ jobs running or queued)$/ }).click();
-  await page.getByRole('button', { name: 'Pause GPU queue (images and local AI)' }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'GPU queue paused' }).first()).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Resume GPU queue' })).toBeVisible();
-  await page.getByRole('button', { name: 'Resume GPU queue' }).click();
-  await expect(page.getByRole('button', { name: 'Pause GPU queue (images and local AI)' })).toBeVisible();
-  await expect(page.getByRole('status').filter({ hasText: 'GPU queue paused' })).toHaveCount(0);
-  const lanes = (await (await request.post('/api/queue/gpu/resume')).json()) as { pausedLanes: unknown[] };
-  expect(lanes.pausedLanes).toEqual([]);
-  expect(errors.all()).toEqual([]);
+  try {
+    await page.goto('/');
+    await page.getByRole('button', { name: /^(Jobs|\d+ jobs running or queued)$/ }).click();
+    await page.getByRole('button', { name: 'Pause GPU queue (images and local AI)' }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'GPU queue paused' }).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Resume GPU queue' })).toBeVisible();
+    await page.getByRole('button', { name: 'Resume GPU queue' }).click();
+    await expect(page.getByRole('button', { name: 'Pause GPU queue (images and local AI)' })).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: 'GPU queue paused' })).toHaveCount(0);
+    expect(errors.all()).toEqual([]);
+  } finally {
+    // Task 9 minor 3: the specs share one server; a failure above must not leave its GPU lane paused for the others.
+    const lanes = (await (await request.post('/api/queue/gpu/resume')).json()) as { pausedLanes: unknown[] };
+    expect(lanes.pausedLanes).toEqual([]);
+  }
 });
 
 test('a chapter summary is edited from the chapter row, and the confirm setting saves (W1 Q1, C2)', async ({ page, request }) => {

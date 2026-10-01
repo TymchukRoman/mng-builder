@@ -7,7 +7,7 @@ import { IconButton } from '../ui/IconButton';
 import { Check, FileText, X } from '../ui/icons';
 import { Modal } from '../ui/Modal';
 import { errorText, pushToast } from '../ui/toasts';
-import { applyChapterPatch } from './mangaModel';
+import { applyChapterPatch, summaryDraft } from './mangaModel';
 
 /** W1 Q1: the chapter's "what happened" (an episode run writes it; later chapters' premise and outline read it). */
 export function ChapterSummaryButton({ chapter }: { chapter: Chapter }): JSX.Element {
@@ -20,7 +20,7 @@ export function ChapterSummaryButton({ chapter }: { chapter: Chapter }): JSX.Ele
     apply: (prev, body) => applyChapterPatch(prev, chapter.id, body),
     alsoInvalidate: [qk.chapter(chapter.id)],
   });
-  const next = text.trim();
+  const { next, dirty } = summaryDraft(text, chapter.summary);
   return (
     <>
       <IconButton icon={FileText} label={chapter.summary ? 'Edit chapter summary' : 'Add chapter summary'} onClick={() => { setText(chapter.summary); setOpen(true); }} />
@@ -28,7 +28,7 @@ export function ChapterSummaryButton({ chapter }: { chapter: Chapter }): JSX.Ele
         <textarea className="textarea" rows={5} aria-label="Chapter summary" data-autofocus value={text} onChange={(e) => setText(e.target.value)} />
         <div className="form-actions">
           <IconButton icon={X} label="Discard changes" onClick={() => setOpen(false)} />
-          <IconButton icon={Check} tone="primary" label="Save summary" disabled={next === chapter.summary}
+          <IconButton icon={Check} tone="primary" label="Save summary" disabled={!dirty}
             onClick={() => { patch.mutate({ summary: next }, { onError: (err) => pushToast('error', errorText(err)) }); setOpen(false); }} />
         </div>
       </Modal>

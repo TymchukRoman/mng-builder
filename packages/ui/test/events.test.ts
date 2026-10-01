@@ -176,4 +176,9 @@ describe('failure toasts (W1 F21)', () => {
     expect(toastsFailure(makeJob({ kind: 'llm.step', payload: { type: 'story', runId: 'er_1' } as never }))).toBe(true);
     expect(toastsFailure(makeJob())).toBe(true);
   });
+
+  it('does not throw on an llm.step whose payload is null or not an object (Task 9 minor 1)', () => {
+    expect(toastsFailure(makeJob({ kind: 'llm.step', payload: null }))).toBe(true);
+    expect(toastsFailure(makeJob({ kind: 'llm.step', payload: 'chapter-summary' as never }))).toBe(true);
+  });
 });

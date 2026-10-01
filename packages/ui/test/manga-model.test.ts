@@ -1,10 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_PAGE_FORMAT, type Chapter, type RecipeInfo } from '@manga/shared';
-import { applyChapterPatch, applyMangaPatch, mangaBadges, pageSizeLabel, recipeOptions, sortChapters, validLoras } from '../src/manga/mangaModel';
+import { applyChapterPatch, applyMangaPatch, mangaBadges, pageSizeLabel, recipeOptions, sortChapters, summaryDraft, validLoras } from '../src/manga/mangaModel';
 import { makeManga } from './fixtures';
 
 const chapter = (id: string, order: number, number: number): Chapter => ({
   id, mangaId: 'mg_1', number, title: id, synopsis: '', summary: '', coverPageId: null, status: 'draft', order, createdAt: '', updatedAt: '',
+});
+
+describe('chapter summary draft (W1 Q1, Task 9 minor 2)', () => {
+  it('trims what is saved, and is clean while it equals the stored summary', () => {
+    expect(summaryDraft('  Kai finds the key.  ', '')).toEqual({ next: 'Kai finds the key.', dirty: true });
+    expect(summaryDraft('Kai finds the key. ', 'Kai finds the key.')).toEqual({ next: 'Kai finds the key.', dirty: false });
+    expect(summaryDraft('', '')).toEqual({ next: '', dirty: false });
+  });
+
+  it('clearing a stored summary is a change', () => {
+    expect(summaryDraft('   ', 'Kai finds the key.')).toEqual({ next: '', dirty: true });
+  });
 });
 
 describe('manga model', () => {

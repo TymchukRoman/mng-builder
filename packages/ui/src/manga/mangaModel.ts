@@ -40,6 +40,13 @@ export function recipeOptions(list: readonly RecipeInfo[] | undefined, current: 
   return [...options, { id: current, label: known?.label ?? current }];
 }
 
+/** W1 Q1 (Task 9 minor 2): the chapter summary the dialog would save (trimmed), and whether it differs from the stored one.
+ *  Clearing a summary to "" is a change like any other. */
+export function summaryDraft(text: string, stored: string): { next: string; dirty: boolean } {
+  const next = text.trim();
+  return { next, dirty: next !== stored };
+}
+
 /** The chapter list with one chapter's fields replaced (an optimistic update). */
 export function applyChapterPatch(list: Chapter[], id: string, patch: Partial<Chapter>): Chapter[] {
   return list.map((c) => (c.id === id ? { ...c, ...patch } : c));

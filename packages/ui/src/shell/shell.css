@@ -10,7 +10,7 @@
 .topbar__brand { display: inline-flex; align-items: center; gap: var(--sp-2); color: var(--text-1); padding: var(--sp-1); border-radius: var(--r-sm); }
 .topbar__brand:hover { background: var(--hover-wash); }
 .topbar__conn { margin-right: var(--sp-2); }
-.topbar__gpu { margin-right: var(--sp-2); }
+.topbar__gpu { margin-right: var(--sp-2); flex: none; white-space: nowrap; }
 .logo { color: var(--accent); }
 
 .engine-switch { display: inline-flex; align-items: center; gap: var(--sp-2); margin-right: var(--sp-2); }

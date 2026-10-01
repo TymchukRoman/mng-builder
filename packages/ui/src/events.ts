@@ -103,7 +103,8 @@ export interface EventDeps {
 
 /** W1 F21: a failed chapter summary never fails its run (the chapter just keeps its summary), so it raises no error toast. */
 export function toastsFailure(job: Job): boolean {
-  return !(job.kind === 'llm.step' && (job.payload as { type?: unknown }).type === 'chapter-summary');
+  const p = job.payload; // z.unknown(): never assume an object (Task 9 minor 1)
+  return !(job.kind === 'llm.step' && typeof p === 'object' && p !== null && (p as { type?: unknown }).type === 'chapter-summary');
 }
 
 const defaultDeps: EventDeps = {
