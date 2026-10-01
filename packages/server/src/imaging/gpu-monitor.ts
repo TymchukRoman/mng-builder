@@ -30,6 +30,8 @@ export class GpuMonitor {
   /** The last poll of this pause found ComfyUI unreachable. */
   private sawDown = false;
   private inFlight: Promise<GpuCheck> | null = null;
+  /** Task 3 M5: set by stop(); a probe still in flight then never resumes the lane. */
+  private stopped = false;
 
   constructor(private readonly opts: GpuMonitorOptions) {
     this.intervalMs = opts.intervalMs ?? GPU_MONITOR_INTERVAL_MS;
@@ -38,11 +40,13 @@ export class GpuMonitor {
 
   start(): void {
     if (this.unsubscribe) return;
+    this.stopped = false;
     this.unsubscribe = this.opts.queue.onLanesChanged(() => this.sync());
     this.sync();
   }
 
   stop(): void {
+    this.stopped = true;
     this.unsubscribe?.();
     this.unsubscribe = null;
     if (this.timer) clearInterval(this.timer);
@@ -83,6 +87,7 @@ export class GpuMonitor {
     // Unreachable for the first time: wait one more poll. Reachable with too little room after being up: keep waiting.
     if (!wasDown && (free === null || free < this.resumeFreeBytes)) return 'waiting';
     if (!this.busy()) return 'idle'; // the user paused (or resumed) while the probe ran: theirs wins
+    if (this.stopped) return 'idle'; // stopped (shutting down) while the probe ran
     this.opts.queue.resumeLane('gpu');
     return 'resumed';
   }

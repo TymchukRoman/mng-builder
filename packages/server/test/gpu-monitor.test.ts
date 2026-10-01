@@ -96,6 +96,20 @@ describe('GpuMonitor (W1 R2)', () => {
     expect(queue.pauseOf('gpu')).toBeNull();
   });
 
+  it('a probe in flight when the monitor stops never resumes the lane (Task 3 M5)', async () => {
+    queue = newQueue();
+    let answer!: (free: number) => void;
+    monitor = new GpuMonitor({ queue, probe: { availableVram: () => new Promise<number>((resolve) => { answer = resolve; }) }, intervalMs: 60_000 });
+    monitor.start();
+    queue.pauseLane('gpu', null, GPU_BUSY_REASON);
+    const check = monitor.check();
+    await vi.waitFor(() => expect(answer).toBeTypeOf('function'));
+    monitor.stop(); // shutdown while ComfyUI is still answering
+    answer(16e9);
+    expect(await check).toBe('idle');
+    expect(queue.pauseOf('gpu')?.reason).toBe(GPU_BUSY_REASON);
+  });
+
   it('polls only while the lane is paused as busy', async () => {
     queue = newQueue();
     let polls = 0;

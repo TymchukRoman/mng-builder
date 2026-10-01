@@ -3,11 +3,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, it } from 'vitest';
-import type { Job, JobRef, ServiceStatus } from '@manga/shared';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { GPU_BUSY_REASON, type Job, type JobRef, type ServiceStatus } from '@manga/shared';
 import { startServer } from '../src/app.js';
 import { OllamaEngine } from '../src/engines/ollama.js';
 import { ComfyClient } from '../src/imaging/comfy.js';
+import { GpuMonitor } from '../src/imaging/gpu-monitor.js';
 import { ComfyLauncher } from '../src/imaging/launcher.js';
 import { aiModule } from '../src/modules/ai.js';
 import { imagingModule } from '../src/modules/imaging.js';
@@ -146,6 +147,25 @@ describe('M2 modules', () => {
     expect(lanesAtLocalCall).toEqual([['gpu']]);
     expect(server.claude.calls).toEqual([]);
     expect(store.jobs.require(review)).toMatchObject({ lane: 'claude', status: 'queued' });
+  });
+
+  it('the imaging module starts the GPU monitor with the server and stops it with the server (Task 3 M6)', async () => {
+    const library = mkdtempSync(join(tmpdir(), 'manga-monitor-'));
+    const stopped = vi.spyOn(GpuMonitor.prototype, 'stop');
+    const started = await startServer({
+      config: { libraryPath: library, port: 0 },
+      modules: (d) => [imagingModule(d, servicesFor(d, { fakes: true }), { gpuMonitorIntervalMs: 20 })],
+    });
+    try {
+      started.deps.queue.pauseLane('gpu', null, GPU_BUSY_REASON); // the fake ComfyUI has 15 GB free
+      await vi.waitFor(() => expect(started.deps.queue.pauseOf('gpu')).toBeNull());
+      expect(stopped).not.toHaveBeenCalled();
+    } finally {
+      await started.stop();
+      rmSync(library, { recursive: true, force: true, maxRetries: 3 });
+    }
+    expect(stopped).toHaveBeenCalledTimes(1);
+    stopped.mockRestore();
   });
 
   it('MANGA_FAKES=1 wires FakeComfy and scripted engines with no options at all', async () => {

@@ -8,7 +8,10 @@ import { GpuMonitor } from '../imaging/gpu-monitor.js';
 import { ComfyLauncher } from '../imaging/launcher.js';
 import { servicesFor, type M2Services } from './services.js';
 
-export function imagingModule(deps: CoreDeps, services: M2Services = servicesFor(deps)): AppModule {
+/** `gpuMonitorIntervalMs`: the GPU monitor's poll interval (tests; default GPU_MONITOR_INTERVAL_MS). */
+export interface ImagingModuleOptions { gpuMonitorIntervalMs?: number }
+
+export function imagingModule(deps: CoreDeps, services: M2Services = servicesFor(deps), opts: ImagingModuleOptions = {}): AppModule {
   /** W1 R2: resumes the gpu lane once ComfyUI has room again after a GPU-busy pause. */
   let monitor: GpuMonitor | null = null;
   return {
@@ -34,7 +37,9 @@ export function imagingModule(deps: CoreDeps, services: M2Services = servicesFor
       deps.statusProviders.comfy = () => comfy.health();
       registerImagingJobs(deps.queue, services);
       registerImagingRoutes(app, deps, services);
-      monitor = new GpuMonitor({ queue: deps.queue, probe: comfy });
+      monitor = new GpuMonitor({
+        queue: deps.queue, probe: comfy, ...(opts.gpuMonitorIntervalMs === undefined ? {} : { intervalMs: opts.gpuMonitorIntervalMs }),
+      });
     },
     start(): void {
       monitor?.start();
