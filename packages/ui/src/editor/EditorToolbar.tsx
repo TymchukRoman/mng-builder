@@ -28,8 +28,11 @@ export interface EditorToolbarProps {
   /** W1 R1, chapter mode: the chapter's panels without an image (null while unknown, and in cover mode). */
   missingImages: number | null;
   renderingMissing: boolean;
-  /** The episode owns those panels (it renders them, or has not reached its render step): the server would answer 409. */
-  renderMissingBlocked: boolean;
+  /**
+   * Why the server would refuse (renderBlock): 'episode' renders those panels itself (before or during its render step);
+   * 'stop' waits at its preview or size stop, and Continue renders them. null: allowed.
+   */
+  renderMissingBlocked: 'stop' | 'episode' | null;
   onRenderMissing(): void;
   onUndo(): void;
   onRedo(): void;
@@ -41,6 +44,11 @@ export interface EditorToolbarProps {
   onGenerate(): void;
   onZoom(z: Zoom): void;
 }
+
+const RENDER_MISSING_BLOCKED = {
+  episode: 'Render panels without an image: the episode renders them',
+  stop: 'Render panels without an image: continue the episode first',
+} as const;
 
 export function EditorToolbar(p: EditorToolbarProps): JSX.Element {
   const navigate = useNavigate();
@@ -81,8 +89,8 @@ export function EditorToolbar(p: EditorToolbarProps): JSX.Element {
         disabled={!panelSelected} busy={p.generating} onClick={p.onGenerate} />
       {p.mode === 'chapter' && p.missingImages !== null && p.missingImages > 0 && (
         <IconButton icon={ImagePlus}
-          label={p.renderMissingBlocked ? 'Render panels without an image: the episode is rendering' : `Render panels without an image (${p.missingImages})`}
-          badge={p.missingImages} disabled={p.renderMissingBlocked} busy={p.renderingMissing} onClick={p.onRenderMissing} />
+          label={p.renderMissingBlocked === null ? `Render panels without an image (${p.missingImages})` : RENDER_MISSING_BLOCKED[p.renderMissingBlocked]}
+          badge={p.missingImages} disabled={p.renderMissingBlocked !== null} busy={p.renderingMissing} onClick={p.onRenderMissing} />
       )}
       <span className="spacer" />
       <IconButton icon={ZoomOut} label="Zoom out" onClick={() => p.onZoom(stepZoom(p.zoom, -1))} />

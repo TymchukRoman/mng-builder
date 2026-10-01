@@ -22,7 +22,7 @@ function render(
       <MemoryRouter>
         <EditorToolbar mode={mode} title="1. Start" backTo="/m/mg_1" detail={detail} selection={selection} history={history}
           readingDirection="rtl" format={DEFAULT_PAGE_FORMAT} zoom={{ mode: 'fit' }} generating={false} lettering={false} exportTarget={exportTarget}
-          missingImages={null} renderingMissing={false} renderMissingBlocked={false} onRenderMissing={noop}
+          missingImages={null} renderingMissing={false} renderMissingBlocked={null} onRenderMissing={noop}
           onUndo={noop} onRedo={noop} onApplyPreset={noop} onSplit={noop} onMerge={noop} onAddFrame={noop} onAutoLetter={noop} onGenerate={noop} onZoom={noop}
           {...extra} />
       </MemoryRouter>
@@ -100,8 +100,11 @@ describe('editor toolbar', () => {
     expect(html).toContain('data-tip="Render panels without an image (3)"');
     expect(enabled(html, 'Render panels without an image (3)')).toBe(true);
     expect(html).toMatch(/aria-label="Render panels without an image \(3\)"[\s\S]*?class="icon-btn__badge">3</);
-    const blocked = renderToolbar({ missingImages: 3, renderMissingBlocked: true });
-    expect(blocked).toMatch(/aria-label="Render panels without an image: the episode is rendering"[^>]*aria-disabled="true"/);
+    // Review M1: the tooltip says what unblocks it.
+    const busy = renderToolbar({ missingImages: 3, renderMissingBlocked: 'episode' });
+    expect(busy).toMatch(/aria-label="Render panels without an image: the episode renders them"[^>]*data-tip="Render panels without an image: the episode renders them"[^>]*aria-disabled="true"/);
+    const stop = renderToolbar({ missingImages: 3, renderMissingBlocked: 'stop' });
+    expect(stop).toMatch(/aria-label="Render panels without an image: continue the episode first"[^>]*data-tip="Render panels without an image: continue the episode first"[^>]*aria-disabled="true"/);
     expect(renderToolbar({ missingImages: 3, renderingMissing: true })).toMatch(/aria-label="Render panels without an image \(3\)"[^>]*aria-busy="true"/);
     expect(render('cover', PAGE_SELECTION, makeDetail(), IDLE, null, { missingImages: 3 })).not.toContain('Render panels without an image');
   });

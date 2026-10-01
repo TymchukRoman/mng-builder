@@ -1,14 +1,15 @@
 import { useContext, useId, useLayoutEffect, useRef, useState, type JSX } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { EPISODE_STEPS, type EpisodeRun, type EpisodeStepName, type JobRef } from '@manga/shared';
+import { EPISODE_STEPS, type EpisodeRun, type EpisodeStepName } from '@manga/shared';
 import { api, seg } from '../api';
 import { HistoryBarrierContext, type Barrier } from '../editor/HistoryBarrierContext';
 import { JsonForm } from '../episode/JsonForm';
 import {
-  STEP_LABEL, STEP_STATUS_TEXT, currentStepName, dirtySteps, editOf, failedPanelCount, isLive, parseDraft, renderBusy, rerunLabel, rerunStep,
-  runLabel, saveThen, statusChipClass, stepActions, stepPlaceholder, toggleRaw, type StepEdit, type StepEdits,
+  STEP_LABEL, STEP_STATUS_TEXT, currentStepName, dirtySteps, editOf, isLive, parseDraft, renderBusy, rerenderCount, rerunLabel, rerunStep, runLabel,
+  saveThen, statusChipClass, stepActions, stepPlaceholder, toggleRaw, type StepEdit, type StepEdits,
 } from '../episode/episodeView';
 import '../episode/episode.css';
+import { useRenderMissing } from '../episode/useRenderMissing';
 import { cx } from '../lib/cx';
 import { useEpisode, useMissingPanels } from '../queries';
 import { qk } from '../queryKeys';
@@ -63,12 +64,23 @@ export function EpisodePanel({ chapterId, initialStep }: {
     if (actionsFocused.current && lost) chevronRef.current?.focus();
     actionsFocused.current = false;
   }, [live]);
+  // Review M3: Pause unmounts itself and Resume turns into Continue while the run stays live; a keyboard user lands on the
+  // status, which now says what changed.
+  const statusRef = useRef<HTMLDivElement>(null);
+  const focusStatus = useRef(false);
+  useLayoutEffect(() => {
+    if (!focusStatus.current) return;
+    focusStatus.current = false;
+    actionsFocused.current = false;
+    statusRef.current?.focus();
+  });
 
   const act = useMutation({
     mutationFn: (a: Act) => a.call(),
     // Rejections are toasted by the app's MutationCache (main.tsx).
     onSuccess: (next, a) => {
       if (next === null) { setConfirmStep(a.step ?? null); return; }
+      if ((a.kind === 'pause' || a.kind === 'resume') && actionsFocused.current) focusStatus.current = true;
       qc.setQueryData(qk.episode(chapterId), next);
       setConfirmStep(null);
       if (a.kind === 'save' && a.step) {
@@ -80,15 +92,9 @@ export function EpisodePanel({ chapterId, initialStep }: {
     onError: () => setConfirmStep(null),
   });
 
-  // W1 R1: re-render the panels without an image. Rejections are toasted by the MutationCache; the job bar shows the renders.
+  // W1 R1: re-render the panels without an image.
   const missing = useMissingPanels(chapterId);
-  const renderMissing = useMutation({
-    mutationFn: () => api.post<JobRef[]>(`/api/chapters/${seg(chapterId)}/render-missing`),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.jobs() });
-      void qc.invalidateQueries({ queryKey: qk.missingPanels(chapterId) });
-    },
-  });
+  const renderMissing = useRenderMissing(chapterId);
 
   if (!run) {
     if (!episode.error) return null;
@@ -115,7 +121,7 @@ export function EpisodePanel({ chapterId, initialStep }: {
   const stepPath = (name: EpisodeStepName): string => `${runPath}/steps/${seg(name)}`;
   const tabId = (name: EpisodeStepName): string => `${uid}-tab-${name}`;
   const panelId = `${uid}-panel`;
-  const failedCount = failedPanelCount(run, missing.data?.panelIds);
+  const rerenderable = rerenderCount(run, missing.data?.panelIds);
 
   const save = (name: EpisodeStepName): Promise<EpisodeRun> => {
     const edit = editOf(run, edits, name);
@@ -147,7 +153,7 @@ export function EpisodePanel({ chapterId, initialStep }: {
       <header className="episode__head">
         <IconButton ref={chevronRef} icon={open ? ChevronDown : ChevronRight} size="sm" label={open ? 'Collapse episode' : 'Expand episode'}
           aria-expanded={open} onClick={() => setOpen((o) => !o)} />
-        <div data-testid="episode-status" className="episode__status">
+        <div ref={statusRef} data-testid="episode-status" className="episode__status" tabIndex={-1}>
           {run.status === 'running'
             ? <StatusLoader label={runLabel(run)} value={run.currentStep} max={EPISODE_STEPS.length} />
             : <span className={cx('status-chip', statusChipClass(run.status))}>{runLabel(run)}</span>}
@@ -200,8 +206,8 @@ export function EpisodePanel({ chapterId, initialStep }: {
                 disabled={!actions.edit} onClick={onToggleRaw} />
               <IconButton icon={Save} size="sm" tone="primary" label="Save changes" disabled={!dirty.has(selected) || busy} busy={busyOn('save')}
                 onClick={() => act.mutate({ kind: 'save', step: selected, call: () => save(selected) })} />
-              {selected === 'render' && failedCount > 0 && (
-                <IconButton icon={ImagePlus} size="sm" label={`Re-render failed panels (${failedCount})`} badge={failedCount}
+              {selected === 'render' && rerenderable > 0 && (
+                <IconButton icon={ImagePlus} size="sm" label={`Re-render failed panels (${rerenderable})`} badge={rerenderable}
                   disabled={renderBusy(run) || renderMissing.isPending} busy={renderMissing.isPending} onClick={() => renderMissing.mutate()} />
               )}
             </div>

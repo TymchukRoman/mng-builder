@@ -134,20 +134,24 @@ describe('episode panel', () => {
     expect(html).not.toContain('Re-render failed panels');
   });
 
-  it('the render step offers "Re-render failed panels (N)" for its failed panels still without an image (W1 R1, F7)', () => {
+  it('the render step offers "Re-render failed panels (N)", N being what a click queues (W1 R1, F7, review M2)', () => {
     const r = run('failed', 6, 'failed', 'x');
     const done = {
       ...r,
       steps: r.steps.map((s) => (s.name === 'render'
-        ? { ...s, status: 'done' as const, output: { jobs: [], reviewed: 0, flagged: 0, rounds: 0, failedPanelIds: ['pn_a', 'pn_b', 'pn_c'] } }
+        ? { ...s, status: 'done' as const, output: { jobs: [], reviewed: 0, flagged: 0, rounds: 0, failedPanelIds: ['pn_a'] } }
         : s)),
     };
     const html = render(done, { missing: ['pn_a', 'pn_b'], initialStep: 'render' });
     expect(enabled(html, 'Re-render failed panels \\(2\\)')).toBe(true);
     expect(html).toContain('data-tip="Re-render failed panels (2)"');
     expect(html).toMatch(/aria-label="Re-render failed panels \(2\)"[\s\S]*?class="icon-btn__badge">2</);
-    // Only on the render step's tab, and gone once every failed panel has an image.
+    // Only on the render step's tab, and gone once every panel has an image.
     expect(render(done, { missing: ['pn_a', 'pn_b'], initialStep: 'lettering' })).not.toContain('Re-render failed panels');
-    expect(render(done, { missing: ['pn_z'], initialStep: 'render' })).not.toContain('Re-render failed panels');
+    expect(render(done, { missing: [], initialStep: 'render' })).not.toContain('Re-render failed panels');
+  });
+
+  it('the status is a focus target for Pause and Resume (review M3)', () => {
+    expect(render(run('running', 5, 'running'))).toMatch(/<div data-testid="episode-status" class="episode__status" tabindex="-1"/i);
   });
 });

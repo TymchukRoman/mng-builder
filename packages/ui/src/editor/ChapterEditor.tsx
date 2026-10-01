@@ -7,7 +7,8 @@ import { Inspector } from '../inspector/Inspector';
 import { JobBar } from '../jobs/JobBar';
 import { cx } from '../lib/cx';
 import { pageSizePx } from '../page/geometry';
-import { renderBusy } from '../episode/episodeView';
+import { renderBlock } from '../episode/episodeView';
+import { useRenderMissing } from '../episode/useRenderMissing';
 import { useEpisode, useMissingPanels, usePageDetail } from '../queries';
 import { qk } from '../queryKeys';
 import { errorText, pushToast } from '../ui/toasts';
@@ -203,13 +204,7 @@ export function ChapterEditor({ manga, mode, chapterId, pageIds, title, backTo, 
   const storyId = mode === 'chapter' ? chapterId ?? undefined : undefined;
   const missing = useMissingPanels(storyId);
   const episode = useEpisode(storyId);
-  const renderMissing = useMutation({
-    mutationFn: () => api.post<JobRef[]>(`/api/chapters/${seg(storyId)}/render-missing`),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.jobs() });
-      if (storyId) void qc.invalidateQueries({ queryKey: qk.missingPanels(storyId) });
-    },
-  });
+  const renderMissing = useRenderMissing(storyId);
 
   useEditorKeys({
     onUndo: undo,
@@ -232,7 +227,7 @@ export function ChapterEditor({ manga, mode, chapterId, pageIds, title, backTo, 
           readingDirection={manga.readingDirection} format={manga.pageFormat} zoom={zoom} generating={generate.isPending} lettering={lettering}
           exportTarget={exportTarget(chapterId, pageId)}
           missingImages={storyId ? missing.data?.panelIds.length ?? null : null} renderingMissing={renderMissing.isPending}
-          renderMissingBlocked={renderBusy(episode.data)} onRenderMissing={() => renderMissing.mutate()}
+          renderMissingBlocked={renderBlock(episode.data)} onRenderMissing={() => renderMissing.mutate()}
           onUndo={undo} onRedo={redo}
           onApplyPreset={(name) => void applyPreset(name, false)}
           onSplit={split}

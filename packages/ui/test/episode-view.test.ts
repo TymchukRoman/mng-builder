@@ -3,7 +3,7 @@ import { EPISODE_STEPS, type EpisodeRun } from '@manga/shared';
 import { ApiError } from '../src/api';
 import { History } from '../src/editor/history';
 import {
-  STEP_STATUS_TEXT, childPath, currentStepName, dirtySteps, failedPanelCount, gateLabel, isDirty, isLive, numberFromInput, parseDraft, renderBusy,
+  STEP_STATUS_TEXT, childPath, currentStepName, dirtySteps, gateLabel, isDirty, isLive, numberFromInput, parseDraft, renderBlock, renderBusy, renderMissingNotice, rerenderCount,
   rerunLabel, rerunStep, runLabel, saveThen, statusChipClass, stepActions, stepKey, stepPlaceholder, textRows, toggleRaw, type StepEdits,
 } from '../src/episode/episodeView';
 
@@ -253,21 +253,35 @@ describe('W1 episode view', () => {
     expect(renderBusy(run('done', 6, 'done'))).toBe(false);
   });
 
-  it('counts the failed panels still without an image, only once the render is over or waits without a stop (F7)', () => {
-    const out = { ...base, failedPanelIds: ['pn_a', 'pn_b', 'pn_c'] };
+  it('renderBlock says why: a stop waits for Continue; otherwise the episode renders them (review M1)', () => {
+    expect(renderBlock(gateRun({ ...base, preview: true, remainingPanels: 3, estimateSeconds: 60 }))).toBe('stop');
+    expect(renderBlock(gateRun({ ...base, confirm: true, panels: 30, estimateSeconds: 900 }))).toBe('stop');
+    expect(renderBlock(run('running', 5, 'running'))).toBe('episode');
+    expect(renderBlock(run('paused', 5, 'paused'))).toBe('episode');
+    expect(renderBlock(run('running', 4, 'running'))).toBe('episode');
+    expect(renderBlock(gateRun(base))).toBeNull();
+    expect(renderBlock(run('failed', 5, 'failed'))).toBeNull();
+    expect(renderBlock(null)).toBeNull();
+  });
+
+  it('the re-render count is what a click queues: the live missing list, once the render is over or waits without a stop (F7, review M2)', () => {
+    const out = { ...base, failedPanelIds: ['pn_a'] };
     const missing = ['pn_a', 'pn_c', 'pn_z'];
-    expect(failedPanelCount(renderRun('done', out, 'done'), missing)).toBe(2);
-    expect(failedPanelCount(renderRun('failed', out, 'failed'), missing)).toBe(2);
-    expect(failedPanelCount(renderRun('awaiting-review', out, 'awaiting-review'), missing)).toBe(2);
-    expect(failedPanelCount(renderRun('done', out, 'done'), undefined)).toBe(0);
-    expect(failedPanelCount(renderRun('done', out, 'done'), ['pn_z'])).toBe(0);
-    // A stop: the panels without an image were never attempted.
-    expect(failedPanelCount(renderRun('awaiting-review', { ...out, preview: true, remainingPanels: 9, estimateSeconds: 60 }, 'awaiting-review'), missing)).toBe(0);
-    expect(failedPanelCount(renderRun('running', out), missing)).toBe(0);
-    expect(failedPanelCount(renderRun('paused', out, 'paused'), missing)).toBe(0);
-    expect(failedPanelCount(renderRun('pending', out), missing)).toBe(0);
-    // An output from before W1, or no render output at all.
-    expect(failedPanelCount(renderRun('done', { jobs: [], reviewed: 0, flagged: 0, rounds: 0 }, 'done'), missing)).toBe(0);
-    expect(failedPanelCount(renderRun('failed', null, 'failed'), missing)).toBe(0);
+    expect(rerenderCount(renderRun('done', out, 'done'), missing)).toBe(3);
+    expect(rerenderCount(renderRun('failed', out, 'failed'), missing)).toBe(3);
+    expect(rerenderCount(renderRun('failed', null, 'failed'), missing)).toBe(3); // failed before writing an output
+    expect(rerenderCount(renderRun('awaiting-review', out, 'awaiting-review'), missing)).toBe(3);
+    expect(rerenderCount(renderRun('done', out, 'done'), undefined)).toBe(0);
+    expect(rerenderCount(renderRun('done', out, 'done'), [])).toBe(0);
+    // A stop: the panels without an image were never attempted; Continue renders them.
+    expect(rerenderCount(renderRun('awaiting-review', { ...out, preview: true, remainingPanels: 9, estimateSeconds: 60 }, 'awaiting-review'), missing)).toBe(0);
+    expect(rerenderCount(renderRun('running', out), missing)).toBe(0);
+    expect(rerenderCount(renderRun('paused', out, 'paused'), missing)).toBe(0);
+    expect(rerenderCount(renderRun('pending', out), missing)).toBe(0);
+  });
+
+  it('a click that queued nothing says so (review M4)', () => {
+    expect(renderMissingNotice([])).toBe('Nothing to render: those panels are already queued');
+    expect(renderMissingNotice([{ jobId: 'jb_1' }])).toBeNull();
   });
 });

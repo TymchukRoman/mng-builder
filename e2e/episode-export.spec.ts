@@ -27,7 +27,10 @@ test('a chapter generated in autopilot from the create modal exports as one PDF'
   await preview.click();
   await expect(preview).toHaveAttribute('aria-pressed', 'false');
   await expect(page.getByTestId('ai-estimate')).toHaveText(/^2 pages ≈ 9 panels ≈ /);
+  // The start body carries the toggle's state, so a lost toggle fails here and not at the 200 s "Chapter ready" wait.
+  const start = page.waitForRequest((r) => r.method() === 'POST' && /\/api\/chapters\/ch_[a-z2-7]+\/episode$/.test(r.url()));
   await page.getByRole('button', { name: 'Create chapter' }).click();
+  expect(((await start).postDataJSON() as { input: { previewFirst?: unknown } }).input.previewFirst).toBe(false);
   await expect(page).toHaveURL(/\/c\/ch_[a-z2-7]+/);
 
   // The stepper follows the run to the end; the page list fills in

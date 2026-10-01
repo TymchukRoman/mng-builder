@@ -1,6 +1,6 @@
 import {
-  EDIT_NEEDS_PENDING_NEXT, EDITABLE_STEPS, EPISODE_ACTIVE_STATUSES, EPISODE_STEPS, RenderOutputSchema, gateText, renderGate, stepIndex,
-  type EpisodeRun, type EpisodeStepName,
+  EDIT_NEEDS_PENDING_NEXT, EDITABLE_STEPS, EPISODE_ACTIVE_STATUSES, EPISODE_STEPS, gateText, renderGate, stepIndex,
+  type EpisodeRun, type EpisodeStepName, type JobRef,
 } from '@manga/shared';
 import { ApiError } from '../api';
 import type { Barrier } from '../editor/HistoryBarrierContext';
@@ -47,33 +47,40 @@ export function gateLabel(run: EpisodeRun): string | null {
 }
 
 /**
- * W1 R1/C1: whether the episode still owns the chapter's panels, so "Render panels without an image" would duplicate or
- * pre-empt its work. Mirrors the server's 409 (F8): an active run before its render step, or at render while that step
- * runs or is paused. F7: a render waiting at its preview or size stop counts too; Continue renders those panels.
+ * W1 R1/C1: why "Render panels without an image" is refused, or null. Mirrors the server's 409 (F8): an active run before
+ * its render step, or at render while that step runs or is paused ('episode': the episode renders those panels). F7: a
+ * render waiting at its preview or size stop counts too ('stop': Continue renders them).
  */
-export function renderBusy(run: EpisodeRun | null | undefined): boolean {
-  if (!run || !isLive(run)) return false;
+export function renderBlock(run: EpisodeRun | null | undefined): 'stop' | 'episode' | null {
+  if (!run || !isLive(run)) return null;
   const at = stepIndex('render');
-  if (run.currentStep < at) return true;
-  if (run.currentStep !== at) return false;
+  if (run.currentStep < at) return 'episode';
+  if (run.currentStep !== at) return null;
   const step = run.steps[at];
-  return step?.status === 'running' || step?.status === 'paused' || (step?.status === 'awaiting-review' && renderGate(step.output) !== null);
+  if (step?.status === 'running' || step?.status === 'paused') return 'episode';
+  return step?.status === 'awaiting-review' && renderGate(step.output) !== null ? 'stop' : null;
+}
+
+/** Whether the episode still owns the chapter's panels (see renderBlock): re-rendering them now is refused. */
+export function renderBusy(run: EpisodeRun | null | undefined): boolean {
+  return renderBlock(run) !== null;
 }
 
 /**
- * W1 R1 "Re-render failed panels (N)": the render step's failed panels that still have no image (`missing` is the
- * chapter's live list). F7: 0 unless the step is done, failed, or waiting for review without a stop; at a stop the
- * panels without an image were never attempted, and Continue renders them.
+ * W1 R1 "Re-render failed panels (N)": N is what a click queues, the chapter's live list of panels without an image
+ * (review M2). F7: 0 unless the render step is done, failed, or waiting for review without a stop; at a stop those panels
+ * were never attempted, and Continue renders them.
  */
-export function failedPanelCount(run: EpisodeRun, missing: readonly string[] | undefined): number {
+export function rerenderCount(run: EpisodeRun, missing: readonly string[] | undefined): number {
   const step = run.steps[stepIndex('render')];
   if (!step || !missing) return 0;
   const over = step.status === 'done' || step.status === 'failed' || (step.status === 'awaiting-review' && renderGate(step.output) === null);
-  if (!over) return 0;
-  const out = RenderOutputSchema.safeParse(step.output);
-  if (!out.success) return 0;
-  const without = new Set(missing);
-  return out.data.failedPanelIds.filter((id) => without.has(id)).length;
+  return over ? missing.length : 0;
+}
+
+/** Review M4: the server skips panels that already have an unfinished render, so a click can queue nothing. */
+export function renderMissingNotice(queued: readonly JobRef[]): string | null {
+  return queued.length === 0 ? 'Nothing to render: those panels are already queued' : null;
 }
 
 export interface StepActions { approve: boolean; autopilot: boolean; cancel: boolean; rerun: boolean; edit: boolean; pause: boolean; resume: boolean }
