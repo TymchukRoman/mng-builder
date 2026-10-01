@@ -1400,6 +1400,7 @@ describe('EpisodeRunner — pause and resume (W1 C1)', () => {
     const { runner, queue, run, chapter } = await atPreview();
     runner.approve(run.id); // Continue
     await vi.waitFor(() => expect(panelJobs(queue).filter((j) => j.status === 'queued' && queue.isWaitedOn(j.id))).toHaveLength(2));
+    const continueRenders = panelJobs(queue).filter((j) => j.status === 'queued');
     const [, driver] = renderJobs(queue);
     runner.stop(); // the old process goes away: its driver is put back in line, the renders stay queued
     queue.interrupt(driver!.id);
@@ -1408,10 +1409,11 @@ describe('EpisodeRunner — pause and resume (W1 C1)', () => {
     expect(restarted.runner.resume()).toBe(1); // the running render step is re-attached to its driver
     expect(restarted.queue.jobs()).toEqual([]); // nothing new: no second driver
     restarted.queue.runQueued(); // the restarted queue runs the driver again
-    await vi.waitFor(() => {
-      serveQueued(queue);
-      expect(restarted.runner.get(run.id).status).toBe('done'); // no second stop
-    });
+    // Re-review N1: the restarted driver adopts the Continue's renders (it waits on those very jobs) ...
+    await vi.waitFor(() => expect(continueRenders.every((j) => restarted.queue.isWaitedOn(j.id))).toBe(true));
+    for (const job of continueRenders) restarted.queue.succeed(job.id, { imageId: renderPanel(panelOf(job)) });
+    await vi.waitFor(() => expect(restarted.runner.get(run.id).status).toBe('done')); // no second stop
+    expect(restarted.queue.jobs('image.generate')).toEqual([]); // ... and queues no render of its own
     expect(generatesPerPanel(run.id, chapter.id)).toEqual(chapterPanelIds(chapter.id).map(() => 1)); // adopted, never queued twice
     expect(generatesPerPanel(run.id, chapter.id, 'succeeded')).toEqual(chapterPanelIds(chapter.id).map(() => 1));
     restarted.runner.stop();
