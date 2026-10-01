@@ -12,18 +12,19 @@ describe('keysForEntity', () => {
   });
   it('falls back to prefixes when the owner is unknown', () => {
     expect(keysForEntity({ type: 'entity', entity: 'character', id: 'cr_1', op: 'updated', mangaId: null }, none)).toEqual([['characters'], ['character', 'cr_1'], ['characterImages', 'cr_1']]);
-    expect(keysForEntity({ type: 'entity', entity: 'panel', id: 'pn_x', op: 'created', mangaId: 'mg_1' }, none)).toEqual([['page'], ['panelImages', 'pn_x']]);
+    expect(keysForEntity({ type: 'entity', entity: 'panel', id: 'pn_x', op: 'created', mangaId: 'mg_1' }, none)).toEqual([['page'], ['panelImages', 'pn_x'], ['missingPanels']]);
     expect(keysForEntity({ type: 'entity', entity: 'textFrame', id: 'tf_x', op: 'created', mangaId: 'mg_1' }, none)).toEqual([['page']]);
   });
   it('targets the page that owns a panel or frame', () => {
     const lookup = { pageOfPanel: (id: string) => (id === 'pn_a' ? 'pg_7' : null), pageOfFrame: (id: string) => (id === 'tf_1' ? 'pg_8' : null) };
-    expect(keysForEntity({ type: 'entity', entity: 'panel', id: 'pn_a', op: 'updated', mangaId: 'mg_1' }, lookup)).toEqual([['page', 'pg_7'], ['panelImages', 'pn_a']]);
+    expect(keysForEntity({ type: 'entity', entity: 'panel', id: 'pn_a', op: 'updated', mangaId: 'mg_1' }, lookup)).toEqual([['page', 'pg_7'], ['panelImages', 'pn_a'], ['missingPanels']]);
     expect(keysForEntity({ type: 'entity', entity: 'textFrame', id: 'tf_1', op: 'updated', mangaId: 'mg_1' }, lookup)).toEqual([['page', 'pg_8']]);
   });
   it('maps images, settings and pages', () => {
     expect(keysForEntity({ type: 'entity', entity: 'image', id: 'im_1', op: 'created', mangaId: 'mg_1' }, none)).toEqual([['panelImages'], ['characterImages']]);
     expect(keysForEntity({ type: 'entity', entity: 'settings', id: 'settings', op: 'updated', mangaId: null }, none)).toEqual([['settings'], ['status']]);
-    expect(keysForEntity({ type: 'entity', entity: 'page', id: 'pg_1', op: 'deleted', mangaId: 'mg_1' }, none)).toEqual([['page', 'pg_1'], ['pages']]);
+    expect(keysForEntity({ type: 'entity', entity: 'page', id: 'pg_1', op: 'deleted', mangaId: 'mg_1' }, none)).toEqual([['page', 'pg_1'], ['pages'], ['missingPanels']]);
+    expect(qk.missingPanels('ch_1')).toEqual(['missingPanels', 'ch_1']);
   });
 });
 

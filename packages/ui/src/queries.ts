@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import type {
-  AppConfig, Chapter, Character, EpisodeRun, Image, Job, Manga, Page, PageDetail, PresetInfo, RecipeInfo, ServiceStatus, Settings, StylePreset,
+  AppConfig, Chapter, Character, EpisodeRun, Image, Job, Manga, MissingPanels, Page, PageDetail, PresetInfo, RecipeInfo, ServiceStatus, Settings, StylePreset,
 } from '@manga/shared';
 import { api, seg } from './api';
 import { fetchableId, qk } from './queryKeys';
@@ -27,6 +27,13 @@ export const usePanelImages = (panelId: string | null) =>
 /** The chapter's latest episode run, or null. No polling: every `episodeRun` event invalidates `['episode']` (events.ts). */
 export const useEpisode = (chapterId: string | undefined) =>
   useQuery({ queryKey: qk.episode(chapterId ?? ''), queryFn: () => api.get<EpisodeRun | null>(`/api/chapters/${seg(chapterId)}/episode`), enabled: !!chapterId });
+/** W1 R1: the chapter's panels without an image. Every `panel` and `page` event invalidates `['missingPanels']`. */
+export const useMissingPanels = (chapterId: string | undefined) =>
+  useQuery({
+    queryKey: qk.missingPanels(chapterId ?? ''),
+    queryFn: () => api.get<MissingPanels>(`/api/chapters/${seg(chapterId)}/render-missing`),
+    enabled: !!chapterId,
+  });
 export const useJobs = () =>
   useQuery({ queryKey: qk.jobs(), queryFn: () => api.get<Job[]>('/api/jobs?limit=50'), refetchInterval: 30_000 });
 export const useSettings = () => useQuery({ queryKey: qk.settings(), queryFn: () => api.get<Settings>('/api/settings') });

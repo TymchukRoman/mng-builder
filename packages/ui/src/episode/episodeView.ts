@@ -1,4 +1,7 @@
-import { EDIT_NEEDS_PENDING_NEXT, EDITABLE_STEPS, EPISODE_ACTIVE_STATUSES, EPISODE_STEPS, type EpisodeRun, type EpisodeStepName } from '@manga/shared';
+import {
+  EDIT_NEEDS_PENDING_NEXT, EDITABLE_STEPS, EPISODE_ACTIVE_STATUSES, EPISODE_STEPS, RenderOutputSchema, gateText, renderGate, stepIndex,
+  type EpisodeRun, type EpisodeStepName,
+} from '@manga/shared';
 import { ApiError } from '../api';
 import type { Barrier } from '../editor/HistoryBarrierContext';
 
@@ -30,7 +33,7 @@ export function runLabel(run: EpisodeRun): string {
   const step = currentStepName(run);
   switch (run.status) {
     case 'running': return WORKING[step];
-    case 'awaiting-review': return `Review: ${STEP_LABEL[step].toLowerCase()}`;
+    case 'awaiting-review': return gateLabel(run) ?? `Review: ${STEP_LABEL[step].toLowerCase()}`;
     case 'failed': return `Failed at ${STEP_LABEL[step].toLowerCase()}`;
     case 'done': return 'Chapter ready';
     case 'cancelled': return 'Cancelled';
@@ -38,7 +41,42 @@ export function runLabel(run: EpisodeRun): string {
   }
 }
 
-export interface StepActions { approve: boolean; autopilot: boolean; cancel: boolean; rerun: boolean; edit: boolean }
+/** W1 Q2/C2: the question of a render step stopped at its preview or size check, or null (F20: the CLI shows the same text). */
+export function gateLabel(run: EpisodeRun): string | null {
+  return gateText(run);
+}
+
+/**
+ * W1 R1/C1: whether the episode still owns the chapter's panels, so "Render panels without an image" would duplicate or
+ * pre-empt its work. Mirrors the server's 409 (F8): an active run before its render step, or at render while that step
+ * runs or is paused. F7: a render waiting at its preview or size stop counts too; Continue renders those panels.
+ */
+export function renderBusy(run: EpisodeRun | null | undefined): boolean {
+  if (!run || !isLive(run)) return false;
+  const at = stepIndex('render');
+  if (run.currentStep < at) return true;
+  if (run.currentStep !== at) return false;
+  const step = run.steps[at];
+  return step?.status === 'running' || step?.status === 'paused' || (step?.status === 'awaiting-review' && renderGate(step.output) !== null);
+}
+
+/**
+ * W1 R1 "Re-render failed panels (N)": the render step's failed panels that still have no image (`missing` is the
+ * chapter's live list). F7: 0 unless the step is done, failed, or waiting for review without a stop; at a stop the
+ * panels without an image were never attempted, and Continue renders them.
+ */
+export function failedPanelCount(run: EpisodeRun, missing: readonly string[] | undefined): number {
+  const step = run.steps[stepIndex('render')];
+  if (!step || !missing) return 0;
+  const over = step.status === 'done' || step.status === 'failed' || (step.status === 'awaiting-review' && renderGate(step.output) === null);
+  if (!over) return 0;
+  const out = RenderOutputSchema.safeParse(step.output);
+  if (!out.success) return 0;
+  const without = new Set(missing);
+  return out.data.failedPanelIds.filter((id) => without.has(id)).length;
+}
+
+export interface StepActions { approve: boolean; autopilot: boolean; cancel: boolean; rerun: boolean; edit: boolean; pause: boolean; resume: boolean }
 
 /** M4 final M2 (the server's rule): a done outline or breakdown stays editable only while the next step is pending. */
 function editTooLate(run: EpisodeRun, idx: number): boolean {
@@ -46,17 +84,24 @@ function editTooLate(run: EpisodeRun, idx: number): boolean {
   return name !== undefined && EDIT_NEEDS_PENDING_NEXT.has(name) && run.steps[idx + 1]?.status !== 'pending';
 }
 
-/** Mirrors the server's rules (Task 9) so buttons are only enabled when the call can succeed. */
+/**
+ * Mirrors the server's rules (Task 9) so buttons are only enabled when the call can succeed. W1 C1: pause while the render
+ * step runs; a paused run offers only Resume and Cancel (F24).
+ */
 export function stepActions(run: EpisodeRun, selected: EpisodeStepName): StepActions {
   const idx = EPISODE_STEPS.indexOf(selected);
   const step = run.steps[idx];
   const live = isLive(run);
+  const paused = run.status === 'paused';
+  const at = stepIndex('render');
   return {
     approve: run.status === 'awaiting-review',
-    autopilot: live && run.mode === 'review',
+    autopilot: live && !paused && run.mode === 'review',
     cancel: live,
-    rerun: step !== undefined && idx <= run.currentStep && step.status !== 'pending',
+    rerun: !paused && step !== undefined && idx <= run.currentStep && step.status !== 'pending',
     edit: step !== undefined && EDITABLE_STEPS.has(selected) && (step.status === 'awaiting-review' || (step.status === 'done' && !editTooLate(run, idx))),
+    pause: run.status === 'running' && run.currentStep === at && run.steps[at]?.status === 'running',
+    resume: paused,
   };
 }
 

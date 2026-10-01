@@ -3,8 +3,8 @@ import { EPISODE_STEPS, type EpisodeRun } from '@manga/shared';
 import { ApiError } from '../src/api';
 import { History } from '../src/editor/history';
 import {
-  STEP_STATUS_TEXT, childPath, currentStepName, dirtySteps, isDirty, isLive, numberFromInput, parseDraft, rerunLabel, rerunStep, runLabel,
-  saveThen, statusChipClass, stepActions, stepKey, stepPlaceholder, textRows, toggleRaw, type StepEdits,
+  STEP_STATUS_TEXT, childPath, currentStepName, dirtySteps, failedPanelCount, gateLabel, isDirty, isLive, numberFromInput, parseDraft, renderBusy,
+  rerunLabel, rerunStep, runLabel, saveThen, statusChipClass, stepActions, stepKey, stepPlaceholder, textRows, toggleRaw, type StepEdits,
 } from '../src/episode/episodeView';
 
 type StepStatus = EpisodeRun['steps'][number]['status'];
@@ -34,14 +34,14 @@ describe('episode view', () => {
 
   it('enables actions for a run waiting at a review point', () => {
     const r = run('awaiting-review', 3, 'awaiting-review');
-    expect(stepActions(r, 'scripts')).toEqual({ approve: true, autopilot: true, cancel: true, rerun: true, edit: true });
+    expect(stepActions(r, 'scripts')).toEqual({ approve: true, autopilot: true, cancel: true, rerun: true, edit: true, pause: false, resume: false });
     expect(stepActions(r, 'premise')).toMatchObject({ rerun: true, edit: true });
     expect(stepActions(r, 'prompts')).toMatchObject({ rerun: false, edit: false });
   });
 
   it('never edits informational steps and hides run-to-end in autopilot', () => {
     const r = run('running', 6, 'running', 'autopilot');
-    expect(stepActions(r, 'render')).toEqual({ approve: false, autopilot: false, cancel: true, rerun: true, edit: false });
+    expect(stepActions(r, 'render')).toEqual({ approve: false, autopilot: false, cancel: true, rerun: true, edit: false, pause: false, resume: false });
     expect(stepActions(r, 'lettering')).toMatchObject({ edit: false });
     expect(stepActions(run('done', 6, 'done'), 'premise')).toMatchObject({ cancel: false, approve: false, edit: true });
   });
@@ -198,4 +198,76 @@ it('a paused run reads "Rendering paused" in a paused chip', () => {
   expect(runLabel(r)).toBe('Rendering paused');
   expect(statusChipClass('paused')).toBe('status-chip--paused');
   expect(STEP_STATUS_TEXT.paused).toBe('paused');
+});
+
+describe('W1 episode view', () => {
+  const base = { jobs: [], reviewed: 0, flagged: 0, rounds: 0, failedPanelIds: [] };
+  const gateRun = (output: unknown): EpisodeRun => {
+    const r = run('awaiting-review', 5, 'awaiting-review');
+    r.steps[5] = { ...r.steps[5]!, output };
+    return r;
+  };
+  const renderRun = (stepStatus: StepStatus, output: unknown, status: EpisodeRun['status'] = 'running'): EpisodeRun => {
+    const r = run(status, 5, stepStatus);
+    r.steps[5] = { ...r.steps[5]!, output };
+    return r;
+  };
+
+  it('the preview and size stops have their own status text (F20: the shared gateText)', () => {
+    expect(runLabel(gateRun({ ...base, preview: true, remainingPanels: 34, estimateSeconds: 1800 }))).toBe('Page 1 is ready — continue with 34 panels (~30 min)?');
+    expect(runLabel(gateRun({ ...base, confirm: true, panels: 40, estimateSeconds: 3600 }))).toBe('Render 40 panels (~1 h)?');
+    expect(gateLabel(gateRun(base))).toBeNull();
+    expect(runLabel(gateRun(base))).toBe('Review: images');
+    expect(gateLabel(run('awaiting-review', 1, 'awaiting-review'))).toBeNull();
+  });
+
+  it('pause while the render step runs; resume while paused; renderBusy covers both', () => {
+    const r = run('running', 5, 'running');
+    expect(stepActions(r, 'render')).toMatchObject({ pause: true, resume: false });
+    expect(renderBusy(r)).toBe(true);
+    const p = run('paused', 5, 'paused');
+    expect(stepActions(p, 'render')).toMatchObject({ pause: false, resume: true, approve: false });
+    expect(renderBusy(p)).toBe(true);
+    expect(renderBusy(null)).toBe(false);
+    expect(renderBusy(undefined)).toBe(false);
+    expect(stepActions(run('running', 4, 'running'), 'prompts')).toMatchObject({ pause: false, resume: false });
+    expect(stepActions(gateRun({ ...base, preview: true, remainingPanels: 3, estimateSeconds: 60 }), 'render')).toMatchObject({ pause: false, resume: false, approve: true });
+  });
+
+  it('a paused run offers only Resume and Cancel (F24)', () => {
+    const p = run('paused', 5, 'paused');
+    for (const name of ['premise', 'scripts', 'render'] as const) {
+      expect(stepActions(p, name), name).toMatchObject({ approve: false, autopilot: false, rerun: false, cancel: true, resume: true, pause: false });
+    }
+  });
+
+  it('renderBusy mirrors the server\'s render-missing refusal, and an open stop blocks too (F7, F8)', () => {
+    expect(renderBusy(gateRun({ ...base, preview: true, remainingPanels: 3, estimateSeconds: 60 }))).toBe(true);
+    expect(renderBusy(gateRun({ ...base, confirm: true, panels: 30, estimateSeconds: 900 }))).toBe(true);
+    expect(renderBusy(gateRun(base))).toBe(false); // a review point after the render
+    expect(renderBusy(run('running', 4, 'running'))).toBe(true); // not rendered yet
+    expect(renderBusy(run('awaiting-review', 3, 'awaiting-review'))).toBe(true);
+    expect(renderBusy(run('running', 6, 'running'))).toBe(false); // lettering
+    expect(renderBusy(run('failed', 5, 'failed'))).toBe(false);
+    expect(renderBusy(run('cancelled', 2, 'failed'))).toBe(false);
+    expect(renderBusy(run('done', 6, 'done'))).toBe(false);
+  });
+
+  it('counts the failed panels still without an image, only once the render is over or waits without a stop (F7)', () => {
+    const out = { ...base, failedPanelIds: ['pn_a', 'pn_b', 'pn_c'] };
+    const missing = ['pn_a', 'pn_c', 'pn_z'];
+    expect(failedPanelCount(renderRun('done', out, 'done'), missing)).toBe(2);
+    expect(failedPanelCount(renderRun('failed', out, 'failed'), missing)).toBe(2);
+    expect(failedPanelCount(renderRun('awaiting-review', out, 'awaiting-review'), missing)).toBe(2);
+    expect(failedPanelCount(renderRun('done', out, 'done'), undefined)).toBe(0);
+    expect(failedPanelCount(renderRun('done', out, 'done'), ['pn_z'])).toBe(0);
+    // A stop: the panels without an image were never attempted.
+    expect(failedPanelCount(renderRun('awaiting-review', { ...out, preview: true, remainingPanels: 9, estimateSeconds: 60 }, 'awaiting-review'), missing)).toBe(0);
+    expect(failedPanelCount(renderRun('running', out), missing)).toBe(0);
+    expect(failedPanelCount(renderRun('paused', out, 'paused'), missing)).toBe(0);
+    expect(failedPanelCount(renderRun('pending', out), missing)).toBe(0);
+    // An output from before W1, or no render output at all.
+    expect(failedPanelCount(renderRun('done', { jobs: [], reviewed: 0, flagged: 0, rounds: 0 }, 'done'), missing)).toBe(0);
+    expect(failedPanelCount(renderRun('failed', null, 'failed'), missing)).toBe(0);
+  });
 });

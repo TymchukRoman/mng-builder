@@ -20,6 +20,8 @@ export const qk = {
   recipes: () => ['recipes'] as const,
   config: () => ['config'] as const,
   episode: (chapterId: string) => ['episode', chapterId] as const,
+  /** W1 R1: the chapter's panels without an image; any page or panel change may change it. */
+  missingPanels: (chapterId: string) => ['missingPanels', chapterId] as const,
 };
 
 export type EntityEvent = Extract<ServerEvent, { type: 'entity' }>;
@@ -60,10 +62,10 @@ export function keysForEntity(e: EntityEvent, lookup: OwnerLookup): QueryKey[] {
     case 'chapter':
       return [e.mangaId ? qk.chapters(e.mangaId) : ['chapters'], qk.chapter(e.id), qk.pages(e.id)];
     case 'page':
-      return [qk.page(e.id), ['pages']];
+      return [qk.page(e.id), ['pages'], ['missingPanels']];
     case 'panel': {
       const pageId = lookup.pageOfPanel(e.id);
-      return [pageId ? qk.page(pageId) : ['page'], qk.panelImages(e.id)];
+      return [pageId ? qk.page(pageId) : ['page'], qk.panelImages(e.id), ['missingPanels']];
     }
     case 'textFrame': {
       const pageId = lookup.pageOfFrame(e.id);
