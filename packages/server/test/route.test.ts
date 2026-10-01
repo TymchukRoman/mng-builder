@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DEFAULT_PAGE_FORMAT, DEFAULT_SETTINGS, DEFAULT_TRANSFORM, EMPTY_SCRIPT, STYLE_PRESETS,
+  DEFAULT_PAGE_FORMAT, DEFAULT_SETTINGS, DEFAULT_TRANSFORM, EMPTY_SCRIPT, NATURAL_PROMPT_RECIPES, STYLE_PRESETS,
   type LayoutNode, type Manga, type Page, type Panel, type Settings,
 } from '@manga/shared';
 import { promptStyleFor, refineFor, routeRecipe } from '../src/imaging/route.js';
@@ -46,6 +46,11 @@ describe('routeRecipe', () => {
     expect(['anime', 'anime-ref', 'anime-pose', 'anime-refine', 'anima', 'anima-turbo'].map(promptStyleFor)).toEqual(Array(6).fill('tags'));
     expect(['qwen-edit-ref', 'klein-ref'].map(promptStyleFor)).toEqual(['natural', 'natural']);
     expect(refineFor(DEFAULT_SETTINGS, manga('bw'), 'anime')).toBeNull();
+  });
+
+  it('the shared chapter estimate knows the same natural-prompt recipes (Task 2 M4)', () => {
+    const natural = Object.keys(RECIPES).filter((id) => promptStyleFor(id) === 'natural').sort();
+    expect([...NATURAL_PROMPT_RECIPES].sort()).toEqual(natural);
   });
 
   it('rejects unknown recipe in panel override', () => {

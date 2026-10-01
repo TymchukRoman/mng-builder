@@ -3,7 +3,7 @@ import { formatChapterEstimate, type EpisodeRun } from '@manga/shared';
 import { api } from '../api';
 import '../episode/episode.css';
 import { cx } from '../lib/cx';
-import { useCharacters, useSettings } from '../queries';
+import { useCharacters, useManga, useSettings } from '../queries';
 import { Field } from '../ui/Field';
 import { IconButton } from '../ui/IconButton';
 import { FastForward, ScanEye, Sparkles, Users } from '../ui/icons';
@@ -49,6 +49,7 @@ export interface AiSectionBodyProps {
 export function AiSectionBody({ mangaId, value, set }: AiSectionBodyProps): JSX.Element {
   const characters = useCharacters(mangaId);
   const settings = useSettings();
+  const manga = useManga(mangaId); // Task 2 M4: a black-and-white book's estimate counts the bw refine pass
   // The Pages field keeps what was typed (it may be empty or out of range mid-edit); the model only ever sees a clamped number.
   const [pagesText, setPagesText] = useState(String(value.pages));
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -85,7 +86,7 @@ export function AiSectionBody({ mangaId, value, set }: AiSectionBodyProps): JSX.
         <IconButton icon={ScanEye} size="sm" active={value.previewFirst} tipSide="top" label="Preview page 1 first"
           onClick={() => set({ previewFirst: !value.previewFirst })} />
       </div>
-      {settings.data && <span className="ai-section__estimate" data-testid="ai-estimate">{formatChapterEstimate(value.pages, settings.data)}</span>}
+      {settings.data && <span className="ai-section__estimate" data-testid="ai-estimate">{formatChapterEstimate(value.pages, settings.data, manga.data?.colorMode)}</span>}
       {list.length > 0 && (
         <div className="ai-section__chars" role="group" aria-label="Characters">
           <span className="ai-section__chars-icon" data-tip="Characters in this episode" data-tip-side="top"><Users size={14} aria-hidden /></span>

@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { InvalidArgumentError, type Command } from 'commander';
-import { EPISODE_STEPS, EpisodeStepNameSchema, formatChapterEstimate, type EpisodeRun, type EpisodeStepName, type Settings } from '@manga/shared';
+import {
+  EPISODE_STEPS, EpisodeStepNameSchema, formatChapterEstimate, type EpisodeRun, type EpisodeStepName, type Manga, type Settings,
+} from '@manga/shared';
 import { parseList } from '../args.js';
 import { ApiError } from '../client.js';
 import type { CliContext } from '../context.js';
@@ -67,19 +69,25 @@ export function registerEpisodeCommands(program: Command, ctx: () => Promise<Cli
     .option('--pages <n>', 'number of pages, 1-30', parsePages, 8)
     .option('--chars <list>', 'characters to use: comma-separated names or ids', parseList)
     .option('--tone <text>', 'tone, e.g. "tense, melancholic"', '')
-    .option('--autopilot', 'run every step without stopping at review points')
-    .option('--no-preview', 'render everything at once instead of stopping after page 1 (W1 Q2)')
+    // Task 7 minor 1: the render still stops at the preview in autopilot; say how to go on (and where --json shows it).
+    .option('--autopilot', 'run every step without stopping at review points; the render still stops after page 1 unless --no-preview '
+      + '(continue with "manga episode approve"; with --json, the render step output has "preview": true)')
+    .option('--no-preview', 'render everything at once instead of stopping after page 1') // W1 Q2
     .action(async (chapterRef: string, opts: { prompt: string; pages: number; chars?: string[]; tone: string; autopilot?: boolean; preview: boolean }) => {
       const c = await ctx();
       const chapter = await c.resolve.chapter(chapterRef);
       const characterIds: string[] = [];
       for (const ref of opts.chars ?? []) characterIds.push((await c.resolve.character(ref, chapter.mangaId)).id);
-      // W1 C2: the size of what is about to start, before it starts.
-      if (!c.json) c.io.stderr(`${formatChapterEstimate(opts.pages, await c.api.get<Settings>('/api/settings'))}\n`);
       const run = await c.api.post<EpisodeRun>(`/api/chapters/${enc(chapter.id)}/episode`, {
         input: { prompt: opts.prompt, pages: opts.pages, characterIds, tone: opts.tone, previewFirst: opts.preview },
         mode: opts.autopilot ? 'autopilot' : 'review',
       });
+      // W1 C2: the size of what started. Task 7 minor 4: only once the server accepted it. Task 2 M4: a black-and-white
+      // book's estimate counts the bw refine pass.
+      if (!c.json) {
+        const [settings, manga] = await Promise.all([c.api.get<Settings>('/api/settings'), c.api.get<Manga>(`/api/mangas/${enc(chapter.mangaId)}`)]);
+        c.io.stderr(`${formatChapterEstimate(opts.pages, settings, manga.colorMode)}\n`);
+      }
       await show(c, chapter.id, run);
     });
 

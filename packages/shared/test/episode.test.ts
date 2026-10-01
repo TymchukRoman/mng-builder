@@ -261,6 +261,16 @@ describe('chapter estimate (W1 C2)', () => {
     expect(estimateChapter(2, noReview)).toEqual({ panels: 9, seconds: 237 });
     expect(formatChapterEstimate(1, noReview)).toBe('1 page ≈ 5 panels ≈ 2 min');
   });
+
+  it('adds the bw refine pass after the natural-prompt recipes of a black-and-white book (Task 2 M4)', () => {
+    const noReview = { ...DEFAULT_SETTINGS, review: { autoInEpisode: false, rounds: 2 } };
+    const refined = { ...noReview, routing: { ...noReview.routing, bwRefine: 'anime-refine' } };
+    // (anime 30 + anime-ref 32 + klein-ref 17 + anime-refine 20) / 3 per panel, 9 panels
+    expect(estimateChapter(2, refined, 'bw')).toEqual({ panels: 9, seconds: 297 });
+    expect(estimateChapter(2, refined, 'color')).toEqual({ panels: 9, seconds: 237 }); // colour books are not refined
+    expect(estimateChapter(2, refined)).toEqual({ panels: 9, seconds: 237 });
+    expect(estimateChapter(2, noReview, 'bw')).toEqual({ panels: 9, seconds: 237 }); // no refine recipe set
+  });
 });
 
 describe('renderGate (W1 Q2, C2)', () => {

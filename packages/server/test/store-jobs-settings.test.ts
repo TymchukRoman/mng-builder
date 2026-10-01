@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS } from '@manga/shared';
 import { openStore, type JobInsert, type Store } from '../src/store/index.js';
@@ -110,7 +111,19 @@ describe('settings repo', () => {
     expect(store.settings.patch({ routing: { bwRefine: null } }).routing.bwRefine).toBeNull();
   });
 
-  it('merges the episode section and reads old stored settings with its default', () => {
+  it('reads settings a library stored before W1 (no episode section) with the episode default (Task 2 M1)', () => {
+    store.close();
+    const raw = new Database(join(dir.path, 'library.sqlite'));
+    raw.prepare(`INSERT INTO settings (key, value) VALUES ('app', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+      .run(JSON.stringify({ review: { autoInEpisode: false, rounds: 1 }, routing: DEFAULT_SETTINGS.routing }));
+    raw.close();
+    store = openStore(dir.path);
+    const s = store.settings.get();
+    expect(s.episode).toEqual({ confirmRenderMinutes: 45 });
+    expect(s.review).toEqual({ autoInEpisode: false, rounds: 1 }); // the stored sections are kept
+  });
+
+  it('merges the episode section and reads a fresh library with its default', () => {
     expect(store.settings.get().episode).toEqual({ confirmRenderMinutes: 45 });
     expect(store.settings.patch({ episode: { confirmRenderMinutes: 20 } }).episode.confirmRenderMinutes).toBe(20);
     expect(store.settings.patch({ review: { rounds: 1 } }).episode.confirmRenderMinutes).toBe(20);

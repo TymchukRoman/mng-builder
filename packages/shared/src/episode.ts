@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { PRESET_NAMES, presetPanelCount } from './layout/index.js';
 import {
   AngleSchema, CharacterRoleSchema, DialogueKindSchema, EPISODE_STEPS, ShotSchema, StagePositionSchema,
-  type EpisodeRun, type EpisodeStepName, type Settings, type Task,
+  type ColorMode, type EpisodeRun, type EpisodeStepName, type Settings, type Task,
 } from './schemas.js';
 
 /** Trim, collapse inner whitespace, lower-case (works for Cyrillic). */
@@ -253,13 +253,16 @@ export function gateText(run: EpisodeRun): string | null {
   const at = stepIndex('render');
   const step = run.steps[at];
   if (run.status !== 'awaiting-review' || run.currentStep !== at || !step) return null;
-  const gate = renderGate(step.output);
-  if (gate === null) return null;
-  const out = RenderOutputSchema.parse(step.output);
+  // Task 7 minor 5: one parse (renderGate's rules); a count the output lacks is left out rather than shown as 0.
+  const parsed = RenderOutputSchema.safeParse(step.output);
+  if (!parsed.success) return null;
+  const out = parsed.data;
   const est = formatEstimate(out.estimateSeconds ?? 0);
-  return gate === 'preview'
-    ? `Page 1 is ready — continue with ${out.remainingPanels ?? 0} panels (${est})?`
-    : `Render ${out.panels ?? 0} panels (${est})?`;
+  if (out.preview === true) {
+    return `Page 1 is ready — continue with ${out.remainingPanels !== undefined ? `${out.remainingPanels} panels` : 'the rest'} (${est})?`;
+  }
+  if (out.confirm === true) return `Render ${out.panels !== undefined ? `${out.panels} panels` : 'the chapter'} (${est})?`;
+  return null;
 }
 export const LetteringOutputSchema = z.object({ frames: z.number().int().min(0) });
 export type LetteringOutput = z.infer<typeof LetteringOutputSchema>;
@@ -335,20 +338,30 @@ export function formatEstimate(seconds: number): string {
 export const TYPICAL_PANELS_PER_PAGE = 4.5;
 
 /**
- * W1 C2: the render time of a chapter not broken down yet: pages × TYPICAL_PANELS_PER_PAGE panels, each at the mean of the
- * three routed recipes (no characters, one, several), plus the review rounds when episodes review their images.
+ * The recipes that take natural-language prompts (the server's promptStyleFor: the qwen and flux2 families). A black-and-white
+ * book adds the `routing.bwRefine` pass after each of them (the server's refineFor). A server test keeps the two in step.
  */
-export function estimateChapter(pages: number, settings: Settings): { panels: number; seconds: number } {
+export const NATURAL_PROMPT_RECIPES: ReadonlySet<string> = new Set(['qwen-edit-ref', 'klein-ref']);
+
+/**
+ * W1 C2: the render time of a chapter not broken down yet: pages × TYPICAL_PANELS_PER_PAGE panels, each at the mean of the
+ * three routed recipes (no characters, one, several), plus the review rounds when episodes review their images. Task 2 M4:
+ * for a black-and-white book (`colorMode` 'bw') a routed natural-prompt recipe also counts the `routing.bwRefine` pass, as
+ * the server's estimateRender does.
+ */
+export function estimateChapter(pages: number, settings: Settings, colorMode?: ColorMode): { panels: number; seconds: number } {
   const panels = Math.round(pages * TYPICAL_PANELS_PER_PAGE);
-  const { noChars, oneChar, multiChar } = settings.routing;
-  const perPanel = estimateSeconds([noChars, oneChar, multiChar]) / 3;
+  const { noChars, oneChar, multiChar, bwRefine } = settings.routing;
+  const refine = (recipe: string): string[] =>
+    colorMode === 'bw' && bwRefine !== null && NATURAL_PROMPT_RECIPES.has(recipe) ? [recipe, bwRefine] : [recipe];
+  const perPanel = estimateSeconds([noChars, oneChar, multiChar].flatMap(refine)) / 3;
   const render = panels * perPanel;
   const rounds = settings.review.autoInEpisode ? settings.review.rounds : 0;
   return { panels, seconds: Math.round(render + estimateReviewSeconds(render, panels, rounds)) };
 }
 
 /** "8 pages ≈ 36 panels ≈ 37 min" (the AI section and `manga episode start`). */
-export function formatChapterEstimate(pages: number, settings: Settings): string {
-  const { panels, seconds } = estimateChapter(pages, settings);
+export function formatChapterEstimate(pages: number, settings: Settings, colorMode?: ColorMode): string {
+  const { panels, seconds } = estimateChapter(pages, settings, colorMode);
   return `${pages} ${pages === 1 ? 'page' : 'pages'} ≈ ${panels} panels ≈ ${formatEstimate(seconds).replace(/^~/, '')}`;
 }

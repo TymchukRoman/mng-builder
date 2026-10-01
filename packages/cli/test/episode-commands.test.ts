@@ -339,7 +339,7 @@ describe('manga W1 commands', { timeout: 90_000 }, () => {
     expect(stderr).toEqual([]);
   });
 
-  it('episode pause and resume a rendering run', async () => {
+  it('episode pause and resume a rendering run; with --wait, pause returns at the pause and resume follows to the end', async () => {
     s.fake.loadDelayMs = 1_500; // each image takes a while: the render step is caught running
     const { chapter } = await world();
     await run(['episode', 'start', chapter.id, '--prompt', 'A cat', '--pages', '2', '--autopilot', '--no-preview']);
@@ -347,11 +347,39 @@ describe('manga W1 commands', { timeout: 90_000 }, () => {
       const r = await latest(chapter.id);
       return r?.status === 'running' && r.currentStep === 5 && r.steps[5]!.status === 'running';
     });
-    await run(['episode', 'pause', chapter.id]);
+    await run(['episode', 'pause', chapter.id], true); // Task 7 minor 2: a pause is a stop; --wait returns (exit 0)
     expect(last<EpisodeRun>().status).toBe('paused');
-    await run(['episode', 'resume', chapter.id]);
-    expect(last<EpisodeRun>().status).toBe('running');
-    await run(['episode', 'cancel', chapter.id]);
+    s.fake.loadDelayMs = 0;
+    await run(['episode', 'resume', chapter.id], true);
+    expect(last<EpisodeRun>().status).toBe('done');
+  });
+
+  it('a 409 from the server surfaces with its message and exits 1 (Task 7 minor 2)', async () => {
+    const { chapter } = await world();
+    await run(['episode', 'start', chapter.id, '--prompt', 'A cat', '--pages', '2']); // stops at the outline review
+    await awaitingAt(chapter.id, 1);
+    const io = { stdout: () => undefined, stderr: (t: string) => { stderr.push(t); } };
+    const paused = await run(['episode', 'pause', chapter.id]).catch((e: unknown) => e);
+    expect((paused as Error).message).toBe('only a run that is rendering images can be paused');
+    expect(exitCodeFor(paused, io)).toBe(1);
+    const missing = await run(['chapter', 'render-missing', chapter.id]).catch((e: unknown) => e);
+    expect((missing as Error).message).toBe('the episode has not rendered this chapter yet; wait for its render step');
+    expect(exitCodeFor(missing, io)).toBe(1);
+    expect(stderr.slice(-2)).toEqual([
+      'error: only a run that is rendering images can be paused\n',
+      'error: the episode has not rendered this chapter yet; wait for its render step\n',
+    ]);
+  });
+
+  it('chapter render-missing --wait exits 1 when a job fails (Task 7 minor 2)', async () => {
+    const { chapter } = await world();
+    await s.api('POST', `/api/chapters/${chapter.id}/pages`, { layoutPreset: '2-rows' });
+    s.fake.failNext = 'CUDA error: an illegal memory access';
+    const err = await run(['chapter', 'render-missing', chapter.id], true).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CliError);
+    expect((err as CliError).exitCode).toBe(1);
+    expect((err as Error).message).toBe('1 job(s) did not succeed');
+    expect(last<Job[]>().map((j) => j.status).sort()).toEqual(['failed', 'succeeded']);
   });
 
   it('chapter render-missing --wait renders the panels without an image; a second call has nothing to do', async () => {
@@ -376,8 +404,11 @@ describe('manga W1 commands', { timeout: 90_000 }, () => {
     const { chapter } = await world();
     await run(['episode', 'start', chapter.id, '--prompt', 'A cat', '--pages', '2', '--autopilot'], true);
     expect(last<EpisodeRun>().status).toBe('awaiting-review');
-    expect(stderr.filter((l) => l.startsWith('awaiting-review')).at(-1)).toMatch(/^awaiting-review: Page 1 is ready — continue with \d+ panels \(~\d+ (s|min)\)\?\n$/);
+    const hint = `manga episode approve ${chapter.id}`; // Task 7 minor 1: how to answer the stop
+    expect(stderr.filter((l) => l.startsWith('awaiting-review')).at(-1))
+      .toMatch(new RegExp(`^awaiting-review: Page 1 is ready — continue with \\d+ panels \\(~\\d+ (s|min)\\)\\? — ${hint}\n$`));
     expect(humans.at(-1)).toMatch(/\nPage 1 is ready — continue with \d+ panels/);
+    expect(humans.at(-1)).toContain(hint);
   });
 
   it('chapter edit --summary patches the summary', async () => {

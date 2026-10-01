@@ -196,7 +196,7 @@ export const EpisodeRunStatusSchema = z.enum(['running', 'awaiting-review', 'don
  * A live run (M4 final M10, the one definition): running, waiting at a review point, or paused (W1 C1: a paused run is
  * live too, so a chapter still has one live run); the others have ended. The
  * server refuses a second live run per chapter, the UI shows the run controls, and the CLI's --wait stops at a review
- * point or an end.
+ * point, a pause or an end.
  */
 export const EPISODE_ACTIVE_STATUSES: ReadonlySet<z.infer<typeof EpisodeRunStatusSchema>> = new Set(['running', 'awaiting-review', 'paused']);
 export const EpisodeRunSchema = z.object({

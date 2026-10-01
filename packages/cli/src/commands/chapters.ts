@@ -56,7 +56,8 @@ export function registerChapterCommands(program: Command, ctx: () => Promise<Cli
 
   chapter
     .command('render-missing')
-    .description('render every panel of the chapter that has no image (W1 R1); --wait waits for the jobs')
+    // W1 R1. Task 7 minor 6: queued jobs wait while the GPU queue is paused, and --wait with them.
+    .description('render every panel of the chapter that has no image; --wait waits for the jobs (also while the GPU queue is paused: see manga status)')
     .argument('<chapter>', 'id or <manga>/<number>')
     .action(async (ref: string) => {
       const c = await ctx();

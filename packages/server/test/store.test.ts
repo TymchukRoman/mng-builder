@@ -225,6 +225,10 @@ describe('migration 2 (W1 Q1: chapters.summary)', () => {
     db = openDatabase(file);
     expect(schemaVersion(db)).toBe(3);
     expect(db.prepare(`SELECT summary FROM chapters WHERE id = 'ch_aaaaaaaaaa'`).get()).toEqual({ summary: '' });
+    // Task 2 M2: the old row itself survives, and the new column takes a write.
+    expect(db.prepare(`SELECT title, number FROM chapters WHERE id = 'ch_aaaaaaaaaa'`).get()).toEqual({ title: 'One', number: 1 });
+    db.prepare(`UPDATE chapters SET summary = 'Aiko found the cat.' WHERE id = 'ch_aaaaaaaaaa'`).run();
+    expect(db.prepare(`SELECT summary FROM chapters WHERE id = 'ch_aaaaaaaaaa'`).get()).toEqual({ summary: 'Aiko found the cat.' });
   });
 
   it('round-trips a summary; a chapter created without one has ""', () => {
