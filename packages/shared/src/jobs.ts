@@ -20,7 +20,7 @@ export type LlmStepPayload =
 
 /** W1 R2: the gpu lane's pause reason when another app holds the GPU memory; only this pause is lifted automatically. */
 export const GPU_BUSY_REASON = 'GPU busy: another app is using GPU memory';
-/** W1 R2: the gpu lane's pause reason after "Pause image queue"; never lifted automatically. */
+/** W1 R2: the gpu lane's pause reason after "Pause GPU queue (images and local AI)"; never lifted automatically. */
 export const GPU_MANUAL_PAUSE_REASON = 'Paused by you';
 export interface ExportRenderPayload { target: { type: 'page' | 'chapter'; id: string }; format: 'png' | 'pdf'; outDir?: string }
 export interface ExportRenderResult { files: string[] }

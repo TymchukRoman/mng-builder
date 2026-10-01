@@ -12,10 +12,10 @@ const describe = (lanes: QueueLanes): string =>
 
 /** W1 R2: `manga queue pause|resume gpu`. A manual pause is never lifted automatically. */
 export function registerQueueCommands(program: Command, ctx: () => Promise<CliContext>): void {
-  const queue = program.command('queue').description('pause or resume the image queue');
+  const queue = program.command('queue').description('pause or resume the GPU queue (images and local AI)');
   for (const action of ['pause', 'resume'] as const) {
     queue.command(action)
-      .description(action === 'pause' ? 'pause the image queue until you resume it' : 'resume the image queue')
+      .description(action === 'pause' ? 'pause the GPU queue (images and local AI) until you resume it' : 'resume the GPU queue (images and local AI)')
       .argument('<lane>', 'gpu', gpuOnly)
       .action(async (lane: 'gpu') => {
         const c = await ctx();
