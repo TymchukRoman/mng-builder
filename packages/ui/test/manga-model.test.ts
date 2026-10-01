@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_PAGE_FORMAT, type Chapter, type RecipeInfo } from '@manga/shared';
-import { applyMangaPatch, mangaBadges, pageSizeLabel, recipeOptions, sortChapters, validLoras } from '../src/manga/mangaModel';
+import { applyChapterPatch, applyMangaPatch, mangaBadges, pageSizeLabel, recipeOptions, sortChapters, validLoras } from '../src/manga/mangaModel';
 import { makeManga } from './fixtures';
 
 const chapter = (id: string, order: number, number: number): Chapter => ({
@@ -36,5 +36,10 @@ describe('manga model', () => {
     expect(recipeOptions(list, 'anima')).toEqual([{ id: 'anime', label: 'ANIME' }, { id: 'anima', label: 'ANIMA' }]);
     expect(recipeOptions(list, 'anime-refine').map((o) => o.id)).toEqual(['anime', 'anima', 'anime-refine']);
     expect(recipeOptions(list, 'gone').at(-1)).toEqual({ id: 'gone', label: 'gone' });
+  });
+  it('applyChapterPatch replaces one chapter in the list', () => {
+    const a = chapter('ch_a', 0, 1);
+    const b = chapter('ch_b', 1, 2);
+    expect(applyChapterPatch([a, b], 'ch_b', { summary: 'S.' })).toEqual([a, { ...b, summary: 'S.' }]);
   });
 });

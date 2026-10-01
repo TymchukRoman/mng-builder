@@ -1,7 +1,7 @@
 import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
 import type { Job, Page } from '@manga/shared';
-import { JobWaiters, applyServerEvent, eventsUrl, nextBackoff, parseEvent, upsertJob } from '../src/events';
+import { JobWaiters, applyServerEvent, toastsFailure, eventsUrl, nextBackoff, parseEvent, upsertJob } from '../src/events';
 import { fetchableId, qk } from '../src/queryKeys';
 import { makeDetail, makeJob, makeManga } from './fixtures';
 
@@ -167,5 +167,13 @@ describe('applyServerEvent', () => {
     await vi.waitFor(() => expect(qc.getQueryData(qk.settings())).toEqual({ ok: true }));
     expect(mangaFetches).toBe(1);
     for (const s of stop) s();
+  });
+});
+
+describe('failure toasts (W1 F21)', () => {
+  it('skips a failed chapter summary: it never fails its run', () => {
+    expect(toastsFailure(makeJob({ kind: 'llm.step', payload: { type: 'chapter-summary', chapterId: 'ch_1', runId: 'er_1' } }))).toBe(false);
+    expect(toastsFailure(makeJob({ kind: 'llm.step', payload: { type: 'story', runId: 'er_1' } as never }))).toBe(true);
+    expect(toastsFailure(makeJob())).toBe(true);
   });
 });

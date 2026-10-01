@@ -101,10 +101,18 @@ export interface EventDeps {
   helloSeen: { value: boolean };
 }
 
+/** W1 F21: a failed chapter summary never fails its run (the chapter just keeps its summary), so it raises no error toast. */
+export function toastsFailure(job: Job): boolean {
+  return !(job.kind === 'llm.step' && (job.payload as { type?: unknown }).type === 'chapter-summary');
+}
+
 const defaultDeps: EventDeps = {
   waiters: jobWaiters,
   fetchJob,
-  onJobFailed: (job) => pushToast('error', `${kindLabel(job.kind)} failed${job.error ? `: ${errorHeadline(job.error)}` : ''}`),
+  onJobFailed: (job) => {
+    if (!toastsFailure(job)) return;
+    pushToast('error', `${kindLabel(job.kind)} failed${job.error ? `: ${errorHeadline(job.error)}` : ''}`);
+  },
   reported: new Set<string>(),
   helloSeen: { value: false },
 };

@@ -39,3 +39,8 @@ export function recipeOptions(list: readonly RecipeInfo[] | undefined, current: 
   const known = (list ?? []).find((r) => r.id === current);
   return [...options, { id: current, label: known?.label ?? current }];
 }
+
+/** The chapter list with one chapter's fields replaced (an optimistic update). */
+export function applyChapterPatch(list: Chapter[], id: string, patch: Partial<Chapter>): Chapter[] {
+  return list.map((c) => (c.id === id ? { ...c, ...patch } : c));
+}

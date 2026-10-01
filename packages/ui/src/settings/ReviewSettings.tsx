@@ -15,6 +15,10 @@ export function ReviewSettings({ settings, save }: { settings: Settings; save: S
       <Field label="Retry rounds" inline>
         <NumberField label="Retry rounds" value={settings.review.rounds} min={0} max={5} integer onSave={(rounds) => save({ review: { rounds } })} />
       </Field>
+      <Field label="Confirm renders over (min)" inline>
+        <NumberField label="Confirm renders over (min)" value={settings.episode.confirmRenderMinutes} min={1} max={1440} integer
+          onSave={(confirmRenderMinutes) => save({ episode: { confirmRenderMinutes } })} />
+      </Field>
     </section>
   );
 }
