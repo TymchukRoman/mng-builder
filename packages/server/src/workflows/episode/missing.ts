@@ -1,6 +1,6 @@
 import { EPISODE_ACTIVE_STATUSES, stepIndex, type EpisodeRun, type ImageGeneratePayload, type JobRef } from '@manga/shared';
 import { ConflictError } from '../../errors.js';
-import { isTerminal, type JobQueue } from '../../jobs/index.js';
+import type { JobQueue } from '../../jobs/index.js';
 import type { Store } from '../../store/index.js';
 import { chapterPanels } from './chapter.js';
 
@@ -10,9 +10,6 @@ export function missingPanelIds(store: Store, chapterId: string): string[] {
   const manga = store.mangas.require(chapter.mangaId);
   return chapterPanels(store, chapterId, manga.readingDirection).filter((e) => e.panel.activeImageId === null).map((e) => e.panel.id);
 }
-
-/** How many unfinished jobs per status the duplicate check reads (a busy queue holds a few hundred at most). */
-const UNFINISHED_SCAN = 500;
 
 /**
  * Whether the run's render step owns the chapter's panels: its driver renders them (running), it will again on resume
@@ -39,9 +36,8 @@ export function renderMissing(store: Store, queue: Pick<JobQueue, 'enqueue'>, ch
       ? 'the episode has not rendered this chapter yet; wait for its render step'
       : 'the episode is rendering this chapter; resume or wait for it');
   }
-  const unfinished = [...store.jobs.list({ status: 'queued', limit: UNFINISHED_SCAN }), ...store.jobs.list({ status: 'running', limit: UNFINISHED_SCAN })];
-  const queued = new Set(unfinished
-    .filter((j) => j.kind === 'image.generate' && !isTerminal(j.status))
+  // Task 5 M3: every unfinished generate (image.generate always runs in the gpu lane), not a capped scan of the newest jobs.
+  const queued = new Set(store.jobs.listUnfinished('gpu', ['image.generate'])
     .map((j) => j.payload as ImageGeneratePayload)
     .flatMap((p) => (p.target === 'panel' ? [p.panelId] : [])));
   return missing.filter((id) => !queued.has(id)).map((panelId) => {

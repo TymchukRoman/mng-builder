@@ -80,7 +80,7 @@ Only a repair that then parses is used, and it still goes through schema validat
 
 ### C1 — Pause and resume a render
 - `POST /api/episodes/:runId/pause` does the following:
-  - it cancels the run's **queued** child jobs (generate, review, portraits) and lets a running image finish;
+  - it cancels the run's **queued** child jobs (generate, review) and lets a running image finish; the outline's queued portraits stay, as for a re-run, because they belong to the characters (W1 final M4);
   - it stops the driver: the render step job ends as `cancelled` without failing the step;
   - it sets the run status `paused` (new) and the step status `paused` (new, keeping its token).
 - `POST /api/episodes/:runId/resume` re-dispatches the current step with its token kept (like a retry). Already-rendered panels are skipped.

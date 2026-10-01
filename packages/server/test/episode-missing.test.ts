@@ -54,6 +54,20 @@ describe('render-missing (W1 R1)', () => {
     expect(renderMissing(lib.store, queue.asQueue(), chapter.id)).toHaveLength(3);
   });
 
+  it('sees an old queued generate behind many newer queued jobs: no duplicate (Task 5 M3)', () => {
+    const { chapter, ids } = world();
+    lib.store.jobs.insert({
+      kind: 'image.generate', lane: 'gpu', priority: 0, payload: { target: 'panel', panelId: ids[1]! }, maxAttempts: 3,
+      nextRunAt: new Date().toISOString(), episodeRunId: null,
+    });
+    for (let i = 0; i < 600; i++) {
+      lib.store.jobs.insert({ kind: 'llm.step', lane: 'claude', priority: 0, payload: null, maxAttempts: 3, nextRunAt: new Date().toISOString(), episodeRunId: null });
+    }
+    const refs = renderMissing(lib.store, queue.asQueue(), chapter.id);
+    expect(refs).toHaveLength(3);
+    expect(queue.jobs('image.generate').map((j) => (j.payload as { panelId: string }).panelId)).toEqual(ids.slice(2));
+  });
+
   it('refuses while the episode render step is running or paused; allowed at its preview stop', () => {
     const { chapter } = world();
     const run = seedRun(lib.store, chapter.id, { currentStep: 'render' });

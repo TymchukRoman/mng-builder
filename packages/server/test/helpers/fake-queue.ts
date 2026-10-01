@@ -13,6 +13,8 @@ export class FakeQueue {
   private readonly waiters = new Map<string, Array<(job: Job) => void>>();
   private readonly controllers = new Map<string, AbortController>();
   private readonly order: string[] = [];
+  /** Jobs a simulated shutdown put back in line: their handler's late outcome is dropped (see interrupt). */
+  private readonly interrupted = new Set<string>();
   private inflight = 0;
 
   constructor(private readonly store: Store) {}
@@ -43,9 +45,9 @@ export class FakeQueue {
       if (TERMINAL.has(this.store.jobs.require(id).status)) return;
       this.store.jobs.update(id, { status: 'running', startedAt: new Date().toISOString() });
       const result = await handler(this.store.jobs.require(id), controller.signal);
-      this.settle(id, { status: 'succeeded', result: result ?? null });
+      if (!this.interrupted.has(id)) this.settle(id, { status: 'succeeded', result: result ?? null });
     } catch (err) {
-      this.settle(id, { status: 'failed', error: err instanceof Error ? err.message : String(err) });
+      if (!this.interrupted.has(id)) this.settle(id, { status: 'failed', error: err instanceof Error ? err.message : String(err) });
     } finally {
       this.controllers.delete(id);
       this.inflight--;
@@ -67,6 +69,29 @@ export class FakeQueue {
   cancel(id: string): Job {
     this.controllers.get(id)?.abort();
     return this.settle(id, { status: 'cancelled' });
+  }
+
+  /** True while something waits for the job (a driver adopted or queued it), e.g. to sync a test without a sleep. */
+  isWaitedOn(id: string): boolean {
+    return (this.waiters.get(id)?.length ?? 0) > 0;
+  }
+
+  /** A shutdown, as JobQueue.stop does it: the running handler is aborted and its job put back in line, not settled. */
+  interrupt(id: string): Job {
+    this.interrupted.add(id);
+    this.controllers.get(id)?.abort();
+    return this.store.jobs.update(id, { status: 'queued', startedAt: null });
+  }
+
+  /** After a simulated restart: runs every queued job of the store whose kind this queue has a handler for. */
+  runQueued(): void {
+    for (const job of this.store.jobs.list({ status: 'queued', limit: 1_000 })) {
+      const handler = this.handlers.get(job.kind);
+      if (!handler) continue;
+      this.order.push(job.id);
+      this.inflight++;
+      queueMicrotask(() => { void this.run(job.id, handler); });
+    }
   }
 
   waitFor(id: string): Promise<Job> {

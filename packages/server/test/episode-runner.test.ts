@@ -1178,8 +1178,11 @@ describe('EpisodeRunner — pause and resume (W1 C1)', () => {
       expect(jobs.map((j) => lib.store.jobs.require(j.id).status)).toEqual(['queued', 'queued']);
       runner.pause(run.id);
       expect(jobs.map((j) => lib.store.jobs.require(j.id).status)).toEqual(['cancelled', 'cancelled']);
+      // Task 5 M4: no sleep; a job queued behind them in the resumed lane finishing shows the lane ran without them.
+      queue.register('image.upscale', async () => 'ran');
       queue.resumeLane('gpu');
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      const after = queue.enqueue({ kind: 'image.upscale', lane: 'gpu', payload: null });
+      expect(await queue.waitFor(after.id)).toMatchObject({ status: 'succeeded' });
       expect(calls).toBe(1);
     } finally {
       runner.stop();
@@ -1310,7 +1313,8 @@ describe('EpisodeRunner — pause and resume (W1 C1)', () => {
     expect(refs.every((ref) => lib.store.jobs.require(ref.jobId).episodeRunId === run.id)).toBe(true);
     runner.approve(run.id); // Continue
     await vi.waitFor(() => expect(renderJobs(queue).map((j) => j.status)).toEqual(['succeeded', 'running']));
-    await new Promise((resolve) => setTimeout(resolve, 20)); // the Continue's driver reaches its renders
+    // W1 final M7: the Continue's driver has adopted the render-missing jobs once it waits for them (no timing guess).
+    await vi.waitFor(() => expect(refs.every((ref) => queue.isWaitedOn(ref.jobId))).toBe(true));
     release();
     await queue.idle();
     const r = runner.get(run.id);
@@ -1321,5 +1325,153 @@ describe('EpisodeRunner — pause and resume (W1 C1)', () => {
     expect(ids.map((id) => counts.get(id))).toEqual(ids.map(() => 1));
     // Adopted, not merely finished first: the step's own job list holds them.
     expect((r.steps[RENDER]!.output as { jobs: string[] }).jobs).toEqual(expect.arrayContaining(refs.map((ref) => ref.jobId)));
+  });
+  /** Serves the queued portraits, panel renders and reviews by hand (imaging off); `verdict` names a panel's review issues. */
+  function serveQueued(
+    queue: FakeQueue, verdict: (panelId: string) => Array<{ kind: 'anatomy'; note: string }> = () => [], serve: (job: Job) => boolean = () => true,
+  ): void {
+    servePortraits(queue);
+    for (const job of panelJobs(queue).filter((j) => j.status === 'queued' && serve(j))) queue.succeed(job.id, { imageId: renderPanel(panelOf(job)) });
+    for (const job of queue.jobs('image.review').filter((j) => j.status === 'queued')) {
+      const p = job.payload as { imageId: string; panelId: string };
+      const issues = verdict(p.panelId);
+      lib.store.images.update(p.imageId, { review: { engine: 'claude', pass: issues.length === 0, issues, at: new Date().toISOString() } });
+      queue.succeed(job.id);
+    }
+  }
+
+  /** A run with the preview on, stopped at its preview (imaging off, everything served by hand). */
+  async function atPreview() {
+    const { chapter, input } = world();
+    const r = rig({ imaging: false });
+    const run = r.runner.start(chapter.id, { ...input, previewFirst: true }, 'autopilot');
+    await vi.waitFor(() => {
+      serveQueued(r.queue);
+      expect(r.runner.get(run.id).status).toBe('awaiting-review');
+    });
+    const preview = r.runner.get(run.id).steps[RENDER]!;
+    expect(preview.output).toMatchObject({ preview: true, remainingPanels: 2 });
+    return { ...r, chapter, run: r.runner.get(run.id), previewJobs: (preview.output as { jobs: string[] }).jobs };
+  }
+
+  const chapterPanelIds = (chapterId: string): string[] =>
+    chapterPanels(lib.store, chapterId, lib.store.mangas.require(lib.store.chapters.require(chapterId).mangaId).readingDirection).map((e) => e.panel.id);
+
+  /** Per panel of the chapter, how many panel generate jobs of the run there are (with `status`, only those). */
+  const generatesPerPanel = (runId: string, chapterId: string, status?: Job['status']): Array<number | undefined> => {
+    const counts = new Map<string, number>();
+    for (const j of lib.store.jobs.listByEpisodeRun(runId)) {
+      const p = j.payload as ImageGeneratePayload;
+      if (j.kind !== 'image.generate' || p.target !== 'panel' || (status !== undefined && j.status !== status)) continue;
+      counts.set(p.panelId, (counts.get(p.panelId) ?? 0) + 1);
+    }
+    return chapterPanelIds(chapterId).map((id) => counts.get(id));
+  };
+
+  it('preview, Continue, pause, resume: no second stop, one rendered job per panel, the output keeps both phases (W1 final M8)', async () => {
+    lib.store.settings.patch({ review: { autoInEpisode: false } });
+    const { runner, queue, run, chapter, previewJobs } = await atPreview();
+    const token = run.steps[RENDER]!.startedAt;
+    runner.approve(run.id); // Continue
+    await vi.waitFor(() => expect(panelJobs(queue).filter((j) => j.status === 'queued' && queue.isWaitedOn(j.id))).toHaveLength(2));
+    const [done, cut] = panelJobs(queue).filter((j) => j.status === 'queued');
+    queue.succeed(done!.id, { imageId: renderPanel(panelOf(done!)) }); // one renders before the pause
+    runner.pause(run.id);
+    expect(lib.store.jobs.require(cut!.id).status).toBe('cancelled');
+    expect(runner.get(run.id).steps[RENDER]!.output).toMatchObject({ preview: true }); // the gate stays for the resume
+
+    runner.resumeRun(run.id);
+    await vi.waitFor(() => {
+      serveQueued(queue);
+      expect(runner.get(run.id).status).toBe('done'); // no second stop on the way
+    });
+    const r = runner.get(run.id);
+    expect(r.steps[RENDER]).toMatchObject({ status: 'done', startedAt: token });
+    expect(generatesPerPanel(run.id, chapter.id, 'succeeded')).toEqual(chapterPanelIds(chapter.id).map(() => 1));
+    const resumed = panelJobs(queue).filter((j) => panelOf(j) === panelOf(cut!) && j.status === 'succeeded');
+    expect(resumed).toHaveLength(1);
+    const jobs = (r.steps[RENDER]!.output as { jobs: string[] }).jobs;
+    expect(jobs).toEqual(expect.arrayContaining([...previewJobs, resumed[0]!.id])); // both phases
+    expect(r.steps[RENDER]!.output).not.toHaveProperty('preview');
+  });
+
+  it('preview, Continue, then a restart: the new runner adopts the queued renders without a second stop or duplicates (W1 final M8)', async () => {
+    lib.store.settings.patch({ review: { autoInEpisode: false } });
+    const { runner, queue, run, chapter } = await atPreview();
+    runner.approve(run.id); // Continue
+    await vi.waitFor(() => expect(panelJobs(queue).filter((j) => j.status === 'queued' && queue.isWaitedOn(j.id))).toHaveLength(2));
+    const [, driver] = renderJobs(queue);
+    runner.stop(); // the old process goes away: its driver is put back in line, the renders stay queued
+    queue.interrupt(driver!.id);
+
+    const restarted = rig({ imaging: false });
+    expect(restarted.runner.resume()).toBe(1); // the running render step is re-attached to its driver
+    expect(restarted.queue.jobs()).toEqual([]); // nothing new: no second driver
+    restarted.queue.runQueued(); // the restarted queue runs the driver again
+    await vi.waitFor(() => {
+      serveQueued(queue);
+      expect(restarted.runner.get(run.id).status).toBe('done'); // no second stop
+    });
+    expect(generatesPerPanel(run.id, chapter.id)).toEqual(chapterPanelIds(chapter.id).map(() => 1)); // adopted, never queued twice
+    expect(generatesPerPanel(run.id, chapter.id, 'succeeded')).toEqual(chapterPanelIds(chapter.id).map(() => 1));
+    restarted.runner.stop();
+  });
+
+  it('pause keeps the queued outline portraits; a restart keeps them too (W1 final M4)', async () => {
+    const { runner, queue, run, engines } = await rendering();
+    const character = lib.store.characters.listByManga(lib.store.chapters.require(run.chapterId).mangaId)[0]!;
+    const portrait = queue.enqueue({ kind: 'image.generate', lane: 'gpu', payload: { target: 'character-portrait', characterId: character.id }, episodeRunId: run.id });
+    runner.pause(run.id);
+    expect(lib.store.jobs.require(portrait.id).status).toBe('queued');
+    expect(panelJobs(queue).every((j) => j.status === 'cancelled')).toBe(true);
+    runner.stop();
+    const restarted = new EpisodeRunner({ store: lib.store, bus, queue: queue.asQueue(), engines });
+    restarted.resume();
+    expect(lib.store.jobs.require(portrait.id).status).toBe('queued');
+    restarted.cancel(run.id); // cancelling the run still drops them
+    expect(lib.store.jobs.require(portrait.id).status).toBe('cancelled');
+    restarted.stop();
+  });
+
+  it('a restart drops the image job a shutdown put back in line for a paused run (Task 5 M1)', async () => {
+    const { runner, queue, run, engines } = await rendering();
+    const [first] = panelJobs(queue);
+    lib.store.jobs.update(first!.id, { status: 'running', startedAt: new Date().toISOString() }); // the gpu lane is rendering it
+    runner.pause(run.id);
+    expect(lib.store.jobs.require(first!.id).status).toBe('running'); // a running image finishes
+    lib.store.jobs.update(first!.id, { status: 'queued', startedAt: null }); // the shutdown put it back in line
+    runner.stop();
+    const restarted = new EpisodeRunner({ store: lib.store, bus, queue: queue.asQueue(), engines });
+    expect(restarted.resume()).toBe(0);
+    expect(lib.store.jobs.require(first!.id).status).toBe('cancelled'); // nothing renders while the run is paused
+    expect(restarted.get(run.id).status).toBe('paused');
+    restarted.stop();
+  });
+
+  it('a flagged panel whose re-render the pause cancelled is re-rendered with the review fix on resume (Task 5 M2)', async () => {
+    const { runner, queue, run } = await rendering();
+    let flaggedPanel: string | null = null;
+    const isRetry = (j: Job): boolean => (j.payload as { negativeExtra?: string }).negativeExtra !== undefined;
+    const retrying = (): Job[] => panelJobs(queue).filter((j) => j.status === 'queued' && isRetry(j));
+    // Render every panel, then flag the first reviewed panel's image; its re-render stays queued (not served).
+    await vi.waitFor(() => {
+      serveQueued(queue, (panelId) => {
+        flaggedPanel ??= panelId;
+        return panelId === flaggedPanel ? [{ kind: 'anatomy', note: 'Six fingers on the left hand.' }] : [];
+      }, (j) => !isRetry(j));
+      expect(retrying()).toHaveLength(1);
+    });
+    const [reRender] = retrying();
+    expect(panelOf(reRender!)).toBe(flaggedPanel);
+    runner.pause(run.id);
+    expect(lib.store.jobs.require(reRender!.id).status).toBe('cancelled');
+
+    runner.resumeRun(run.id);
+    await vi.waitFor(() => expect(retrying()).toHaveLength(1));
+    const [again] = retrying();
+    expect(again!.payload).toMatchObject({ panelId: flaggedPanel, negativeExtra: 'bad anatomy, extra arms, extra limbs, bad hands' });
+    // Only the flagged panel is rendered again: the others were rendered (and passed) since the token.
+    expect(panelJobs(queue).filter((j) => j.status === 'queued').map(panelOf)).toEqual([flaggedPanel]);
+    runner.stop();
   });
 });

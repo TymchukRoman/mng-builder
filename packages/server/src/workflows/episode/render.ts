@@ -93,6 +93,16 @@ function renderedSince(store: Store, panel: Panel, token: string | null): boolea
   return image !== null && image.createdAt >= token;
 }
 
+/**
+ * Task 5 M2: the review that flagged the panel's active image, when that image was rendered since the token and nothing
+ * re-rendered it after the flag (the pause cancelled its re-render, or the re-render failed): the panel is not done.
+ */
+function flaggedSince(store: Store, panel: Panel, token: string | null): ReviewResult | null {
+  if (!renderedSince(store, panel, token)) return null;
+  const review = store.images.get(panel.activeImageId!)?.review ?? null;
+  return review !== null && !review.pass ? review : null;
+}
+
 function firstPortrait(store: Store, characterId: string): Image | null {
   return store.images.listByOwner('character', characterId)
     .filter((i) => i.role === 'portrait')
@@ -239,12 +249,18 @@ const NOTHING_RENDERED: PhaseCounts = { jobs: [], reviewed: 0, flagged: 0, round
  */
 async function renderPanels(
   deps: DriverDeps, ctx: JobContext, run: EpisodeRun, current: () => Panel[], todo: Panel[], leftovers: Leftovers, label: string,
-  unreviewable: ReadonlySet<string>,
+  unreviewable: ReadonlySet<string>, flaggedBy: (panel: Panel) => ReviewResult | null,
 ): Promise<{ counts: PhaseCounts; failed: ReadonlySet<string> }> {
   const { store } = deps;
   const settings = store.settings.get();
+  const newSeed = deps.newSeed ?? randomSeed;
   const jobIds: string[] = [];
-  const first = await generateAll(deps, ctx, run, todo.map((p) => ({ panelId: p.id })), leftovers, jobIds, label);
+  // Task 5 M2: a panel still flagged by a review of this step is rendered with that review's retry patch.
+  const firstReqs = todo.map((p): GenRequest => {
+    const review = flaggedBy(p);
+    return review ? { panelId: p.id, patch: retryPatch(review.issues, settings, newSeed(), retryTarget(store, settings, p)) } : { panelId: p.id };
+  });
+  const first = await generateAll(deps, ctx, run, firstReqs, leftovers, jobIds, label);
   if (todo.length > 0 && first.failed.length === todo.length) {
     const f = first.failed[0]!;
     throw new PermanentError(`All ${todo.length} panel renders failed (${f.panelId}: ${f.error}). Check the image engine, then retry the render step.`);
@@ -254,7 +270,6 @@ async function renderPanels(
   let flagged = 0;
   let rounds = 0;
   if (settings.review.autoInEpisode && settings.review.rounds > 0) {
-    const newSeed = deps.newSeed ?? randomSeed;
     let batch = current().filter((p) =>
       !failed.has(p.id) && !unreviewable.has(p.id) && p.activeImageId !== null && store.images.get(p.activeImageId)?.review == null);
     for (let round = 1; round <= settings.review.rounds && batch.length > 0; round++) {
@@ -302,10 +317,12 @@ export async function runRenderStep(deps: DriverDeps, ctx: JobContext, run: Epis
    */
   const failedPanels = (failed: ReadonlySet<string>, among: ReadonlySet<string> = new Set(ids)): string[] =>
     current().filter((p) => failed.has(p.id) || (p.activeImageId === null && among.has(p.id))).map((p) => p.id);
-  const pendingWith = (leftovers: Leftovers): Panel[] =>
-    current().filter((p) => !renderedSince(store, p, token) || leftovers.hasGenerate(p.id));
   const gate = renderGate(step?.output); // set: this dispatch is the Continue of that stop
   const previewed = new Set(entries.filter((e) => e.isCover || e.pageNumber === 1).map((e) => e.panel.id));
+  /** Task 5 M2: a flagged panel left without its re-render; in a Continue the previewed page is the user's (F14). */
+  const flagged = (p: Panel): ReviewResult | null => (gate === 'preview' && previewed.has(p.id) ? null : flaggedSince(store, p, token));
+  const pendingWith = (leftovers: Leftovers): Panel[] =>
+    current().filter((p) => !renderedSince(store, p, token) || leftovers.hasGenerate(p.id) || flagged(p) !== null);
 
   if (gate === null && run.input.previewFirst === false) {
     const todo = pendingWith(new Leftovers(liveJobs(store, run.id)));
@@ -330,7 +347,7 @@ export async function runRenderStep(deps: DriverDeps, ctx: JobContext, run: Epis
       // Review M1: the preview reviews only the cover and page 1; an older image of a later page waits for the Continue.
       const later = new Set(ids.filter((id) => !previewed.has(id)));
       const phase = await renderPanels(
-        deps, ctx, run, current, now, leftovers, label(now, `Rendering page 1 and the cover: ${now.length} panels`), later,
+        deps, ctx, run, current, now, leftovers, label(now, `Rendering page 1 and the cover: ${now.length} panels`), later, flagged,
       );
       return {
         ...phase.counts, failedPanelIds: failedPanels(phase.failed, previewed), preview: true, remainingPanels: rest.length,
@@ -344,7 +361,7 @@ export async function runRenderStep(deps: DriverDeps, ctx: JobContext, run: Epis
   // reviewed as usual, so a Continue resumed after a restart still adopts its review jobs (F11).
   const todoIds = new Set(todo.map((p) => p.id));
   const checked = gate === 'preview' ? new Set([...previewed].filter((id) => !todoIds.has(id))) : new Set<string>();
-  const phase = await renderPanels(deps, ctx, run, current, todo, leftovers, label(todo, `Rendering ${todo.length} panels`), checked);
+  const phase = await renderPanels(deps, ctx, run, current, todo, leftovers, label(todo, `Rendering ${todo.length} panels`), checked, flagged);
   // Review M3: the output of the whole step, so the preview phase's jobs and review counts are kept.
   const before = gate === 'preview' ? RenderOutputSchema.parse(step?.output) : NOTHING_RENDERED;
   return {

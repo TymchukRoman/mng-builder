@@ -125,9 +125,11 @@ export class EpisodeRunner {
   /**
    * W1 C1: pause a rendering run. The step is saved paused first, with its token, so the step job's cancellation below
    * never fails it (failStep only fails a running step). Then the driver's job is cancelled (it ends `cancelled`) and the
-   * run's queued image jobs (generate, review, portraits; also those waiting behind a paused gpu lane) are dropped; a
-   * running image finishes, and resume skips the panel it rendered. The chapter stays `generating`. A render waiting at
-   * its preview or size stop is not running, so it cannot be paused (nothing is working then).
+   * run's queued image jobs (generate, review; also those waiting behind a paused gpu lane) are dropped; a running image
+   * finishes, and resume skips the panel it rendered. W1 final M4: the outline's queued `character-portrait` jobs stay,
+   * as for a re-run (F12): they belong to the characters, render no panel, and resume's ensurePortraits waits for them
+   * instead of queueing a single new one. The chapter stays `generating`. A render waiting at its preview or size stop is
+   * not running, so it cannot be paused (nothing is working then).
    */
   pause(runId: string): EpisodeRun {
     const run = this.get(runId);
@@ -138,9 +140,7 @@ export class EpisodeRunner {
     const saved = this.save(run, { status: 'paused', steps: patchStep(run.steps, idx, { status: 'paused' }) });
     const driver = this.findStepJob(run.id, 'render');
     if (driver) this.deps.queue.cancel(driver.id);
-    for (const job of this.deps.store.jobs.listByEpisodeRun(run.id)) {
-      if (job.status === 'queued' && job.kind.startsWith('image.')) this.deps.queue.cancel(job.id);
-    }
+    this.cancelQueuedImages(run.id);
     return saved;
   }
 
@@ -247,6 +247,9 @@ export class EpisodeRunner {
       for (const chapter of store.chapters.listByManga(manga.id)) {
         const run = store.episodes.latestByChapter(chapter.id);
         const step = run?.steps[run.currentStep];
+        // Task 5 M1: an image job the shutdown (or a crash, via recover) put back in line must not run while the run is
+        // paused; resume adopts nothing it needs (renderedSince skips what is done), so it is dropped like at the pause.
+        if (run?.status === 'paused') this.cancelQueuedImages(run.id);
         if (!run || run.status !== 'running' || !step) continue;
         try {
           if (step.status === 'pending') {
@@ -450,6 +453,13 @@ export class EpisodeRunner {
       const p = j.payload as { type?: string; step?: string } | null;
       return !isTerminal(j.status) && j.kind === 'llm.step' && p?.type === 'episode' && p.step === name;
     }) ?? null;
+  }
+
+  /** W1 C1: drops the run's queued image jobs (generate, review), keeping the character portraits (W1 final M4, as F12). */
+  private cancelQueuedImages(runId: string): void {
+    for (const job of this.deps.store.jobs.listByEpisodeRun(runId)) {
+      if (job.status === 'queued' && job.kind.startsWith('image.') && !isPortraitJob(job)) this.deps.queue.cancel(job.id);
+    }
   }
 
   /** Cancels the run's unfinished jobs; a rerun keeps the character portraits (F12), a run cancel does not. */

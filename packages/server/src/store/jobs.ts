@@ -42,6 +42,15 @@ export class SqliteJobRepo extends TableRepo<Job, NewJobRow, JobPatch> implement
     return rows.map((row) => this.decode(row));
   }
 
+  listUnfinished(lane: Lane, kinds: readonly JobKind[]): Job[] {
+    if (kinds.length === 0) return [];
+    const rows = this.db
+      .prepare(`SELECT * FROM jobs WHERE lane = ? AND status IN ('queued', 'running') AND kind IN (${kinds.map(() => '?').join(', ')})
+                ORDER BY created_at ASC, rowid ASC`)
+      .all(lane, ...kinds) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.decode(row));
+  }
+
   listByEpisodeRun(runId: string): Job[] {
     const rows = this.db
       .prepare('SELECT * FROM jobs WHERE episode_run_id = ? ORDER BY created_at ASC, rowid ASC')
