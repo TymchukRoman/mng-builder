@@ -115,11 +115,13 @@ export function stepActions(run: EpisodeRun, selected: EpisodeStepName): StepAct
 /**
  * What the stepper shows instead of a step's output: a running step is working, a pending one has not run. Their stored
  * output, if any, is an earlier one (a re-run premise keeps its old output until replaced), so it is not shown
- * (residual N5). null: show the output.
+ * (residual N5). W1 final M5: a paused render shows "Paused", never its stored output (in the Continue phase that is the
+ * preview gate's raw JSON). null: show the output.
  */
 export function stepPlaceholder(step: Pick<EpisodeRun['steps'][number], 'status'>): string | null {
   if (step.status === 'running') return 'Working…';
   if (step.status === 'pending') return 'Not run yet';
+  if (step.status === 'paused') return 'Paused';
   return null;
 }
 

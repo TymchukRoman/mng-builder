@@ -60,6 +60,7 @@ describe('episode view', () => {
   it('shows a placeholder, never a stored output, for a running or pending step (residual N5)', () => {
     expect(stepPlaceholder({ status: 'running' })).toBe('Working…');
     expect(stepPlaceholder({ status: 'pending' })).toBe('Not run yet');
+    expect(stepPlaceholder({ status: 'paused' })).toBe('Paused'); // W1 final M5: never the preview gate's raw JSON
     for (const status of ['done', 'awaiting-review', 'failed'] as const) expect(stepPlaceholder({ status })).toBeNull();
   });
 
