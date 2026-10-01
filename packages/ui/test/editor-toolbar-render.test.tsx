@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_PAGE_FORMAT, type PageDetail } from '@manga/shared';
-import { EditorToolbar } from '../src/editor/EditorToolbar';
+import { EditorToolbar, type EditorToolbarProps } from '../src/editor/EditorToolbar';
 import type { HistorySnapshot } from '../src/editor/history';
 import { PAGE_SELECTION, panelSelection, type Selection } from '../src/editor/selection';
 import { makeDetail } from './fixtures';
@@ -13,17 +13,24 @@ const noop = (): void => undefined;
 const AUTO_LETTER = 'Auto-letter page (cannot be undone)';
 
 /** The toolbar's accessible labels (used by the E2E specs), rendered without a DOM. */
-function render(mode: 'chapter' | 'cover', selection: Selection, detail: PageDetail | null = makeDetail(), history = IDLE, exportTarget: { type: 'page' | 'chapter'; id: string } | null = null): string {
+function render(
+  mode: 'chapter' | 'cover', selection: Selection, detail: PageDetail | null = makeDetail(), history = IDLE,
+  exportTarget: { type: 'page' | 'chapter'; id: string } | null = null, extra: Partial<EditorToolbarProps> = {},
+): string {
   return renderToStaticMarkup(
     <QueryClientProvider client={new QueryClient()}>
       <MemoryRouter>
         <EditorToolbar mode={mode} title="1. Start" backTo="/m/mg_1" detail={detail} selection={selection} history={history}
           readingDirection="rtl" format={DEFAULT_PAGE_FORMAT} zoom={{ mode: 'fit' }} generating={false} lettering={false} exportTarget={exportTarget}
-          onUndo={noop} onRedo={noop} onApplyPreset={noop} onSplit={noop} onMerge={noop} onAddFrame={noop} onAutoLetter={noop} onGenerate={noop} onZoom={noop} />
+          missingImages={null} renderingMissing={false} renderMissingBlocked={false} onRenderMissing={noop}
+          onUndo={noop} onRedo={noop} onApplyPreset={noop} onSplit={noop} onMerge={noop} onAddFrame={noop} onAutoLetter={noop} onGenerate={noop} onZoom={noop}
+          {...extra} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
 }
+/** Chapter mode with a page and no selection, plus the W1 props under test. */
+const renderToolbar = (extra: Partial<EditorToolbarProps>): string => render('chapter', PAGE_SELECTION, makeDetail(), IDLE, null, extra);
 
 const enabled = (html: string, label: string): boolean => {
   const escaped = label.replace(/[()+]/g, (c) => `\\${c}`);
@@ -83,5 +90,19 @@ describe('editor toolbar', () => {
     const html = render('chapter', PAGE_SELECTION, makeDetail(), { canUndo: true, canRedo: true, undoLabel: 'Resize panels', redoLabel: 'Add speech', undoPageId: null, redoPageId: null, busy: false });
     expect(enabled(html, 'Undo: resize panels (Ctrl+Z)')).toBe(true);
     expect(enabled(html, 'Redo: add speech (Ctrl+Y)')).toBe(true);
+  });
+
+  it('chapter mode offers "Render panels without an image (N)" only when some are missing (W1 R1)', () => {
+    expect(renderToolbar({ missingImages: null })).not.toContain('Render panels without an image');
+    expect(renderToolbar({ missingImages: 0 })).not.toContain('Render panels without an image');
+    const html = renderToolbar({ missingImages: 3 });
+    expect(html).toContain('aria-label="Render panels without an image (3)"');
+    expect(html).toContain('data-tip="Render panels without an image (3)"');
+    expect(enabled(html, 'Render panels without an image (3)')).toBe(true);
+    expect(html).toMatch(/aria-label="Render panels without an image \(3\)"[\s\S]*?class="icon-btn__badge">3</);
+    const blocked = renderToolbar({ missingImages: 3, renderMissingBlocked: true });
+    expect(blocked).toMatch(/aria-label="Render panels without an image: the episode is rendering"[^>]*aria-disabled="true"/);
+    expect(renderToolbar({ missingImages: 3, renderingMissing: true })).toMatch(/aria-label="Render panels without an image \(3\)"[^>]*aria-busy="true"/);
+    expect(render('cover', PAGE_SELECTION, makeDetail(), IDLE, null, { missingImages: 3 })).not.toContain('Render panels without an image');
   });
 });

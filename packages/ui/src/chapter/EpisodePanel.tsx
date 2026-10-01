@@ -1,21 +1,22 @@
 import { useContext, useId, useLayoutEffect, useRef, useState, type JSX } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { EPISODE_STEPS, type EpisodeRun, type EpisodeStepName } from '@manga/shared';
+import { EPISODE_STEPS, type EpisodeRun, type EpisodeStepName, type JobRef } from '@manga/shared';
 import { api, seg } from '../api';
 import { HistoryBarrierContext, type Barrier } from '../editor/HistoryBarrierContext';
 import { JsonForm } from '../episode/JsonForm';
 import {
-  STEP_LABEL, STEP_STATUS_TEXT, currentStepName, dirtySteps, editOf, isLive, parseDraft, rerunLabel, rerunStep, runLabel, saveThen,
-  statusChipClass, stepActions, stepPlaceholder, toggleRaw, type StepEdit, type StepEdits,
+  STEP_LABEL, STEP_STATUS_TEXT, currentStepName, dirtySteps, editOf, failedPanelCount, isLive, parseDraft, renderBusy, rerunLabel, rerunStep,
+  runLabel, saveThen, statusChipClass, stepActions, stepPlaceholder, toggleRaw, type StepEdit, type StepEdits,
 } from '../episode/episodeView';
 import '../episode/episode.css';
 import { cx } from '../lib/cx';
-import { useEpisode } from '../queries';
+import { useEpisode, useMissingPanels } from '../queries';
 import { qk } from '../queryKeys';
 import { ErrorState } from '../ui/ErrorState';
 import { IconButton } from '../ui/IconButton';
 import {
-  Braces, ChevronDown, ChevronRight, Circle, CircleCheck, CirclePause, CircleX, FastForward, LoaderCircle, Pause, Play, RotateCcw, Save, Square, X,
+  Braces, ChevronDown, ChevronRight, Circle, CircleCheck, CirclePause, CircleX, FastForward, ImagePlus, LoaderCircle, Pause, Play, RotateCcw, Save, Square,
+  X,
 } from '../ui/icons';
 import { Modal } from '../ui/Modal';
 import { StatusLoader } from '../ui/StatusLoader';
@@ -26,7 +27,7 @@ const STATUS_ICON = { pending: Circle, running: LoaderCircle, 'awaiting-review':
 /** Outside a chapter editor there is no history to protect. */
 const direct: Barrier = (fn) => fn();
 
-type ActKind = 'approve' | 'autopilot' | 'cancel' | 'rerun' | 'save';
+type ActKind = 'approve' | 'autopilot' | 'cancel' | 'rerun' | 'save' | 'pause' | 'resume';
 /** One call against the run. `null` means the re-run of `step` needs confirming first (it replaces the chapter's pages). */
 interface Act { kind: ActKind; step?: EpisodeStepName; call(): Promise<EpisodeRun | null> }
 
@@ -35,14 +36,18 @@ interface Act { kind: ActKind; step?: EpisodeStepName; call(): Promise<EpisodeRu
  * Drafts are kept per step until that step changes (its tab shows a dot). Continue and Run to end save the draft of the step
  * they approve first; drafts of other steps stay unsaved (and marked) until their own Save.
  */
-export function EpisodePanel({ chapterId }: { chapterId: string }): JSX.Element | null {
+export function EpisodePanel({ chapterId, initialStep }: {
+  chapterId: string;
+  /** The tab shown first (default: the run's current step). For tests, which cannot click a tab without a DOM. */
+  initialStep?: EpisodeStepName;
+}): JSX.Element | null {
   const qc = useQueryClient();
   const episode = useEpisode(chapterId);
   const run = episode.data ?? null;
   const barrier = useContext(HistoryBarrierContext) ?? direct;
   const uid = useId();
   const [open, setOpen] = useState(true);
-  const [picked, setPicked] = useState<EpisodeStepName | null>(null);
+  const [picked, setPicked] = useState<EpisodeStepName | null>(initialStep ?? null);
   const [edits, setEdits] = useState<StepEdits>({});
   // Bumped when a save replaces a step's draft, so the form's fields re-read the stored output.
   const [formRev, setFormRev] = useState(0);
@@ -75,6 +80,16 @@ export function EpisodePanel({ chapterId }: { chapterId: string }): JSX.Element 
     onError: () => setConfirmStep(null),
   });
 
+  // W1 R1: re-render the panels without an image. Rejections are toasted by the MutationCache; the job bar shows the renders.
+  const missing = useMissingPanels(chapterId);
+  const renderMissing = useMutation({
+    mutationFn: () => api.post<JobRef[]>(`/api/chapters/${seg(chapterId)}/render-missing`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.jobs() });
+      void qc.invalidateQueries({ queryKey: qk.missingPanels(chapterId) });
+    },
+  });
+
   if (!run) {
     if (!episode.error) return null;
     return (
@@ -100,6 +115,7 @@ export function EpisodePanel({ chapterId }: { chapterId: string }): JSX.Element 
   const stepPath = (name: EpisodeStepName): string => `${runPath}/steps/${seg(name)}`;
   const tabId = (name: EpisodeStepName): string => `${uid}-tab-${name}`;
   const panelId = `${uid}-panel`;
+  const failedCount = failedPanelCount(run, missing.data?.panelIds);
 
   const save = (name: EpisodeStepName): Promise<EpisodeRun> => {
     const edit = editOf(run, edits, name);
@@ -140,8 +156,15 @@ export function EpisodePanel({ chapterId }: { chapterId: string }): JSX.Element 
         {live && (
           <div className="episode__actions" onFocus={() => { actionsFocused.current = true; }}
             onBlur={(e) => { if (e.target.isConnected) actionsFocused.current = false; }}>
-            <IconButton icon={Play} size="sm" tone="primary" label={saveFirst ? 'Save and continue' : 'Continue'} disabled={!actions.approve || busy} busy={busyOn('approve')}
-              onClick={() => act.mutate({ kind: 'approve', call: moveOn('/approve') })} />
+            {run.status === 'paused'
+              ? <IconButton icon={Play} size="sm" tone="primary" label="Resume rendering" disabled={!actions.resume || busy} busy={busyOn('resume')}
+                  onClick={() => act.mutate({ kind: 'resume', call: () => api.post<EpisodeRun>(`${runPath}/resume`) })} />
+              : <IconButton icon={Play} size="sm" tone="primary" label={saveFirst ? 'Save and continue' : 'Continue'} disabled={!actions.approve || busy}
+                  busy={busyOn('approve')} onClick={() => act.mutate({ kind: 'approve', call: moveOn('/approve') })} />}
+            {actions.pause && (
+              <IconButton icon={Pause} size="sm" label="Pause rendering" disabled={busy} busy={busyOn('pause')}
+                onClick={() => act.mutate({ kind: 'pause', call: () => api.post<EpisodeRun>(`${runPath}/pause`) })} />
+            )}
             <IconButton icon={FastForward} size="sm" label={saveFirst ? 'Save and run to end' : 'Run to end'} disabled={!actions.autopilot || busy} busy={busyOn('autopilot')}
               onClick={() => act.mutate({ kind: 'autopilot', call: moveOn('/autopilot') })} />
             <IconButton icon={Square} size="sm" tone="danger" label="Cancel episode" disabled={!actions.cancel || busy} busy={busyOn('cancel')}
@@ -177,6 +200,10 @@ export function EpisodePanel({ chapterId }: { chapterId: string }): JSX.Element 
                 disabled={!actions.edit} onClick={onToggleRaw} />
               <IconButton icon={Save} size="sm" tone="primary" label="Save changes" disabled={!dirty.has(selected) || busy} busy={busyOn('save')}
                 onClick={() => act.mutate({ kind: 'save', step: selected, call: () => save(selected) })} />
+              {selected === 'render' && failedCount > 0 && (
+                <IconButton icon={ImagePlus} size="sm" label={`Re-render failed panels (${failedCount})`} badge={failedCount}
+                  disabled={renderBusy(run) || renderMissing.isPending} busy={renderMissing.isPending} onClick={() => renderMissing.mutate()} />
+              )}
             </div>
             {step?.error && <div className="episode__error" data-testid="episode-step-error"><ErrorState text={step.error} /></div>}
             {step && stepPlaceholder(step) !== null

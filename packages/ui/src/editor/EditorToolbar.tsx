@@ -2,7 +2,7 @@ import { useRef, useState, type JSX } from 'react';
 import { useNavigate } from 'react-router';
 import type { FrameKind, PageDetail, PageFormat, ReadingDirection, SplitDir } from '@manga/shared';
 import { IconButton } from '../ui/IconButton';
-import { ArrowLeft, Columns2, LayoutGrid, Merge, MessageSquareText, Redo2, Rows2, Sparkles, Undo2, ZoomIn, ZoomOut } from '../ui/icons';
+import { ArrowLeft, Columns2, ImagePlus, LayoutGrid, Merge, MessageSquareText, Redo2, Rows2, Sparkles, Undo2, ZoomIn, ZoomOut } from '../ui/icons';
 import { CHAPTER_FRAME_KINDS, COVER_FRAME_KINDS } from './editorModel';
 import { ExportButton } from './ExportButton';
 import { FRAME_KIND_ICON, FRAME_KIND_LABEL } from './frameKinds';
@@ -25,6 +25,12 @@ export interface EditorToolbarProps {
   generating: boolean;
   lettering: boolean;
   exportTarget: { type: 'page' | 'chapter'; id: string } | null;
+  /** W1 R1, chapter mode: the chapter's panels without an image (null while unknown, and in cover mode). */
+  missingImages: number | null;
+  renderingMissing: boolean;
+  /** The episode owns those panels (it renders them, or has not reached its render step): the server would answer 409. */
+  renderMissingBlocked: boolean;
+  onRenderMissing(): void;
   onUndo(): void;
   onRedo(): void;
   onApplyPreset(name: string): void;
@@ -73,6 +79,11 @@ export function EditorToolbar(p: EditorToolbarProps): JSX.Element {
       <span className="toolbar__sep" />
       <IconButton icon={Sparkles} label={panelSelected ? 'Generate image for the selected panel' : 'Generate image: select a panel'}
         disabled={!panelSelected} busy={p.generating} onClick={p.onGenerate} />
+      {p.mode === 'chapter' && p.missingImages !== null && p.missingImages > 0 && (
+        <IconButton icon={ImagePlus}
+          label={p.renderMissingBlocked ? 'Render panels without an image: the episode is rendering' : `Render panels without an image (${p.missingImages})`}
+          badge={p.missingImages} disabled={p.renderMissingBlocked} busy={p.renderingMissing} onClick={p.onRenderMissing} />
+      )}
       <span className="spacer" />
       <IconButton icon={ZoomOut} label="Zoom out" onClick={() => p.onZoom(stepZoom(p.zoom, -1))} />
       <button type="button" className="toolbar__zoom" aria-label={zoomButtonLabel(p.zoom)} data-tip={zoomButtonLabel(p.zoom)} onClick={() => p.onZoom({ mode: 'fit' })}>

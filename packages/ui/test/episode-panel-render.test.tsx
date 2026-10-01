@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it } from 'vitest';
-import { EPISODE_STEPS, type EpisodeRun } from '@manga/shared';
+import { EPISODE_STEPS, type EpisodeRun, type EpisodeStepName } from '@manga/shared';
 import { EpisodePanel } from '../src/chapter/EpisodePanel';
 import { qk } from '../src/queryKeys';
 
@@ -20,12 +20,13 @@ function run(status: EpisodeRun['status'], currentStep: number, current: StepSta
 }
 
 /** The panel's DOM hooks (used by the E2E specs), rendered from a cached run without a DOM or a server. */
-function render(value: EpisodeRun | null): string {
+function render(value: EpisodeRun | null, opts: { missing?: string[]; initialStep?: EpisodeStepName } = {}): string {
   const qc = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } });
   qc.setQueryData(qk.episode('ch_1'), value);
+  if (opts.missing) qc.setQueryData(qk.missingPanels('ch_1'), { panelIds: opts.missing });
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>
-      <MemoryRouter><EpisodePanel chapterId="ch_1" /></MemoryRouter>
+      <MemoryRouter><EpisodePanel chapterId="ch_1" {...(opts.initialStep ? { initialStep: opts.initialStep } : {})} /></MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -102,5 +103,51 @@ describe('episode panel', () => {
     expect(statusText(html)).toBe('Chapter ready');
     expect(html).toContain('aria-label="title" readOnly=""');
     expect(enabled(html, 'Edit as JSON')).toBe(false);
+  });
+
+  it('a rendering run shows Pause; a paused one shows Resume instead of Continue (W1 C1)', () => {
+    const rendering = render(run('running', 5, 'running'));
+    expect(enabled(rendering, 'Pause rendering')).toBe(true);
+    expect(rendering).toContain('data-tip="Pause rendering"');
+    expect(enabled(rendering, 'Continue')).toBe(false);
+    expect(rendering).not.toContain('aria-label="Resume rendering"');
+    expect(render(run('running', 4, 'running'))).not.toContain('aria-label="Pause rendering"');
+    const html = render(run('paused', 5, 'paused'));
+    expect(enabled(html, 'Resume rendering')).toBe(true);
+    expect(html).toContain('data-tip="Resume rendering"');
+    expect(html).not.toContain('aria-label="Continue"');
+    expect(html).not.toContain('aria-label="Pause rendering"');
+    expect(statusText(html)).toBe('Rendering paused');
+    // F24: only Resume and Cancel move a paused run.
+    expect(enabled(html, 'Run to end')).toBe(false);
+    expect(enabled(html, 'Cancel episode')).toBe(true);
+    expect(enabled(html, 'Re-run from here \\(later steps run again\\)')).toBe(false);
+  });
+
+  it('a render waiting at its preview stop asks the question and offers Continue (W1 Q2, F20)', () => {
+    const r = run('awaiting-review', 5, 'awaiting-review');
+    r.steps[5] = { ...r.steps[5]!, output: { jobs: [], reviewed: 0, flagged: 0, rounds: 0, failedPanelIds: [], preview: true, remainingPanels: 34, estimateSeconds: 1800 } };
+    const html = render(r, { missing: ['pn_a', 'pn_b'] });
+    expect(statusText(html)).toBe('Page 1 is ready — continue with 34 panels (~30 min)?');
+    expect(enabled(html, 'Continue')).toBe(true);
+    // F7: the panels without an image were never attempted; Continue renders them.
+    expect(html).not.toContain('Re-render failed panels');
+  });
+
+  it('the render step offers "Re-render failed panels (N)" for its failed panels still without an image (W1 R1, F7)', () => {
+    const r = run('failed', 6, 'failed', 'x');
+    const done = {
+      ...r,
+      steps: r.steps.map((s) => (s.name === 'render'
+        ? { ...s, status: 'done' as const, output: { jobs: [], reviewed: 0, flagged: 0, rounds: 0, failedPanelIds: ['pn_a', 'pn_b', 'pn_c'] } }
+        : s)),
+    };
+    const html = render(done, { missing: ['pn_a', 'pn_b'], initialStep: 'render' });
+    expect(enabled(html, 'Re-render failed panels \\(2\\)')).toBe(true);
+    expect(html).toContain('data-tip="Re-render failed panels (2)"');
+    expect(html).toMatch(/aria-label="Re-render failed panels \(2\)"[\s\S]*?class="icon-btn__badge">2</);
+    // Only on the render step's tab, and gone once every failed panel has an image.
+    expect(render(done, { missing: ['pn_a', 'pn_b'], initialStep: 'lettering' })).not.toContain('Re-render failed panels');
+    expect(render(done, { missing: ['pn_z'], initialStep: 'render' })).not.toContain('Re-render failed panels');
   });
 });
