@@ -1,7 +1,7 @@
 // packages/server/src/dev/fake-episode.ts
 import {
   sameName,
-  type BreakdownOutput, type DialogueKind, type OutlineOutput, type PanelScriptDraft, type PremiseOutput, type PromptsOutput, type ScriptsOutput,
+  type BreakdownOutput, type DialogueKind, type OutlineOutput, type PanelScriptDraft, type PremiseAnswer, type PromptsOutput, type ScriptsOutput,
 } from '@manga/shared';
 import type { JsonRequest } from '../engines/types.js';
 import {
@@ -33,7 +33,7 @@ function fakePanel(page: number, index: number, speaker: string | null, uk: bool
  * scripts and prompts answer one CHUNK (F18): only the pages/panels the request offers, with absolute page numbers.
  */
 export const EPISODE_FAKE_RESPONSES: Record<string, (req: JsonRequest<unknown>) => unknown> = {
-  'episode.premise': (req): PremiseOutput => {
+  'episode.premise': (req): PremiseAnswer => {
     const c = extractContext<PremiseContext>(req.prompt);
     return c.language === 'uk'
       ? { title: 'Кіт під дощем', synopsis: `Коротка історія: ${c.request.prompt}`, tone: c.request.tone || 'лагідний', setting: 'Портове містечко восени, вечір', notes: c.request.notes, artTags: /прост/i.test(c.request.prompt) ? 'simple background, minimal shading' : '' }

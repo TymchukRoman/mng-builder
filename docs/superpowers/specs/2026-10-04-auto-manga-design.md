@@ -34,6 +34,39 @@ The prompt box is now "Plot and notes", for chapters and manga alike.
 - **Chapter episodes:** the premise step separates the two. `PremiseOutput` gained `notes` (non-visual wishes: pacing, content to include or avoid, how dialogue sounds; later steps read them) and `artTags` (English tags for a requested look, "simplistic art style" → "simple background, minimal shading"). The prompts effect adds `artTags` to every panel scene of the chapter, the cover too. `EpisodeInput.notes` carries extra notes from a caller (CLI `--notes`; the auto run passes the plan's).
 - **Whole manga:** the planner makes the same split once, so the look is the same in every chapter: `styleTags` go into the **manga's** style prompt (not re-derived per chapter), the non-visual `notes` go to every chapter.
 
+## Reading the brief properly (A2)
+
+The first version trusted one model call to remember a long text. A2 reads the text in several passes, keeps what it finds as a **ledger of directives**, hands each step the directives that concern it, and checks the result against them.
+
+### The ledger (`shared/directives.ts`)
+
+A `Directive` is one atomic requirement: `text` (a self-contained sentence naming who or what it is about, in the book's language), `kind` (plot, character, setting, tone, dialogue, visual, structure, avoid, format, other), `chapters` (the chapters it names; empty = all), `must` (false for hedged wishes), `quote` (the author's words), `sources` (numbers of the brief's sentences) and, for `visual`, English `tags`. The code numbers them D1, D2, …; the model never writes ids.
+
+### Passes
+
+1. **Extract** (`prompts/brief/extract.md`): the brief arrives as numbered sentences (`briefSegments`); one directive per detail, a sentence with several details becomes several directives, every name, number and colour kept verbatim.
+2. **Audit** (`prompts/brief/audit.md`): the text, the directives so far and the sentences **no directive names** (found by code, `uncoveredSegments`) go back to the model, which adds what the first pass lost, clause by clause. Repeats are dropped by text.
+3. **Plan** (auto manga): written from the directives. The schema requires an entry in `coverage` for every `must` directive (cast, style, notes, or the chapters it is applied in); a plan that drops one fails validation, so the engine's correction round names the missing directives and asks again.
+4. **Plan audit** (`prompts/manga/plan-audit.md`): checks the plan against the directives; the unmet ones are written once more as `revisions` (with the first plan), then checked again. What is still unmet after that stays marked `unmet` (with the auditor's note) on its directive, and the manga page shows it.
+5. **Per chapter**: the premise of a planned chapter is handed its directives (`planChapterDirectives`: those that name the chapter, those the plan applied to it, and the series-wide ones) and does not read the brief again. A chapter made on its own (a prompt in the chapter dialog) runs passes 1 and 2 inside its premise step, and keeps the ledger in the premise output, where it can be read and edited like any step output.
+6. **Script audit** (`prompts/episode/script-audit.md`): after the scripts step, one call checks the whole script (every panel's action and dialogue) against the chapter's `must` directives that a script can show. Unmet ones are written once more as `revisions` to every page chunk, which fixes those that belong to its pages. A failed check or rewrite keeps the first script.
+
+### Where directives go
+
+| Step | Reads kinds |
+|---|---|
+| premise, plan | all |
+| outline | plot, character, setting, tone, structure, avoid, format, other |
+| breakdown | structure, format, tone, avoid, other |
+| scripts | all but visual |
+| prompts | visual, setting, avoid, tone, other |
+
+Notes and art tags are **derived by code** from the ledger (`deriveNotes`, `deriveArtTags`), not left to the model: the visual directives' tags reach every panel prompt of the chapter; for a planned manga, the series-wide tags go into the manga's style prompt once (`applyPlan`) and are not repeated per chapter.
+
+### Unattended flow
+
+A chapter whose step fails is run again up to `CHAPTER_RETRIES` (2) times (a cancel by the user is never retried) before the run fails, so a flaky answer or a stalled image no longer stops a whole manga. `error` on a run stays the reason it stopped.
+
 ## 4. Image model per manga and chapter
 
 `ImageModel` presets (shared `IMAGE_MODELS`) fill the three panel routes in one choice: `sdxl` (WAI Illustrious: anime / anime-ref), `flux2` (klein-ref everywhere), `qwen` (klein for panels without references, qwen-edit-ref with them), `anima`, `anima-turbo` (tags only, no references). `mangas.image_model` and `chapters.image_model` (migration 4, NULL = Settings' routing); a chapter's own wins over its manga's (`effectiveImageModel`).
@@ -54,7 +87,7 @@ What a user still does after this change: type the brief and press Create; fix w
 | # | Idea | Why it matters | Cost |
 |---|---|---|---|
 | 1 | **Pick the portrait with the vision reviewer** (best of N against the appearance tags: one character, no text, face visible), then draw the full-body / side sheets for main characters. | Every panel inherits the portrait as its reference; today the first of two is taken blindly. Full-body is the second reference of one-character panels (`anime-ref`, `qwen-edit-ref`). | ~2 × 15 s per character plus 10 s per review; one review call per variant. |
-| 2 | **Unattended failure policy**: retry a failed step automatically (bounded, transient errors only), and on a chapter that still fails, continue with the next, finishing with `render-missing`; push a notification when the run ends. | Today the first failure stops the whole run until someone presses Continue; a 3-chapter manga is hours long. | Small: the pieces (`rerun`, `renderMissing`) exist. |
+| 2 | **Unattended failure policy** (the bounded retry of a failed chapter step is built, A2): on a chapter that still fails, continue with the next, finishing with `render-missing`; push a notification when the run ends. | A chapter that keeps failing still stops the whole run until someone presses Continue; a 3-chapter manga is hours long. | Small: the pieces (`rerun`, `renderMissing`) exist. |
 | 3 | **Infer the dialog's settings from the brief** (language, colour, reading direction, page/chapter counts: "a short 3-chapter story in Ukrainian, in colour"). The plan can return them; the dialog shrinks to one text box and Create. | The dialog is the only place the user still decides; the answers are in the text most of the time. | Small: plan fields plus defaults the user can override. |
 | 4 | **Best-of-N for key pictures** (poster, chapter covers, splash panels) judged by the vision reviewer. | The few pictures a reader sees first; N=3 costs 2 extra images each. | Small per picture; GPU time only on those. |
 | 5 | **Style probe**: draw the poster first, let the reviewer check it against the notes ("simplistic"), adjust `styleTags` once before the long render. | A wrong look is discovered after hours today. The poster is already drawn before the chapters. | Small. |

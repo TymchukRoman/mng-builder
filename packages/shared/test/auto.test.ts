@@ -8,7 +8,7 @@ const character = { name: 'Aiko', role: 'main' as const, personality: 'curious',
 const plan = (chapters: number, over: Partial<MangaPlan> = {}): MangaPlan => ({
   title: 'T', synopsis: 'S', tone: '', notes: '', styleTags: '', negativeTags: '', characters: [character],
   chapters: Array.from({ length: chapters }, (_, i) => ({ title: `C${i + 1}`, synopsis: 's', plot: 'p' })),
-  poster: { action: 'a', background: '' }, ...over,
+  poster: { action: 'a', background: '' }, coverage: [], directives: [], ...over,
 });
 
 describe('image models', () => {
@@ -68,6 +68,23 @@ describe('auto-created manga input and plan', () => {
     expect(schema.safeParse(plan(3)).success).toBe(false);
     expect(schema.safeParse(plan(2, { characters: [character, { ...character, name: ' aiko ' }] })).success).toBe(false);
     expect(schema.safeParse({ ...plan(2), notes: undefined, styleTags: undefined }).success).toBe(true);
+  });
+
+  it('refuses a plan that leaves a "must" directive out of its coverage, names what is missing, and checks the coverage itself', () => {
+    const directives = [
+      { id: 'D1', text: 'Aiko has a red scarf.', kind: 'character' as const, chapters: [], must: true, quote: '', sources: [], tags: '' },
+      { id: 'D2', text: 'Maybe a dog.', kind: 'plot' as const, chapters: [], must: false, quote: '', sources: [], tags: '' },
+    ];
+    const schema = mangaPlanSchemaFor({ chapters: 2, directives });
+    const result = schema.safeParse(plan(2));
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain('D1 (Aiko has a red scarf.)');
+    expect(JSON.stringify(result.error?.issues)).not.toContain('Maybe a dog');
+    expect(schema.safeParse(plan(2, { coverage: [{ id: 'D1', where: 'cast', chapters: [] }] })).success).toBe(true);
+    expect(schema.safeParse(plan(2, { coverage: [{ id: 'D1', where: 'cast', chapters: [] }, { id: 'D9', where: 'notes', chapters: [] }] })).success).toBe(false);
+    expect(schema.safeParse(plan(2, { coverage: [{ id: 'D1', where: 'chapters', chapters: [] }] })).success).toBe(false);
+    expect(schema.safeParse(plan(2, { coverage: [{ id: 'D1', where: 'chapters', chapters: [3] }] })).success).toBe(false);
+    expect(schema.safeParse(plan(2, { coverage: [{ id: 'D1', where: 'chapters', chapters: [2] }] })).success).toBe(true);
   });
 
   it('words each chapter from the plan', () => {

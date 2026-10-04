@@ -1,21 +1,53 @@
 // packages/server/src/dev/fake-auto.ts
-import type { MangaPlan } from '@manga/shared';
+import type { AuditAnswer, CheckAnswer, DirectiveDraft, DirectiveKind, ExtractAnswer, MangaPlanAnswer, PlanCoverage } from '@manga/shared';
 import type { JsonRequest } from '../engines/types.js';
-import { extractContext } from '../workflows/episode/context.js';
+import type { ExtractContext } from '../workflows/brief/analyze.js';
 import type { PlanContext } from '../workflows/auto/plan.js';
+import { extractContext } from '../workflows/episode/context.js';
 
-/** Canned series plan for MANGA_FAKES=1 and tests: reads the request's <context>, so the chapter count always fits. */
+/** A guess at what kind of detail a sentence is, from its words (the real model reads the sentence; this only has to be stable). */
+export function fakeKind(text: string): DirectiveKind {
+  if (/\b(art|style|drawn|lineart|shading|simplistic|watercolou?r)\b|прост/i.test(text)) return 'visual';
+  if (/\b(dialogue|talk|speak|say)\b/i.test(text)) return 'dialogue';
+  if (/^\s*(no|never|avoid|without)\b/i.test(text)) return 'avoid';
+  if (/^\s*keep\b/i.test(text)) return 'other';
+  if (/\b(chapter|page|panel|ending|cliffhanger)\b/i.test(text)) return 'structure';
+  if (/\b(has|wears|with)\b.*\b(eye|scarf|hair|coat)\b/i.test(text)) return 'character';
+  return 'plot';
+}
+
+/** One directive per numbered sentence, its text the sentence itself; a look gets tags. */
+export function fakeDrafts(segments: ReadonlyArray<{ n: number; text: string }>): DirectiveDraft[] {
+  return segments.map((s) => {
+    const kind = fakeKind(s.text);
+    return {
+      text: s.text, kind, chapters: [], must: true, quote: s.text, sources: [s.n],
+      tags: kind === 'visual' ? (/simpl|прост/i.test(s.text) ? 'simple background, minimal shading' : 'clean lineart') : '',
+    };
+  });
+}
+
+/** Canned answers for MANGA_FAKES=1 and tests: the reading passes, the series plan and its check. Each reads the request's <context>. */
 export const AUTO_FAKE_RESPONSES: Record<string, (req: JsonRequest<unknown>) => unknown> = {
-  'manga.plan': (req): MangaPlan => {
+  'brief.extract': (req): ExtractAnswer => ({ directives: fakeDrafts(extractContext<ExtractContext>(req.prompt).segments) }),
+  'brief.audit': (): AuditAnswer => ({ missing: [] }),
+  'manga.plan-audit': (): CheckAnswer => ({ unmet: [] }),
+  'episode.scripts-audit': (): CheckAnswer => ({ unmet: [] }),
+
+  'manga.plan': (req): MangaPlanAnswer => {
     const c = extractContext<PlanContext>(req.prompt);
     const uk = c.language === 'uk';
-    const simple = /simpl|прост/i.test(c.request.brief);
+    const coverage: PlanCoverage[] = c.directives.map((d) => (
+      d.kind === 'character' ? { id: d.id, where: 'cast', chapters: [] }
+        : d.kind === 'visual' ? { id: d.id, where: 'style', chapters: [] }
+          : d.kind === 'plot' || d.kind === 'setting' || d.kind === 'structure' ? { id: d.id, where: 'chapters', chapters: d.chapters.length > 0 ? d.chapters : [1] }
+            : { id: d.id, where: 'notes', chapters: [] }));
     return {
       title: c.manga.title !== '' ? c.manga.title : uk ? 'Портові історії' : 'Harbour Tales',
       synopsis: uk ? `Серія про двох друзів у портовому місті: ${c.request.brief}` : `A series about two friends in a harbour town: ${c.request.brief}`,
       tone: uk ? 'лагідний' : 'gentle',
       notes: uk ? 'Короткі репліки.' : 'Keep the dialogue short.',
-      styleTags: simple ? 'simple background, minimal shading' : '',
+      styleTags: '',
       negativeTags: '',
       characters: [
         { name: 'Aiko', role: 'main', personality: uk ? 'допитлива' : 'curious', speechStyle: uk ? 'жваво' : 'lively', appearanceTags: '1girl, short black hair, brown eyes, school uniform' },
@@ -27,6 +59,7 @@ export const AUTO_FAKE_RESPONSES: Record<string, (req: JsonRequest<unknown>) => 
         plot: uk ? `Айко та Рен переживають подію ${i + 1}.` : `Aiko and Ren live through event ${i + 1}.`,
       })),
       poster: { action: uk ? 'Айко і Рен стоять на причалі.' : 'Aiko and Ren stand on the pier.', background: uk ? 'причал на заході сонця' : 'pier at sunset' },
+      coverage,
     };
   },
 };
