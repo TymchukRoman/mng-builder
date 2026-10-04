@@ -54,7 +54,8 @@ describe('STYLE_PRESETS', () => {
     for (const preset of Object.values(STYLE_PRESETS)) {
       expect(STYLE_PRESETS[preset.id]).toBe(preset);
       expect(StyleGuideSchema.safeParse(preset.styleGuide).success).toBe(true);
-      expect(preset.styleGuide.negativePrompt).toBe('lowres, bad anatomy, bad hands, blurry, jpeg artifacts, worst quality, nsfw');
+      // No content-rating steering: the app never asks the image model to avoid or favour anything adult.
+      expect(preset.styleGuide.negativePrompt).toBe('lowres, bad anatomy, bad hands, blurry, jpeg artifacts, worst quality');
     }
     expect(STYLE_PRESETS['manga-bw']?.styleGuide).toMatchObject({
       recipe: 'anime', stylePrompt: 'masterpiece, best quality, clean lineart, detailed background, hatching (texture)',

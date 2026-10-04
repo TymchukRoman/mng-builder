@@ -7,9 +7,9 @@ import type { ColorMode, LoraRef, StyleGuide } from './schemas.js';
  */
 export interface StylePreset { id: string; label: string; colorMode: ColorMode; styleGuide: StyleGuide }
 
-// (M2 F9) The shared negative gains the P1 style-LoRA negative token so a generation without an explicit
-// per-request negative still steers away from it.
-const NEGATIVE = 'lowres, bad anatomy, bad hands, blurry, jpeg artifacts, worst quality, nsfw';
+// Quality terms only: the presets steer neither towards nor away from adult content (no `nsfw`, no rating tags). A
+// manga that wants a restriction writes it into its own negative prompt (Manga settings).
+const NEGATIVE = 'lowres, bad anatomy, bad hands, blurry, jpeg artifacts, worst quality';
 const MANGA_STYLE = 'masterpiece, best quality, clean lineart, detailed background';
 
 export const STYLE_PRESETS: Record<string, StylePreset> = {
