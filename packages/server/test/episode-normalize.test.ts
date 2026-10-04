@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
 import {
-  BreakdownOutputSchema, OutlineOutputSchema, PremiseOutputSchema, PromptsOutputSchema, ScriptsOutputSchema,
+  BreakdownOutputSchema, OutlineOutputSchema, PremiseAnswerSchema, PromptsOutputSchema, ScriptsOutputSchema,
 } from '@manga/shared';
 import type { PromptsPanelBrief } from '../src/workflows/episode/context.js';
 import { jsonSchemaOf } from '../src/engines/structured.js';
@@ -157,7 +157,7 @@ describe('normalizeLlmAnswer: safety', () => {
   it('leaves a valid answer of every step exactly as it was', () => {
     const bd = breakdown(2);
     const cases = [
-      ['premise', PREMISE, PremiseOutputSchema], ['outline', outline(['Aiko']), OutlineOutputSchema], ['breakdown', bd, BreakdownOutputSchema],
+      ['premise', PREMISE, PremiseAnswerSchema], ['outline', outline(['Aiko']), OutlineOutputSchema], ['breakdown', bd, BreakdownOutputSchema],
       ['scripts', scripts(bd, 'Aiko'), ScriptsOutputSchema], ['scripts', scripts(bd, null), ScriptsOutputSchema],
       ['prompts', { panels: [{ panelId: 'pn_a', scene: 'x', negative: 'blur' }, { panelId: 'pn_b', scene: 'y' }] }, PromptsOutputSchema],
     ] as const;
@@ -206,7 +206,7 @@ describe('STEP_SHAPES', () => {
 
   it('covers every string and enum field of the step output schemas, with their real enum values', () => {
     const schemas: Record<keyof typeof STEP_SHAPES, z.ZodType<unknown>> = {
-      premise: PremiseOutputSchema, outline: OutlineOutputSchema, breakdown: BreakdownOutputSchema, scripts: ScriptsOutputSchema, prompts: PromptsOutputSchema,
+      premise: PremiseAnswerSchema, outline: OutlineOutputSchema, breakdown: BreakdownOutputSchema, scripts: ScriptsOutputSchema, prompts: PromptsOutputSchema,
     };
     for (const [step, schema] of Object.entries(schemas)) {
       const fromSchema = leaves(jsonSchemaOf(schema) as Json, '', new Map());

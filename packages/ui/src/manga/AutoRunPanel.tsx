@@ -8,7 +8,7 @@ import { useAutoRun } from '../queries';
 import { IconButton } from '../ui/IconButton';
 import { LoaderCircle, RefreshCw, Sparkles, X } from '../ui/icons';
 import { errorText, pushToast } from '../ui/toasts';
-import { runStatusText, showsRun, stageSteps } from './autoRun';
+import { directiveRows, directiveSummary, runStatusText, showsRun, stageSteps } from './autoRun';
 
 /** Where an auto-created manga is: the stages, the chapter being written, and Cancel / Retry. Nothing while there is no run to show. */
 export function AutoRunPanel({ manga }: { manga: Manga }): JSX.Element | null {
@@ -18,6 +18,7 @@ export function AutoRunPanel({ manga }: { manga: Manga }): JSX.Element | null {
     onError: (err) => pushToast('error', errorText(err)),
   });
   if (!showsRun(run)) return null;
+  const rows = directiveRows(run);
   const chapterId = run.status === 'running' && run.stage === 'chapters' ? run.chapterIds[run.currentChapter] : undefined;
   return (
     <section className={cx('auto-run', `auto-run--${run.status}`)} aria-label="Auto creation" data-testid="auto-run">
@@ -31,6 +32,20 @@ export function AutoRunPanel({ manga }: { manga: Manga }): JSX.Element | null {
       <ol className="auto-run__steps">
         {stageSteps(run).map((s) => <li key={s.stage} className={cx('auto-run__step', `auto-run__step--${s.state}`)} aria-current={s.state === 'now' ? 'step' : undefined}>{s.label}</li>)}
       </ol>
+      {rows.length > 0 && (
+        <details className="auto-run__details">
+          <summary>{directiveSummary(rows)}</summary>
+          <ul className="auto-run__directives">
+            {rows.map((r) => (
+              <li key={r.id} className={cx('auto-run__directive', `auto-run__directive--${r.state}`)}>
+                <span className="auto-run__directive-text">{r.text}</span>
+                <span className="auto-run__directive-meta">{r.kind} · {r.where}{r.state === 'wish' ? ' · wish' : ''}</span>
+                {r.state === 'unmet' && r.note && <span className="auto-run__directive-note">{r.note}</span>}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
     </section>
   );
 }

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { NewCharacterDraftSchema, MAX_NEW_CHARACTERS, formatEstimate, estimateChapter, sameName } from './episode.js';
+import { DirectiveSchema, directivesOfChapter, type Directive } from './directives.js';
 import { ImageModelFieldSchema } from './image-models.js';
 import {
   ColorModeSchema, IdSchema, LanguageSchema, ReadingDirectionSchema,
@@ -40,7 +41,13 @@ export type AutoMangaInput = z.infer<typeof AutoMangaInputSchema>;
 // ---- the plan: the first, and only free-form, LLM step ----
 export const PlanChapterSchema = z.object({ title: z.string().trim().min(1), synopsis: z.string().trim().min(1), plot: z.string().trim().min(1) });
 export type PlanChapter = z.infer<typeof PlanChapterSchema>;
-export const MangaPlanSchema = z.object({
+/** Where the plan applies a directive: the cast, the manga's look, the notes every chapter gets, or the chapters named. */
+export const PlanCoverageSchema = z.object({
+  id: z.string().min(1), where: z.enum(['cast', 'style', 'notes', 'chapters']), chapters: z.array(z.number().int().min(1)).default([]),
+});
+export type PlanCoverage = z.infer<typeof PlanCoverageSchema>;
+/** What the plan call answers; the run adds the directives (the ledger) it was written from. */
+export const MangaPlanAnswerSchema = z.object({
   title: z.string().trim().min(1),
   synopsis: z.string().trim().min(1),
   /** 2–5 comma-separated words, for every chapter's premise. */
@@ -55,13 +62,35 @@ export const MangaPlanSchema = z.object({
   chapters: z.array(PlanChapterSchema).min(1).max(MAX_AUTO_CHAPTERS),
   /** The series poster: one striking moment with the leads, in the book language. */
   poster: z.object({ action: z.string().trim().min(1), background: z.string().default('') }),
+  /** For every directive: where the plan applies it (every `must` one needs an entry; the schema refuses a plan that drops one). */
+  coverage: z.array(PlanCoverageSchema).default([]),
 });
+export type MangaPlanAnswer = z.infer<typeof MangaPlanAnswerSchema>;
+export const MangaPlanSchema = MangaPlanAnswerSchema.extend({ directives: z.array(DirectiveSchema).default([]) });
 export type MangaPlan = z.infer<typeof MangaPlanSchema>;
-export interface MangaPlanRules { chapters: number }
+export interface MangaPlanRules { chapters: number; directives?: readonly Directive[] }
 
-/** Refined so a wrong chapter count or a repeated name goes through the engine's correction round. */
-export function mangaPlanSchemaFor(rules: MangaPlanRules): z.ZodType<MangaPlan> {
-  return MangaPlanSchema.superRefine((value, ctx) => {
+/**
+ * Refined so a wrong chapter count, a repeated name, or a requirement of the brief the plan does not account for goes through
+ * the engine's correction round.
+ */
+export function mangaPlanSchemaFor(rules: MangaPlanRules): z.ZodType<MangaPlanAnswer> {
+  return MangaPlanAnswerSchema.superRefine((value, ctx) => {
+    const known = new Set((rules.directives ?? []).map((d) => d.id));
+    value.coverage.forEach((c, i) => {
+      if (!known.has(c.id)) ctx.addIssue({ code: 'custom', path: ['coverage', i, 'id'], message: `unknown directive "${c.id}"; use one of: ${[...known].join(', ') || '(none)'}` });
+      if (c.where === 'chapters' && (c.chapters.length === 0 || c.chapters.some((n) => n > rules.chapters))) {
+        ctx.addIssue({ code: 'custom', path: ['coverage', i, 'chapters'], message: `directive ${c.id}: "chapters" needs chapter numbers from 1 to ${rules.chapters}` });
+      }
+    });
+    const covered = new Set(value.coverage.map((c) => c.id));
+    const dropped = (rules.directives ?? []).filter((d) => d.must && !covered.has(d.id));
+    if (dropped.length > 0) {
+      ctx.addIssue({
+        code: 'custom', path: ['coverage'],
+        message: `the plan must account for every "must" directive; missing in "coverage": ${dropped.map((d) => `${d.id} (${d.text})`).join('; ')}. Apply each one in the cast, the chapters' plots, "styleTags" or "notes", then list it in "coverage"`,
+      });
+    }
     if (value.chapters.length !== rules.chapters) {
       ctx.addIssue({ code: 'custom', path: ['chapters'], message: `expected exactly ${rules.chapters} chapters, got ${value.chapters.length}` });
     }
@@ -127,4 +156,17 @@ export function formatMangaEstimate(
 ): string {
   const { panels, seconds } = estimateManga(input, settings, colorMode);
   return `${input.chapters} ${input.chapters === 1 ? 'chapter' : 'chapters'} × ${input.pagesPerChapter} ${input.pagesPerChapter === 1 ? 'page' : 'pages'} ≈ ${panels} panels ≈ ${formatEstimate(seconds).replace(/^~/, '')}`;
+}
+
+/**
+ * The directives one chapter of a planned manga is written from: those that name it, those the plan applies to its chapters, and
+ * those for the whole series (the cast, the look, the notes), so a character's details and "no romance" reach every chapter and a
+ * plot detail only the chapters it belongs to.
+ */
+export function planChapterDirectives(plan: Pick<MangaPlan, 'directives' | 'coverage'>, chapter: number): Directive[] {
+  const where = new Map(plan.coverage.map((c) => [c.id, c]));
+  return directivesOfChapter(plan.directives, chapter).filter((d) => {
+    const c = where.get(d.id);
+    return d.chapters.length > 0 || c === undefined || c.where !== 'chapters' || c.chapters.includes(chapter);
+  });
 }

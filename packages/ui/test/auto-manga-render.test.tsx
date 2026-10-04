@@ -76,6 +76,17 @@ describe('AutoRunPanel', () => {
     expect(html).not.toContain('Cancel auto creation');
   });
 
+  it('lists what was understood, with what is unmet and why', () => {
+    const d = (id: string, over: Record<string, unknown>) => ({ id, text: `Detail ${id}.`, kind: 'plot', chapters: [], must: true, quote: '', sources: [], tags: '', ...over });
+    const html = render({ ...run, plan: { chapters: [], directives: [d('D1', { status: 'applied' }), d('D2', { status: 'unmet', note: 'The scarf is missing', kind: 'character', chapters: [2] })] } as unknown as AutoRun['plan'] });
+    expect(html).toContain('2 details understood, 1 not fully applied');
+    expect(html).toContain('auto-run__directive--applied');
+    expect(html).toContain('auto-run__directive--unmet');
+    expect(html).toContain('The scarf is missing');
+    expect(html).toContain('character · ch. 2');
+    expect(render(run)).not.toContain('understood');
+  });
+
   it('renders nothing without a run or after a clean finish', () => {
     expect(render(null)).toBe('');
     expect(render({ ...run, status: 'done', stage: 'done' })).toBe('');

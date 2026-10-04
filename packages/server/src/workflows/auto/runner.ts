@@ -1,6 +1,6 @@
 // packages/server/src/workflows/auto/runner.ts
 import {
-  AUTO_PORTRAITS_PER_CHARACTER, EMPTY_SCRIPT, EPISODE_ACTIVE_STATUSES, MANGA_TITLE_FROM_PLAN, chapterPrompt,
+  AUTO_PORTRAITS_PER_CHARACTER, EMPTY_SCRIPT, EPISODE_ACTIVE_STATUSES, MANGA_TITLE_FROM_PLAN, chapterPrompt, planChapterDirectives,
   type AutoMangaInput, type AutoRun, type Character, type EpisodeInput, type EpisodeRun, type Image, type ImageGeneratePayload,
   type Job, type LlmStepPayload, type MangaPlan,
 } from '@manga/shared';
@@ -23,6 +23,8 @@ export interface AutoRunnerDeps {
   engines: Pick<Engines, 'forLane' | 'laneFor'>;
 }
 
+/** How many times a chapter's failed step is run again before the run fails (a user's cancel is never retried). */
+export const CHAPTER_RETRIES = 2;
 /** How often a waiting driver looks at its episode run, in case it missed an event. */
 export const EPISODE_POLL_MS = 5_000;
 const LANES = ['claude', 'gpu', 'cpu'] as const;
@@ -271,6 +273,8 @@ export class AutoRunner {
       const input: EpisodeInput = {
         prompt: chapterPrompt(plan, planned, index + 1, plan.chapters.length), notes: plan.notes, tone: plan.tone,
         pages: run.input.pagesPerChapter, characterIds: [], previewFirst: false,
+        // The details of the brief that concern this chapter, already read (a plan made before directives existed has none: the premise reads the brief itself).
+        ...(plan.directives.length > 0 ? { directives: planChapterDirectives(plan, index + 1) } : {}),
       };
       episode = episodes.start(chapterId, input, 'autopilot');
     } else if (!EPISODE_ACTIVE_STATUSES.has(episode.status)) {
@@ -278,7 +282,14 @@ export class AutoRunner {
       episode = episodes.rerun(episode.id, episode.steps[episode.currentStep]!.name, false);
     }
     if (episode.mode !== 'autopilot') episode = episodes.autopilot(episode.id);
-    const finished = await this.waitEpisode(episode.id, signal);
+    let finished = await this.waitEpisode(episode.id, signal);
+    // A step that failed is run again (a flaky answer, a stalled image) before the whole manga stops; the finished steps are kept.
+    for (let attempt = 1; finished.status === 'failed' && attempt <= CHAPTER_RETRIES; attempt++) {
+      const failed = finished.steps[finished.currentStep];
+      console.warn(`[manga] auto run ${runId}: chapter ${chapter.number} failed at ${failed?.name ?? '?'} (${failed?.error ?? 'no error'}); try ${attempt + 1}`);
+      episode = episodes.rerun(finished.id, failed!.name, false);
+      finished = await this.waitEpisode(episode.id, signal);
+    }
     if (finished.status !== 'done') {
       const step = finished.steps[finished.currentStep];
       throw new Error(`Chapter ${chapter.number} "${chapter.title}" ${finished.status}${step?.error ? `: ${step.error}` : ''}`);

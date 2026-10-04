@@ -32,3 +32,11 @@
 .auto-run__step--done { color: var(--ok); }
 .auto-run__step--now { border-color: var(--accent); background: var(--accent-wash); color: var(--text-1); }
 .auto-run__step--stopped { border-color: var(--warn); color: var(--warn); }
+
+.auto-run__details > summary { cursor: pointer; color: var(--text-2); font-size: var(--fs-sm); }
+.auto-run__directives { display: flex; flex-direction: column; gap: var(--sp-1); margin: var(--sp-2) 0 0; padding: 0; list-style: none; max-height: 40vh; overflow: auto; }
+.auto-run__directive { display: grid; grid-template-columns: 1fr auto; gap: 0 var(--sp-2); padding-left: var(--sp-2); border-left: 2px solid var(--border-2); font-size: var(--fs-sm); }
+.auto-run__directive--applied { border-left-color: var(--ok); }
+.auto-run__directive--unmet { border-left-color: var(--warn); }
+.auto-run__directive-meta { color: var(--text-3); font-size: var(--fs-xs); white-space: nowrap; }
+.auto-run__directive-note { grid-column: 1 / -1; color: var(--warn); font-size: var(--fs-xs); }

@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 export type PromptName = 'panel-prompt-tags' | 'panel-prompt-natural' | 'appearance' | 'review';
 /** Sub-folders of src/prompts (M4: the episode step prompts live in prompts/episode). */
-export type PromptFolder = 'episode' | 'manga';
+export type PromptFolder = 'episode' | 'manga' | 'brief';
 
 const cache = new Map<string, string>();
 

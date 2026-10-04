@@ -13,4 +13,5 @@ export * from './letter.js';
 export * from './gender.js';
 export * from './gallery.js';
 export * from './image-models.js';
+export * from './directives.js';
 export * from './auto.js';

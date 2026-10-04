@@ -1,5 +1,6 @@
 // packages/shared/src/episode.ts
 import { z } from 'zod';
+import { DirectiveSchema } from './directives.js';
 import { applyImageModel } from './image-models.js';
 import { PRESET_NAMES, presetPanelCount } from './layout/index.js';
 import {
@@ -25,7 +26,8 @@ export function stepIndex(name: EpisodeStepName): number {
 export const CHAPTER_TITLE_FROM_PREMISE = 'Untitled chapter';
 
 // ---- 1. premise ----
-export const PremiseOutputSchema = z.object({
+/** What the premise call answers; the step adds the directives (the ledger) it was given or read. */
+export const PremiseAnswerSchema = z.object({
   title: z.string().min(1), synopsis: z.string().min(1), tone: z.string(), setting: z.string(),
   /**
    * What the request asked for besides the plot, in the book language: pacing, content to include or avoid, how the dialogue
@@ -38,6 +40,11 @@ export const PremiseOutputSchema = z.object({
    * shading, thick outlines"); '' when it asked for none. The prompts effect adds them to every panel of the chapter.
    */
   artTags: z.string().default(''),
+});
+export type PremiseAnswer = z.infer<typeof PremiseAnswerSchema>;
+export const PremiseOutputSchema = PremiseAnswerSchema.extend({
+  /** The details of the request, one by one (shared `directives.ts`): later steps read the ones that concern them. Premises stored before read as []. */
+  directives: z.array(DirectiveSchema).default([]),
 });
 export type PremiseOutput = z.infer<typeof PremiseOutputSchema>;
 

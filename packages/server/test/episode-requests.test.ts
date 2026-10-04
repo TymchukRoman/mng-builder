@@ -43,7 +43,7 @@ const issues = (r: { success: boolean; error?: { issues: Array<{ message: string
 describe('stepRequests', () => {
   it('asks premise, outline and breakdown in one call each, exactly like the whole-step prompt', () => {
     const run = scriptsRun(2);
-    for (const step of ['premise', 'outline', 'breakdown'] as const) {
+    for (const step of ['outline', 'breakdown'] as const) {
       const vars = templateVars(lib.store, run, buildStepContext(lib.store, run, step));
       const [only, ...rest] = stepRequests(lib.store, run, step);
       expect(rest).toEqual([]);
@@ -52,6 +52,22 @@ describe('stepRequests', () => {
       });
     }
     expect(stepRequests(lib.store, run, 'scripts')).toHaveLength(1); // 2 pages fit one call
+  });
+
+  it('reads the brief in two passes before the premise call, or makes just the premise call when the brief is already read', () => {
+    const run = scriptsRun(2);
+    const requests = stepRequests(lib.store, run, 'premise');
+    expect(requests.map((r) => r.name)).toEqual(['brief.extract', 'brief.audit', 'episode.premise']);
+    expect(requests.map((r) => r.task)).toEqual(['story', 'story', 'story']);
+    expect(requests[0]!.prompt).toContain('"segments"');
+    expect(requests[1]!.promptFor).toBeTypeOf('function');
+    expect(requests[2]!.promptFor).toBeTypeOf('function');
+    // An already read brief (the plan hands each chapter its directives) needs no reading, and the premise call carries them.
+    const given = { ...run, input: { ...run.input, directives: [{ id: 'D1', text: 'Aiko has a red scarf.', kind: 'character' as const, chapters: [], must: true, quote: '', sources: [1], tags: '' }] } };
+    const [only, ...rest] = stepRequests(lib.store, given, 'premise');
+    expect(rest).toEqual([]);
+    expect(only).toMatchObject({ name: 'episode.premise' });
+    expect(only!.prompt).toContain('Aiko has a red scarf.');
   });
 
   it(`writes scripts in chunks of at most ${SCRIPTS_PAGES_PER_CALL} pages with the same context (F18)`, () => {
@@ -170,8 +186,7 @@ describe('stepRequests', () => {
 
   it('refuses several answers for a one-call step', () => {
     const run = scriptsRun(2);
-    expect(() => combineAnswers(lib.store, run, 'premise', [PREMISE, PREMISE])).toThrow('step premise makes one call, got 2 answers');
-    expect(combineAnswers(lib.store, run, 'premise', [PREMISE])).toEqual(PREMISE);
+    expect(() => combineAnswers(lib.store, run, 'outline', [{}, {}])).toThrow('step outline makes one call, got 2 answers');
   });
 });
 

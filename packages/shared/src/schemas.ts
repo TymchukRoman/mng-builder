@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DirectiveSchema } from './directives.js';
 
 export const IdSchema = z.string().min(3);
 export const LanguageSchema = z.enum(['en', 'uk']);
@@ -198,6 +199,11 @@ export const EpisodeInputSchema = z.object({
    * The `prompt` itself may also carry notes (art style, pacing, things to avoid): the premise step separates them.
    */
   notes: z.string().optional(),
+  /**
+   * The details of the brief, already read (the auto-created manga's plan hands each chapter the directives that concern it).
+   * Absent: the premise step reads `prompt` and `notes` itself, in two passes, and keeps the result in its output.
+   */
+  directives: z.array(DirectiveSchema).optional(),
 });
 export type EpisodeInput = z.infer<typeof EpisodeInputSchema>;
 export const EpisodeRunStatusSchema = z.enum(['running', 'awaiting-review', 'done', 'failed', 'cancelled', 'paused']);

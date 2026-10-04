@@ -1,7 +1,7 @@
 // packages/server/src/workflows/episode/context.ts
 import {
-  BreakdownOutputSchema, MAX_NEW_CHARACTERS, OutlineOutputSchema, PRESET_NAMES, PremiseOutputSchema, presetPanelCount,
-  type BreakdownPage, type Chapter, type Character, type ColorMode, type EpisodeRun, type Language, type Manga, type OutlineScene, type Panel,
+  BreakdownOutputSchema, MAX_NEW_CHARACTERS, OutlineOutputSchema, PRESET_NAMES, PremiseOutputSchema, directivesFor, presetPanelCount, stepIndex,
+  type BreakdownPage, type Chapter, type Character, type ColorMode, type Directive, type DirectiveReader, type EpisodeRun, type Language, type Manga, type OutlineScene, type Panel,
   type PremiseOutput, type PresetInfo, type ScriptsOutput, type Settings,
 } from '@manga/shared';
 import { orderRefs, panelCharacters, panelImageModel, refImages } from '../../handlers/context.js';
@@ -21,6 +21,24 @@ export const PREVIOUS_CHAPTERS_LIMIT = 10;
 /** Review I1: each earlier chapter's summary or synopsis, at most (ten of them stay small for the local engine). */
 export const PREVIOUS_CHAPTER_TEXT_LIMIT = 600;
 
+/** A directive as a step reads it: what it asks, how strictly, and what kind of detail it is. */
+export interface DirectiveBrief { id: string; text: string; kind: Directive['kind']; must: boolean }
+export const directiveBrief = (d: Directive): DirectiveBrief => ({ id: d.id, text: d.text, kind: d.kind, must: d.must });
+
+/**
+ * The ledger of the run's brief: the directives its premise holds (read in two passes, or handed in by the plan), else the input's
+ * own, else none (runs stored before directives existed).
+ */
+export function ledgerOf(run: EpisodeRun): Directive[] {
+  const premise = PremiseOutputSchema.safeParse(run.steps[stepIndex('premise')]?.output);
+  return premise.success && premise.data.directives.length > 0 ? premise.data.directives : run.input.directives ?? [];
+}
+
+/** What `reader` is handed: the ledger's directives of its kinds for this chapter, compact. */
+export function directivesOf(run: EpisodeRun, reader: DirectiveReader, chapterNumber: number): DirectiveBrief[] {
+  return directivesFor(reader, ledgerOf(run), chapterNumber).map(directiveBrief);
+}
+
 export interface CharacterBrief { name: string; role: string; personality: string; speechStyle: string }
 /** W1 Q1: an earlier chapter as the next chapter's premise and outline see it; `synopsis` is its summary when it has one. */
 export interface ChapterBrief { number: number; title: string; synopsis: string }
@@ -28,6 +46,8 @@ export interface PremiseContext {
   step: 'premise'; language: Language; manga: { title: string; synopsis: string };
   /** `notes`: the caller's own production notes (input.notes); the prompt may carry more, which the premise separates. */
   request: { prompt: string; notes: string; tone: string; pages: number }; characters: CharacterBrief[]; previousChapters: ChapterBrief[];
+  /** The details of the request, one by one: handed in, or read from `request` by the two passes before this call. */
+  directives: DirectiveBrief[];
 }
 /**
  * `otherCharacterNames`: the manga's characters outside this run's cast, so no new character takes one of their names (Task 5 M1).
@@ -35,17 +55,20 @@ export interface PremiseContext {
  */
 export interface OutlineContext {
   step: 'outline'; language: Language; pages: number; request: { prompt: string; tone: string }; premise: PremiseOutput;
-  characters: CharacterBrief[]; otherCharacterNames: string[]; previousChapters: ChapterBrief[];
+  characters: CharacterBrief[]; otherCharacterNames: string[]; previousChapters: ChapterBrief[]; directives: DirectiveBrief[];
 }
 /** `request` is the user's own wording, so an explicit panel count or layout in it reaches the step that picks them. */
 export interface BreakdownContext {
-  step: 'breakdown'; pages: number; request: { prompt: string; tone: string }; notes: string;
+  step: 'breakdown'; pages: number; request: { prompt: string; tone: string }; notes: string; directives: DirectiveBrief[];
   scenes: Array<{ idx: number; summary: string; purpose: string; location: string }>; presets: PresetInfo[];
 }
 /** `pages` are the pages to write: all of them, or one chunk (F18); `pageRange` says which part of the chapter they are. */
 export interface ScriptsContext {
   step: 'scripts'; language: Language; premise: PremiseOutput; scenes: Array<OutlineScene & { idx: number }>;
   pages: Array<BreakdownPage & { page: number }>; pageRange: { first: number; last: number; total: number }; characters: CharacterBrief[];
+  directives: DirectiveBrief[];
+  /** A second try: what an audit of the first answer found missing; each page's writer applies the ones that belong to its pages. */
+  revisions?: Revision[];
   /** W1 Q1: the pages earlier chunks wrote (storyDigest); absent in the first chunk. */
   storySoFar?: string;
 }
@@ -59,10 +82,14 @@ export interface PromptsPanelBrief {
 }
 /** `panels` are the panels to write: the whole chapter, or one page of it (F18). */
 export interface PromptsContext {
-  step: 'prompts'; colorMode: ColorMode; premise: { title: string; setting: string; tone: string; notes: string }; panels: PromptsPanelBrief[];
+  step: 'prompts'; colorMode: ColorMode; directives: DirectiveBrief[]; premise: { title: string; setting: string; tone: string; notes: string }; panels: PromptsPanelBrief[];
   /** W1 Q1: the previous page's actions (pageActions), for visual continuity; absent on page 1 and the cover. */
   previousPage?: string;
 }
+/** A requirement an audit found unmet, as the second try is told: the directive, and what is wrong with the first answer. */
+export interface Revision { id: string; text: string; problem: string; page?: number }
+/** The context of the check of a chapter's scripts against its directives (llm.ts). */
+export interface ScriptsAuditContext { step: 'scripts-audit'; language: Language; directives: DirectiveBrief[]; story: string }
 /** W1 Q1: the context of the chapter summary call (summary.ts). */
 export interface SummaryContext {
   step: 'summary'; language: Language; chapter: { number: number; title: string; synopsis: string }; story: string;
@@ -168,20 +195,20 @@ export function buildStepContext(store: Store, run: EpisodeRun, step: LlmStepNam
       return {
         step, language: manga.language, manga: { title: manga.title, synopsis: manga.synopsis },
         request: { prompt: run.input.prompt, notes: run.input.notes ?? '', tone: run.input.tone, pages: run.input.pages }, characters: chosen.map(brief),
-        previousChapters: previousChapters(store, chapter),
+        previousChapters: previousChapters(store, chapter), directives: (run.input.directives ?? []).map(directiveBrief),
       };
     case 'outline':
       return {
         step, language: manga.language, pages: run.input.pages, request: { prompt: run.input.prompt, tone: run.input.tone },
         premise: requireOutput(run, 'premise', PremiseOutputSchema), characters: chosen.map(brief),
         otherCharacterNames: all.filter((c) => !chosen.includes(c)).map((c) => c.name),
-        previousChapters: previousChapters(store, chapter),
+        previousChapters: previousChapters(store, chapter), directives: directivesOf(run, 'outline', chapter.number),
       };
     case 'breakdown': {
       const { scenes } = requireOutput(run, 'outline', OutlineOutputSchema);
       return {
         step, pages: run.input.pages, request: { prompt: run.input.prompt, tone: run.input.tone },
-        notes: requireOutput(run, 'premise', PremiseOutputSchema).notes,
+        notes: requireOutput(run, 'premise', PremiseOutputSchema).notes, directives: directivesOf(run, 'breakdown', chapter.number),
         scenes: scenes.map((s, idx) => ({ idx, summary: s.summary, purpose: s.purpose, location: s.location })),
         presets: PRESET_NAMES.map((name) => ({ name, panelCount: presetPanelCount(name) })),
       };
@@ -193,6 +220,7 @@ export function buildStepContext(store: Store, run: EpisodeRun, step: LlmStepNam
         step, language: manga.language, premise: requireOutput(run, 'premise', PremiseOutputSchema),
         scenes: scenes.map((s, idx) => ({ ...s, idx })), pages: pages.map((p, i) => ({ ...p, page: i + 1 })),
         pageRange: { first: 1, last: pages.length, total: pages.length },
+        directives: directivesOf(run, 'scripts', chapter.number),
         characters: all.map(brief), // outline approval may have added characters that are not in input.characterIds
       };
     }
@@ -201,7 +229,7 @@ export function buildStepContext(store: Store, run: EpisodeRun, step: LlmStepNam
       const settings = store.settings.get();
       const nameOf = (id: string): string => store.characters.get(id)?.name ?? 'someone';
       return {
-        step, colorMode: manga.colorMode,
+        step, colorMode: manga.colorMode, directives: directivesOf(run, 'prompts', chapter.number),
         premise: { title: premise.title, setting: premise.setting, tone: premise.tone, notes: premise.notes },
         panels: chapterPanels(store, chapter.id, manga.readingDirection).map(({ panel, pageNumber, isCover }) => ({
           panelId: panel.id, page: pageNumber, isCover, ...panelStyle(store, settings, manga, panel),

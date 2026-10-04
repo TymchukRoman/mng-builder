@@ -1,43 +1,67 @@
 // packages/server/src/workflows/auto/plan.ts
 import {
-  MANGA_TITLE_FROM_PLAN, MAX_NEW_CHARACTERS, mangaPlanSchemaFor, type AutoRun, type Language, type LlmStepPayload, type MangaPlan,
+  CheckAnswerSchema, MANGA_TITLE_FROM_PLAN, MAX_NEW_CHARACTERS, deriveArtTags, mangaPlanSchemaFor,
+  type AutoRun, type Directive, type Language, type LlmStepPayload, type MangaPlan, type MangaPlanAnswer,
 } from '@manga/shared';
 import { createChapter } from '../../domain/chapters.js';
 import type { Engines } from '../../engines/resolve.js';
 import { PermanentError, type JobContext } from '../../jobs/index.js';
 import { InvalidOutputError } from '../../engines/errors.js';
+import type { TextEngine } from '../../engines/types.js';
 import { emitEntity, type EventBus } from '../../events/bus.js';
 import type { Store } from '../../store/index.js';
-import { APPEARANCE_COLOR_RULE, LANGUAGE_NAME, contextBlock } from '../episode/context.js';
+import { analyzeBrief } from '../brief/analyze.js';
+import { APPEARANCE_COLOR_RULE, LANGUAGE_NAME, contextBlock, directiveBrief, type DirectiveBrief } from '../episode/context.js';
 import { addArtTags, createOutlineCharacters } from '../episode/effects.js';
 import { rawOutputError } from '../episode/llm.js';
 import { loadSplitPrompt, renderTemplate } from '../episode/prompts.js';
 
 type PlanPayload = Extract<LlmStepPayload, { type: 'manga-plan' }>;
 
-/** What the plan call reads: the brief as the author wrote it, the series size, and what is already decided about the manga. */
+/** A directive as the plan call and its check read it: what it asks, how strictly, the chapters it names, and its look tags. */
+export interface PlanDirective extends DirectiveBrief { chapters: number[]; tags: string }
+const planDirective = (d: Directive): PlanDirective => ({ ...directiveBrief(d), chapters: d.chapters, tags: d.tags });
+
+/** What the plan call reads: the directives of the brief, the series size, what is already decided about the manga, and on a second try what to fix. */
 export interface PlanContext {
   step: 'manga-plan'; language: Language; manga: { title: string; colorMode: 'bw' | 'color' };
   request: { brief: string; chapters: number; pagesPerChapter: number };
+  directives: PlanDirective[];
+  revisions?: Array<{ id: string; text: string; problem: string }>;
+  previousPlan?: MangaPlanAnswer;
 }
 
-export function planContext(store: Store, run: AutoRun): PlanContext {
+/** A second try of the plan: the first plan and what an audit found wrong with it. */
+export interface PlanRetry { revisions: NonNullable<PlanContext['revisions']>; previousPlan: MangaPlanAnswer }
+
+export function planContext(store: Store, run: AutoRun, ledger: readonly Directive[], retry?: PlanRetry): PlanContext {
   const manga = store.mangas.require(run.mangaId);
   return {
     step: 'manga-plan', language: manga.language,
     manga: { title: manga.title === MANGA_TITLE_FROM_PLAN ? '' : manga.title, colorMode: manga.colorMode },
     request: { brief: run.input.brief, chapters: run.input.chapters, pagesPerChapter: run.input.pagesPerChapter },
+    directives: ledger.map(planDirective), ...(retry ?? {}),
   };
 }
 
 /** The system and user prompts of the plan call. */
-export function planPrompts(store: Store, run: AutoRun): { system: string; prompt: string } {
-  const context = planContext(store, run);
+export function planPrompts(store: Store, run: AutoRun, ledger: readonly Directive[], retry?: PlanRetry): { system: string; prompt: string } {
+  const context = planContext(store, run, ledger, retry);
   const template = loadSplitPrompt('plan', 'manga');
   const vars = {
     context: contextBlock(context), languageName: LANGUAGE_NAME[context.language], chapters: String(run.input.chapters),
     pages: String(run.input.pagesPerChapter), maxCharacters: String(MAX_NEW_CHARACTERS), appearanceColorRule: APPEARANCE_COLOR_RULE[context.manga.colorMode],
   };
+  return { system: renderTemplate(template.system, vars), prompt: renderTemplate(template.user, vars) };
+}
+
+/** The context of the check of a plan against the directives. */
+export interface PlanAuditContext { step: 'plan-audit'; language: Language; directives: PlanDirective[]; plan: MangaPlanAnswer }
+
+export function planAuditPrompts(language: Language, ledger: readonly Directive[], plan: MangaPlanAnswer): { system: string; prompt: string } {
+  const template = loadSplitPrompt('plan-audit', 'manga');
+  const context: PlanAuditContext = { step: 'plan-audit', language, directives: ledger.map(planDirective), plan };
+  const vars = { context: contextBlock(context), languageName: LANGUAGE_NAME[language] };
   return { system: renderTemplate(template.system, vars), prompt: renderTemplate(template.user, vars) };
 }
 
@@ -63,7 +87,8 @@ export function applyPlan({ store, bus }: PlanDeps, runId: string, plan: MangaPl
       title: owned ? plan.title : manga.title, synopsis: plan.synopsis,
       styleGuide: {
         ...manga.styleGuide,
-        stylePrompt: addArtTags(manga.styleGuide.stylePrompt, plan.styleTags),
+        // The look comes from the directives (code, so every tag the brief asked for is there), then whatever else the plan added.
+        stylePrompt: addArtTags(addArtTags(manga.styleGuide.stylePrompt, deriveArtTags(plan.directives.filter((d) => d.chapters.length === 0))), plan.styleTags),
         negativePrompt: addArtTags(manga.styleGuide.negativePrompt, plan.negativeTags),
       },
     });
@@ -79,13 +104,39 @@ export function applyPlan({ store, bus }: PlanDeps, runId: string, plan: MangaPl
 }
 
 /**
- * The `llm.step {type:'manga-plan'}` handler: one story-task call on the engine of the job's lane (I1), then `applyPlan`.
- * A run that is no longer running, already planned, or gone is skipped. An answer that stays invalid after the engine's
- * correction round fails the job with the raw answer attached, like an episode step.
+ * The directives the audit found unmet, as `{id, problem}`; only "must" ones. A check that fails or answers badly counts as
+ * "nothing found" (one warning): the plan is never lost to its own check, but a cancelled job still cancels.
+ */
+async function auditPlan(
+  engine: TextEngine, ctx: JobContext, language: Language, ledger: readonly Directive[], plan: MangaPlanAnswer,
+): Promise<Array<{ id: string; problem: string }>> {
+  const must = new Set(ledger.filter((d) => d.must).map((d) => d.id));
+  if (must.size === 0) return [];
+  try {
+    ctx.progress('Checking the plan against your details…');
+    const { system, prompt } = planAuditPrompts(language, ledger, plan);
+    const verdict = await engine.completeJson({
+      name: 'manga.plan-audit', task: 'story', system, prompt, schema: CheckAnswerSchema, signal: ctx.signal, onProgress: (label) => ctx.progress(label),
+    });
+    return verdict.unmet.filter((u) => must.has(u.id));
+  } catch (err) {
+    if (ctx.signal.aborted) throw err;
+    console.warn(`[manga] manga plan: the check against the author's details failed, so the plan is taken as it is: ${err instanceof Error ? err.message : String(err)}`);
+    return [];
+  }
+}
+
+/**
+ * The `llm.step {type:'manga-plan'}` handler, on the engine of the job's lane (I1), in passes: the brief is read into directives
+ * (extract, then an audit of what that missed), the plan is written from them (the schema refuses a plan that leaves a "must"
+ * directive out of its coverage), the plan is checked against them, and when the check finds some unmet it is written once more with the
+ * findings and checked again. What is still unmet after that stays marked on its directive, for the user to see. Then `applyPlan`.
+ * A run that is no longer running, already planned, or gone is skipped. An answer that stays invalid after the engine's correction
+ * round fails the job with the raw answer attached, like an episode step.
  */
 export async function handlePlanJob(
   deps: PlanDeps & { engines: Pick<Engines, 'forLane'> }, ctx: JobContext, payload: LlmStepPayload,
-): Promise<{ chapters: number } | { skipped: true }> {
+): Promise<{ chapters: number; directives: number } | { skipped: true }> {
   if (payload.type !== 'manga-plan') throw new PermanentError(`not a manga plan: ${payload.type}`);
   const { store } = deps;
   const live = (): AutoRun | null => {
@@ -94,18 +145,35 @@ export async function handlePlanJob(
   };
   const run = live();
   if (run === null) return { skipped: true };
-  const { system, prompt } = planPrompts(store, run);
-  ctx.progress('Planning the series…');
-  let plan: MangaPlan;
-  try {
-    plan = await deps.engines.forLane(ctx.job.lane).completeJson({
-      name: 'manga.plan', task: 'story', system, prompt, schema: mangaPlanSchemaFor({ chapters: run.input.chapters }),
-      signal: ctx.signal, onProgress: (label) => ctx.progress(label),
-    });
-  } catch (err) {
-    throw err instanceof InvalidOutputError ? rawOutputError(err) : err;
+  const engine = deps.engines.forLane(ctx.job.lane);
+  const language = store.mangas.require(run.mangaId).language;
+  const io = { signal: ctx.signal, onProgress: (label: string) => ctx.progress(label) };
+  const ledger = await analyzeBrief(engine, { language, brief: run.input.brief, chapters: run.input.chapters }, io);
+  const schema = mangaPlanSchemaFor({ chapters: run.input.chapters, directives: ledger });
+  const write = async (retry?: PlanRetry): Promise<MangaPlanAnswer> => {
+    const { system, prompt } = planPrompts(store, run, ledger, retry);
+    ctx.progress(retry ? 'Planning the series again…' : 'Planning the series…');
+    try {
+      return await engine.completeJson({ name: 'manga.plan', task: 'story', system, prompt, schema, ...io });
+    } catch (err) {
+      throw err instanceof InvalidOutputError ? rawOutputError(err) : err;
+    }
+  };
+  let answer = await write();
+  let unmet = await auditPlan(engine, ctx, language, ledger, answer);
+  if (unmet.length > 0) {
+    try {
+      const revised = await write({ revisions: unmet.flatMap((u) => { const d = ledger.find((x) => x.id === u.id); return d ? [{ id: d.id, text: d.text, problem: u.problem }] : []; }), previousPlan: answer });
+      unmet = await auditPlan(engine, ctx, language, ledger, revised);
+      answer = revised;
+    } catch (err) {
+      if (ctx.signal.aborted) throw err;
+      console.warn(`[manga] manga plan: the second try failed, so the first plan stays: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
+  const problem = new Map(unmet.map((u) => [u.id, u.problem]));
+  const directives = ledger.map((d): Directive => (!d.must ? d : problem.has(d.id) ? { ...d, status: 'unmet', note: problem.get(d.id)! } : { ...d, status: 'applied' }));
   if (ctx.signal.aborted || live() === null) return { skipped: true };
-  applyPlan(deps, run.id, plan);
-  return { chapters: plan.chapters.length };
+  applyPlan(deps, run.id, { ...answer, directives });
+  return { chapters: answer.chapters.length, directives: directives.length };
 }

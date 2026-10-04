@@ -81,7 +81,7 @@ describe('episode routes', { timeout: 90_000 }, () => {
     const premise = { title: 'Edited', synopsis: 'S.', tone: 'calm', setting: 'Pier' };
     const ok = await s.api<EpisodeRun>('PUT', `/api/episodes/${run.id}/steps/premise/output`, { output: premise });
     expect(ok.status).toBe(200);
-    expect(ok.body.steps[0]!.output).toEqual({ ...premise, notes: '', artTags: '' });
+    expect(ok.body.steps[0]!.output).toEqual({ ...premise, notes: '', artTags: '', directives: [] });
     // The chapter's title was typed ('One'), so it stays; the synopsis follows the premise (M4 final M6).
     expect((await s.api<Chapter>('GET', `/api/chapters/${chapter.id}`)).body).toMatchObject({ title: 'One', synopsis: 'S.' });
     const bad = await s.api<ApiErrorBody>('PUT', `/api/episodes/${run.id}/steps/outline/output`, { output: { scenes: [], newCharacters: [] } });
@@ -292,7 +292,7 @@ describe('episode steps and engines (F1, I1)', { timeout: 90_000 }, () => {
     s.deps.store.settings.patch({ engine: { mode: 'local' } }); // store only: no settings event, so nothing re-lanes the job
     s.deps.queue.resumeLane('claude');
     await runUntil(s, chapter.id, 'awaiting-review', 1);
-    expect(s.claude.calls.map((c) => c.name)).toEqual(['episode.premise']);
+    expect(s.claude.calls.map((c) => c.name)).toEqual(['brief.extract', 'brief.audit', 'episode.premise']);
     expect(s.local.calls.map((c) => c.name)).toEqual(['episode.outline']); // the next step was queued after the switch
   });
 
@@ -306,7 +306,7 @@ describe('episode steps and engines (F1, I1)', { timeout: 90_000 }, () => {
     expect((await s.api('PATCH', '/api/settings', { engine: { mode: 'local' } })).status).toBe(200);
     expect(s.deps.store.jobs.require(job!.id).lane).toBe('gpu');
     await runUntil(s, chapter.id, 'awaiting-review', 1);
-    expect(s.local.calls.map((c) => c.name)).toEqual(['episode.premise', 'episode.outline']);
+    expect(s.local.calls.map((c) => c.name)).toEqual(['brief.extract', 'brief.audit', 'episode.premise', 'episode.outline']);
     expect(s.claude.calls).toEqual([]);
   });
 });

@@ -1,11 +1,13 @@
 // packages/server/src/workflows/episode/requests.ts
 import { z } from 'zod';
 import {
-  PromptsOutputSchema, STEP_TASK, ScriptsOutputSchema, promptsSchemaFor, scriptsSchemaFor, type EpisodeRun, type Task,
+  AuditAnswerSchema, ExtractAnswerSchema, PremiseOutputSchema, PromptsOutputSchema, STEP_TASK, ScriptsOutputSchema, briefSegments, deriveArtTags, deriveNotes, mergeDirectives,
+  promptsSchemaFor, scriptsSchemaFor, type EpisodeRun, type Task,
 } from '@manga/shared';
+import { auditRequest, extractRequest, ledgerFrom, type BriefInput, type PassRequest } from '../brief/analyze.js';
 import type { Store } from '../../store/index.js';
 import {
-  buildStepContext, pageActions, storyDigest, templateVars, type PromptsContext, type PromptsPanelBrief, type ScriptsContext, type StepContext,
+  buildStepContext, directiveBrief, pageActions, storyDigest, templateVars, type PromptsContext, type PromptsPanelBrief, type Revision, type ScriptsContext, type StepContext,
 } from './context.js';
 import { normalizeLlmAnswer } from './normalize.js';
 import { loadStepPrompt, renderTemplate } from './prompts.js';
@@ -50,7 +52,7 @@ export interface StepRequest {
  * cover last (F18). Feed the answers, in the same order, to `combineAnswers`. W1 Q1: a scripts chunk after the first sees the
  * pages the earlier chunks wrote (`promptFor`), and a story page's prompts call sees the page before it (`previousPage`).
  */
-export function stepRequests(store: Store, run: EpisodeRun, step: LlmStepName): StepRequest[] {
+export function stepRequests(store: Store, run: EpisodeRun, step: LlmStepName, opts: { revisions?: Revision[] } = {}): StepRequest[] {
   const ctx = buildStepContext(store, run, step);
   const template = loadStepPrompt(step);
   /** A scripts chunk's user prompt with its `storySoFar` (W1 Q1), rendered when the chunk is sent. */
@@ -77,7 +79,7 @@ export function stepRequests(store: Store, run: EpisodeRun, step: LlmStepName): 
       const pages = ctx.pages.slice(at, at + SCRIPTS_PAGES_PER_CALL);
       const first = at + 1;
       const last = at + pages.length;
-      const chunk: ScriptsContext = { ...ctx, pages, pageRange: { first, last, total } };
+      const chunk: ScriptsContext = { ...ctx, pages, pageRange: { first, last, total }, ...(opts.revisions ? { revisions: opts.revisions } : {}) };
       const req = request(
         chunk,
         scriptsSchemaFor({ panelCounts: pages.map((p) => p.panelCount), knownNames: names, lenient: true, pageOffset: at }),
@@ -114,13 +116,41 @@ export function stepRequests(store: Store, run: EpisodeRun, step: LlmStepName): 
       );
     });
   }
-  return [request(ctx, validationSchema(store, run, step, { source: 'llm' }), STEP_PROGRESS[step])];
+  const single = request(ctx, validationSchema(store, run, step, { source: 'llm' }), STEP_PROGRESS[step]);
+  if (ctx.step !== 'premise' || run.input.directives !== undefined) return [single];
+  // The premise reads the brief first, in two passes (extract, then an audit of what the first missed), and writes from the ledger.
+  const manga = store.mangas.require(store.chapters.require(run.chapterId).mangaId);
+  const brief: BriefInput = { language: manga.language, brief: run.input.prompt, ...(run.input.notes ? { notes: run.input.notes } : {}), chapters: null };
+  const { request: extract, segments } = extractRequest(brief);
+  const asStep = (r: PassRequest<unknown>): StepRequest => ({ name: r.name, task: r.task, system: r.system, prompt: r.prompt, schema: r.schema, progress: r.progress, filled: [] });
+  const found = (previous: readonly unknown[]) => mergeDirectives([], ExtractAnswerSchema.parse(previous[0]).directives, segments.length);
+  return [
+    asStep(extract),
+    { ...asStep(auditRequest(brief, segments, [])), promptFor: (previous) => auditRequest(brief, segments, found(previous)).prompt },
+    {
+      ...single,
+      promptFor: (previous) => userPrompt({
+        ...ctx, directives: ledgerFrom(ExtractAnswerSchema.parse(previous[0]), AuditAnswerSchema.parse(previous[1]), segments.length).map(directiveBrief),
+      }),
+    },
+  ];
 }
 
 /** Joins the answers of `stepRequests` (in order) and validates the whole with the step's LLM schema (ZodError when invalid). */
 export function combineAnswers(store: Store, run: EpisodeRun, step: LlmStepName, answers: unknown[]): unknown {
   let whole: unknown;
-  if (step === 'scripts') whole = { pages: answers.flatMap((a) => ScriptsOutputSchema.parse(a).pages) };
+  if (step === 'premise') {
+    // The last answer is the premise; the ledger is what was handed in, else what the two passes read. Notes and art tags come
+    // from the ledger (code, not the model's memory of it); a premise written without a ledger keeps its own.
+    const premise = PremiseOutputSchema.parse(answers.at(-1));
+    const given = run.input.directives;
+    const directives = given ?? ledgerFrom(
+      ExtractAnswerSchema.parse(answers[0]), AuditAnswerSchema.parse(answers[1]), briefSegments(run.input.prompt, run.input.notes).length,
+    );
+    whole = directives.length === 0 ? premise : {
+      ...premise, directives, notes: deriveNotes(directives), artTags: deriveArtTags(directives, { skipSeries: given !== undefined }),
+    };
+  } else if (step === 'scripts') whole = { pages: answers.flatMap((a) => ScriptsOutputSchema.parse(a).pages) };
   else if (step === 'prompts') whole = { panels: answers.flatMap((a) => PromptsOutputSchema.parse(a).panels) };
   else if (answers.length === 1) whole = answers[0];
   else throw new Error(`step ${step} makes one call, got ${answers.length} answers`);

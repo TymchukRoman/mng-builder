@@ -36,3 +36,24 @@ export function stageSteps(run: AutoRun): Array<{ stage: AutoStage; label: strin
 export function showsRun(run: AutoRun | null | undefined): run is AutoRun {
   return !!run && (run.status !== 'done' || run.error !== null);
 }
+
+export interface DirectiveRow { id: string; text: string; kind: string; where: string; state: 'applied' | 'unmet' | 'wish' | 'unchecked'; note: string }
+
+/**
+ * The details the run understood, one row each: what was asked, what kind of detail it is, where it applies ("all chapters" or
+ * "ch. 2, 3"), and what the check of the plan found (applied, unmet with what is wrong, a wish that is not checked).
+ */
+export function directiveRows(run: AutoRun): DirectiveRow[] {
+  return (run.plan?.directives ?? []).map((d) => ({
+    id: d.id, text: d.text, kind: d.kind,
+    where: d.chapters.length === 0 ? 'all chapters' : `ch. ${d.chapters.join(', ')}`,
+    state: !d.must ? 'wish' : d.status === 'applied' ? 'applied' : d.status === 'unmet' || d.status === 'partial' ? 'unmet' : 'unchecked',
+    note: d.note ?? '',
+  }));
+}
+
+/** "12 details understood" / "12 details, 2 not fully applied". */
+export function directiveSummary(rows: readonly DirectiveRow[]): string {
+  const unmet = rows.filter((r) => r.state === 'unmet').length;
+  return `${rows.length} detail${rows.length === 1 ? '' : 's'} understood${unmet > 0 ? `, ${unmet} not fully applied` : ''}`;
+}

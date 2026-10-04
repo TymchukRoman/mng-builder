@@ -104,9 +104,11 @@ describe('EpisodeRunner — flow', () => {
     expect(stepStatuses(run.id)).toEqual(['done', 'awaiting-review', 'pending', 'pending', 'pending', 'pending', 'pending']);
     expect(runner.get(run.id)).toMatchObject({ status: 'awaiting-review', currentStep: 1 });
     expect(lib.store.chapters.require(chapter.id)).toMatchObject({ title: 'The Cat in the Rain', status: 'generating' });
-    expect(claude.calls[0]).toMatchObject({ name: 'episode.premise', task: 'story' });
-    expect(claude.calls[0]!.prompt).toContain('<context>');
-    expect(claude.calls[0]!.system).toContain('in English');
+    // The brief is read in two passes before the premise is written from what they found.
+    expect(claude.calls.slice(0, 3).map((c) => c.name)).toEqual(['brief.extract', 'brief.audit', 'episode.premise']);
+    expect(claude.calls[2]).toMatchObject({ name: 'episode.premise', task: 'story' });
+    expect(claude.calls[2]!.prompt).toContain('<context>');
+    expect(claude.calls[2]!.system).toContain('in English');
     expect(queue.jobs('llm.step').map((j) => j.lane)).toEqual(['claude', 'claude']);
   });
 
@@ -233,7 +235,7 @@ describe('EpisodeRunner — engines (F1, I1)', () => {
     lib.store.settings.patch({ engine: { mode: 'local' } });
     const [job] = queue.jobs('llm.step');
     await runner.handleStepJob(fakeJobContext(lib.store, bus, queue, job!), job!.payload as LlmStepPayload);
-    expect(claude.calls.map((c) => c.name)).toEqual(['episode.premise']);
+    expect(claude.calls.map((c) => c.name)).toEqual(['brief.extract', 'brief.audit', 'episode.premise']);
     expect(local.calls).toEqual([]);
     expect(runner.get(run.id).steps[0]!.status).toBe('done');
   });
@@ -670,7 +672,8 @@ describe('EpisodeRunner — restart safety', () => {
       auto: false,
       responses: { 'episode.premise': async (req) => { await gate; return EPISODE_FAKE_RESPONSES['episode.premise']!(req); } },
     });
-    const run = runner.start(chapter.id, input, 'autopilot');
+    // A brief already read (one call), so the abort below meets the premise call itself.
+    const run = runner.start(chapter.id, { ...input, directives: [] }, 'autopilot');
     const token = runner.get(run.id).steps[0]!.startedAt;
     const [old] = queue.jobs('llm.step');
     const controller = new AbortController();

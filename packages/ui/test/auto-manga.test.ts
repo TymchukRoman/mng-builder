@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { StartAutoMangaSchema, type AutoRun } from '@manga/shared';
 import { EMPTY_AUTO_DRAFT, clampCount, parseChapters, parsePagesPerChapter, resizeChapterModels, toAutoInput } from '../src/mangas/autoManga';
-import { runStatusText, showsRun, stageSteps } from '../src/manga/autoRun';
+import { directiveRows, directiveSummary, runStatusText, showsRun, stageSteps } from '../src/manga/autoRun';
 
 const shared = { title: ' ', language: 'uk', colorMode: 'bw', direction: 'rtl', preset: 'manga-bw' } as const;
 const run = (over: Partial<AutoRun> = {}): AutoRun => ({
@@ -55,5 +55,26 @@ describe('auto run view', () => {
   it('shows a run until it finished cleanly', () => {
     expect([showsRun(null), showsRun(run()), showsRun(run({ status: 'failed' })), showsRun(run({ status: 'done' })), showsRun(run({ status: 'done', error: 'n' }))])
       .toEqual([false, true, true, false, true]);
+  });
+});
+
+describe('the details a run understood', () => {
+  const d = (id: string, over: Record<string, unknown> = {}) => ({ id, text: `Detail ${id}.`, kind: 'plot', chapters: [], must: true, quote: '', sources: [], tags: '', ...over });
+  const withPlan = (directives: unknown[]): AutoRun => run({ plan: { directives } as unknown as AutoRun['plan'] });
+
+  it('has no rows before the plan, and one row per directive after it', () => {
+    expect(directiveRows(run())).toEqual([]);
+    const rows = directiveRows(withPlan([
+      d('D1', { status: 'applied' }), d('D2', { status: 'unmet', note: 'No scarf', chapters: [2, 3], kind: 'character' }), d('D3', { must: false }), d('D4'),
+    ]));
+    expect(rows.map((r) => [r.id, r.state, r.where, r.note])).toEqual([
+      ['D1', 'applied', 'all chapters', ''], ['D2', 'unmet', 'ch. 2, 3', 'No scarf'], ['D3', 'wish', 'all chapters', ''], ['D4', 'unchecked', 'all chapters', ''],
+    ]);
+    expect(rows[1]).toMatchObject({ kind: 'character', text: 'Detail D2.' });
+  });
+
+  it('summarises them, counting what is not fully applied', () => {
+    expect(directiveSummary(directiveRows(withPlan([d('D1', { status: 'applied' })])))).toBe('1 detail understood');
+    expect(directiveSummary(directiveRows(withPlan([d('D1', { status: 'unmet' }), d('D2', { status: 'partial' }), d('D3', { status: 'applied' })])))).toBe('3 details understood, 2 not fully applied');
   });
 });

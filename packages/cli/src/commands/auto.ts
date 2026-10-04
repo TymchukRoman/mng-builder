@@ -51,6 +51,9 @@ export function formatRun(run: AutoRun): string {
   if (run.plan) {
     lines.push(`plan   ${run.plan.title}: ${run.plan.chapters.length} chapters, ${run.plan.characters.length} characters`);
     run.chapterIds.forEach((id, i) => lines.push(`  #${i + 1}  ${id}  ${run.plan!.chapters[i]!.title}`));
+    const unmet = run.plan.directives.filter((d) => d.status === 'unmet');
+    lines.push(`details  ${run.plan.directives.length} understood${unmet.length > 0 ? `, ${unmet.length} not fully applied` : ''}`);
+    for (const d of unmet) lines.push(`  ${d.id}  ${d.text}${d.note ? ` (${d.note})` : ''}`);
   }
   return lines.join('\n');
 }

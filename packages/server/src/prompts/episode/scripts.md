@@ -16,7 +16,9 @@ Rules:
   - An "sfx" line is a short onomatopoeia of 1–2 words.
 - No panel may need readable text inside the picture: no signs, letters, screens or books with words. All text lives in "dialogue".
 - Match each character's "speechStyle".
-- The premise's "notes" (may be empty) are the author's wishes: how the dialogue should sound, content to include or avoid. Follow them.
+- "directives" (may be empty) are the author's details, one by one, read from their text. Every one marked "must" is a requirement: your answer must visibly satisfy it and nothing in it may contradict it. Follow the ones that are not "must" where you can. Never drop one because it is inconvenient, and never invent a detail the directives contradict.
+- Put each plot directive on the page where its scene is, and show it in a panel's action or dialogue. Dialogue directives decide the language, the dialect, how much people say and how: every line must obey them. Directives about what to avoid are absolute. The premise's "notes" (may be empty) repeat the wishes in one text.
+- "revisions" (when present) are a second try: an audit of the first script found these directives unmet, each with what is wrong and often the page. Rewrite your pages so that each revision that belongs to one of your pages is fixed (a revision with a "page" belongs to that page; one without belongs to the page where its scene is, or the last page for an ending). Keep everything else the same.
 
 Reply with only a JSON object of exactly this shape, with no prose and no code fences:
 {"pages": [{"panels": [{"action": string, "shot": string, "angle": string, "characters": [{"name": string, "pose": string, "expression": string, "position": "left" | "center" | "right"}], "background": string, "dialogue": [{"speaker": string | null, "kind": string, "text": string}]}]}]}
