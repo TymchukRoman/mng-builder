@@ -15,16 +15,19 @@ import {
   ReadingDirectionSchema,
   StyleGuideSchema,
 } from './schemas.js';
+import { ImageModelFieldSchema } from './image-models.js';
 import type { Image, Lane, Page, Panel, TextFrame } from './schemas.js';
 
 export const CreateMangaSchema = z.object({
   title: z.string().min(1), synopsis: z.string().default(''),
   language: LanguageSchema.default('en'), colorMode: ColorModeSchema.default('bw'),
   readingDirection: ReadingDirectionSchema.default('rtl'), stylePreset: z.string().default('manga-bw'),
+  imageModel: ImageModelFieldSchema.default(null),
 });
 export const UpdateMangaSchema = z.object({
   title: z.string().min(1), synopsis: z.string(), language: LanguageSchema, colorMode: ColorModeSchema,
   readingDirection: ReadingDirectionSchema, pageFormat: PageFormatSchema, styleGuide: StyleGuideSchema,
+  imageModel: ImageModelFieldSchema,
 }).partial();
 export const CreateCharacterSchema = z.object({
   name: z.string().min(1), role: CharacterRoleSchema.default('supporting'), personality: z.string().default(''),
@@ -35,8 +38,8 @@ export const UpdateCharacterSchema = z.object({
   name: z.string().min(1), role: CharacterRoleSchema, personality: z.string(), speechStyle: z.string(),
   appearanceTags: z.string(), seed: z.number().int().min(0), recipe: z.string().nullable(),
 }).partial();
-export const CreateChapterSchema = z.object({ title: z.string().min(1), synopsis: z.string().default('') });
-export const UpdateChapterSchema = z.object({ title: z.string().min(1), synopsis: z.string(), summary: z.string(), number: z.number().int().min(1), status: ChapterStatusSchema }).partial();
+export const CreateChapterSchema = z.object({ title: z.string().min(1), synopsis: z.string().default(''), imageModel: ImageModelFieldSchema.default(null) });
+export const UpdateChapterSchema = z.object({ title: z.string().min(1), synopsis: z.string(), summary: z.string(), number: z.number().int().min(1), status: ChapterStatusSchema, imageModel: ImageModelFieldSchema }).partial();
 export const CreatePageSchema = z.object({ layoutPreset: z.string().default('2x2'), index: z.number().int().min(0).optional() });
 export const ReorderSchema = z.object({ ids: z.array(IdSchema).min(1) });
 export const ApplyPresetSchema = z.object({ preset: z.string(), confirm: z.boolean().default(false) });

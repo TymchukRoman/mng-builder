@@ -20,6 +20,7 @@ export const qk = {
   recipes: () => ['recipes'] as const,
   config: () => ['config'] as const,
   episode: (chapterId: string) => ['episode', chapterId] as const,
+  autoRun: (mangaId: string) => ['autoRun', mangaId] as const,
   /** W1 R1: the chapter's panels without an image; any page or panel change may change it. */
   missingPanels: (chapterId: string) => ['missingPanels', chapterId] as const,
 };
@@ -72,9 +73,11 @@ export function keysForEntity(e: EntityEvent, lookup: OwnerLookup): QueryKey[] {
       return [pageId ? qk.page(pageId) : ['page']];
     }
     case 'image':
-      return [['panelImages'], ['characterImages']];
+      return [['panelImages'], ['characterImages'], ['gallery']];
     case 'episodeRun':
       return [['episode']];
+    case 'autoRun':
+      return [['autoRun']];
     case 'settings':
       return [qk.settings(), qk.status()];
   }

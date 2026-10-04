@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import type {
-  AppConfig, Chapter, Character, EpisodeRun, Image, Job, Manga, MissingPanels, Page, PageDetail, PresetInfo, RecipeInfo, ServiceStatus, Settings, StylePreset,
+  AppConfig, AutoRun, Chapter, Character, EpisodeRun, Image, Job, Manga, MissingPanels, Page, PageDetail, PresetInfo, RecipeInfo, ServiceStatus, Settings, StylePreset,
 } from '@manga/shared';
 import { api, seg } from './api';
 import { fetchableId, qk } from './queryKeys';
@@ -34,6 +34,9 @@ export const useMissingPanels = (chapterId: string | undefined) =>
     queryFn: () => api.get<MissingPanels>(`/api/chapters/${seg(chapterId)}/render-missing`),
     enabled: !!chapterId,
   });
+/** The manga's latest auto run (made with "from a prompt"), or null. No polling: every `autoRun` event invalidates `['autoRun']`. */
+export const useAutoRun = (mangaId: string | undefined) =>
+  useQuery({ queryKey: qk.autoRun(mangaId ?? ''), queryFn: () => api.get<AutoRun | null>(`/api/mangas/${seg(mangaId)}/auto-run`), enabled: !!mangaId });
 export const useJobs = () =>
   useQuery({ queryKey: qk.jobs(), queryFn: () => api.get<Job[]>('/api/jobs?limit=50'), refetchInterval: 30_000 });
 export const useSettings = () => useQuery({ queryKey: qk.settings(), queryFn: () => api.get<Settings>('/api/settings') });

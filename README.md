@@ -1,6 +1,6 @@
 # Manga Builder
 
-A personal, local tool for making manga with AI. It keeps character art consistent, builds chapters from a prompt with review points, and handles page layouts, lettering in text frames (never inside the art), and PNG/PDF export. Every action is also available from the `manga` CLI.
+A personal, local tool for making manga with AI. It keeps character art consistent, builds chapters from a prompt with review points, and handles page layouts, lettering in text frames (never inside the art), and PNG/PDF export. It can also write a whole manga from one prompt (plot and notes in one text), keeps a gallery of every image it drew, and lets you pick the image model per manga or chapter. Every action is also available from the `manga` CLI.
 
 **Status: milestones M1–M4 complete (MVP).** The foundation (M1: mangas, characters, chapters, pages and layouts, panels, text frames, uploads, the job queue), AI imaging (M2), the web UI (M3), and the episode workflow with PNG/PDF export (M4) all work from the web UI, the REST API and the `manga` CLI.
 
@@ -64,6 +64,18 @@ Each panel picks its image recipe from how many characters it has (Settings → 
 | identity-drift retry | `qwen-edit-ref`, only for panels whose characters have portraits |
 
 A library keeps the settings it was created with. If yours predates this default, switch **Several characters** to `klein-ref` in Settings → Routing (or `PATCH /api/settings` with `{"routing": {"multiChar": "klein-ref"}}`).
+
+### Image models per manga and chapter
+
+`manga models` (and the pickers in manga settings, the chapter row, the chapter AI section and the auto form) offer presets that fill the three routes above in one choice: `sdxl`, `flux2`, `qwen`, `anima`, `anima-turbo`. A chapter's model wins over its manga's; with none set, Settings → Routing applies. `anima` and `anima-turbo` use no references (characters come from their appearance tags only). A model on another family than the manga's style preset takes that family's built-in manga LoRA for the book's colour mode.
+
+### Manga from a prompt
+
+New manga → **From a prompt** (or `manga auto start "<brief>" --chapters 3 --pages 8 --wait`): one brief holding the plot AND notes such as "simplistic art style" or "short dialogue". The server plans the series (title, cast, a plot per chapter, notes, look), draws character portraits and a poster, then writes each chapter as an autopilot episode with its own cover, one after another. The manga page shows the stages; a failed run continues with Continue (`manga auto resume`). Chapter prompts work the same way: "Plot and notes" in the chapter AI section; the premise step keeps the notes and turns a requested look into tags for every panel. Design and the list of next automation steps: `docs/superpowers/specs/2026-10-04-auto-manga-design.md`.
+
+### Gallery
+
+The image icon in the top bar (`/gallery`, `manga gallery`) lists every image that still exists, newest first: filter by manga, source and owner, open one to see how it was made, jump to its page in the editor, or delete it.
 
 ### Troubleshooting: slow or stalled images
 
@@ -129,7 +141,9 @@ References take an id or a unique name or title, case-insensitive. A chapter can
 | `manga text add <page> --kind speech --text "…" [--speaker <char>] [--panel <panel>]` | Add a text frame |
 | `manga text edit <frame> [--text] [--box x,y,w,h] [--speaker <char>\|-] …` · `text rm <frame>` | Edit or delete a text frame |
 | `manga text auto <page>` | Auto-letter a page: add text frames for the dialogue lines that have none yet |
-| `manga episode start <chapter> --prompt "…" [--pages 8] [--chars a,b] [--tone "…"] [--autopilot]` | Generate the chapter from one prompt (AI). Without `--autopilot` it stops at the review points; with `--wait` it follows the run and prints each step's progress. The premise writes the chapter's synopsis, and its title only when the chapter is titled `"Untitled chapter"` (or with an earlier premise's title) |
+| `manga auto start "<brief>" [--chapters 3] [--pages 8] [--title] [--lang] [--color] [--dir] [--style] [--model <id>] [--chapter-model 2=anima] [--no-poster]` | Make a whole manga from one brief (plot and notes). With `--wait` it follows the run and exits 1 if it fails. `auto status\|cancel\|resume <manga>` |
+| `manga models` · `manga gallery [--manga] [--source generated\|upscaled\|uploaded\|all] [--owner panel\|character] [--limit]` | List the image models; list the images that exist. `create`, `edit`, `chapter add\|edit` take `--model <id>` (`-` clears it) |
+| `manga episode start <chapter> --prompt "…" [--notes "…"] [--pages 8] [--chars a,b] [--tone "…"] [--autopilot]` | Generate the chapter from one prompt (AI). Without `--autopilot` it stops at the review points; with `--wait` it follows the run and prints each step's progress. The premise writes the chapter's synopsis, and its title only when the chapter is titled `"Untitled chapter"` (or with an earlier premise's title) |
 | `manga episode status <chapter>` · `episode approve <chapter>` · `episode autopilot <chapter>` · `episode cancel <chapter>` | Show the latest run, continue past a review point, run to the end, or cancel it and its jobs |
 | `manga episode edit <chapter> <step> --file <out.json>` · `episode rerun <chapter> <step> [--confirm]` | Replace a step's output, or run a step again (and every later step); `--confirm` allows replacing the chapter's pages |
 | `manga export <page\|chapter> [--format pdf\|png] [--out <dir>]` | Export a page, or a whole chapter (cover first, plus `chapter.pdf`), at print size; default folder `<library>/exports/<manga>/<chapter>` |

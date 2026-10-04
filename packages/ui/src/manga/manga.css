@@ -20,3 +20,15 @@
 .lora-editor { display: flex; flex-direction: column; gap: var(--sp-2); }
 .lora-row { display: grid; grid-template-columns: 1fr 88px auto; gap: var(--sp-2); align-items: center; }
 .page-size { align-self: flex-start; }
+
+.auto-run { display: flex; flex-direction: column; gap: var(--sp-2); max-width: 880px; margin-bottom: var(--sp-4); padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border-2); border-radius: var(--r-md); background: var(--surface); }
+.auto-run--failed, .auto-run--cancelled { border-color: var(--warn); }
+.auto-run__head { display: flex; align-items: center; gap: var(--sp-2); min-height: var(--control-h); }
+.auto-run__text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.auto-run--failed .auto-run__text { color: var(--danger); }
+.auto-run__link { color: var(--accent); font-size: var(--fs-sm); }
+.auto-run__steps { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin: 0; padding: 0; list-style: none; }
+.auto-run__step { height: calc(var(--control-h) - var(--sp-1)); display: inline-flex; align-items: center; padding: 0 var(--sp-2); border: 1px solid var(--border-2); border-radius: var(--r-full); font-size: var(--fs-xs); color: var(--text-3); }
+.auto-run__step--done { color: var(--ok); }
+.auto-run__step--now { border-color: var(--accent); background: var(--accent-wash); color: var(--text-1); }
+.auto-run__step--stopped { border-color: var(--warn); color: var(--warn); }

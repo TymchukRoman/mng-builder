@@ -36,8 +36,8 @@ export const EPISODE_FAKE_RESPONSES: Record<string, (req: JsonRequest<unknown>) 
   'episode.premise': (req): PremiseOutput => {
     const c = extractContext<PremiseContext>(req.prompt);
     return c.language === 'uk'
-      ? { title: 'Кіт під дощем', synopsis: `Коротка історія: ${c.request.prompt}`, tone: c.request.tone || 'лагідний', setting: 'Портове містечко восени, вечір' }
-      : { title: 'The Cat in the Rain', synopsis: `A short story: ${c.request.prompt}`, tone: c.request.tone || 'gentle', setting: 'A harbour town in autumn, evening' };
+      ? { title: 'Кіт під дощем', synopsis: `Коротка історія: ${c.request.prompt}`, tone: c.request.tone || 'лагідний', setting: 'Портове містечко восени, вечір', notes: c.request.notes, artTags: /прост/i.test(c.request.prompt) ? 'simple background, minimal shading' : '' }
+      : { title: 'The Cat in the Rain', synopsis: `A short story: ${c.request.prompt}`, tone: c.request.tone || 'gentle', setting: 'A harbour town in autumn, evening', notes: c.request.notes, artTags: /simpl/i.test(c.request.prompt) ? 'simple background, minimal shading' : '' };
   },
 
   // Task 5 M1/M2: never re-proposes a character the manga already has (in this run's cast or not), and writes Ukrainian

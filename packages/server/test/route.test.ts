@@ -11,7 +11,7 @@ import { PermanentError } from '../src/jobs/index.js';
 const STAMP = '2026-09-27T00:00:00.000Z';
 const manga = (colorMode: 'bw' | 'color', recipe = 'anime'): Manga => ({
   id: 'mg_route00001', title: 'Route', synopsis: '', language: 'en', colorMode, readingDirection: 'rtl', pageFormat: DEFAULT_PAGE_FORMAT,
-  styleGuide: { ...STYLE_PRESETS['manga-bw']!.styleGuide, recipe }, coverPageId: null, createdAt: STAMP, updatedAt: STAMP,
+  styleGuide: { ...STYLE_PRESETS['manga-bw']!.styleGuide, recipe }, imageModel: null, coverPageId: null, createdAt: STAMP, updatedAt: STAMP,
 });
 const panel = (recipe: string | null = null): Panel => ({
   id: 'pn_route00001', pageId: 'pg_route00001', script: EMPTY_SCRIPT, prompt: { scene: '', negative: '' }, recipe, seedLock: false, seed: 1,

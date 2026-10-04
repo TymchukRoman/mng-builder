@@ -7,7 +7,7 @@ import type { Store } from '../store/index.js';
 import { defined } from '../util/defined.js';
 
 /** `colorMode` omitted = the style preset's colour mode. */
-export type CreateMangaInput = Omit<z.infer<typeof CreateMangaSchema>, 'colorMode'> & { colorMode?: ColorMode };
+export type CreateMangaInput = Omit<z.infer<typeof CreateMangaSchema>, 'colorMode' | 'imageModel'> & { colorMode?: ColorMode; imageModel?: string | null };
 export type UpdateMangaInput = z.infer<typeof UpdateMangaSchema>;
 
 export function stylePreset(id: string): StylePreset {
@@ -27,6 +27,7 @@ export function createManga(store: Store, input: CreateMangaInput): Manga {
     readingDirection: input.readingDirection,
     pageFormat: structuredClone(DEFAULT_PAGE_FORMAT),
     styleGuide: structuredClone(preset.styleGuide),
+    imageModel: input.imageModel ?? null,
     coverPageId: null,
   });
 }

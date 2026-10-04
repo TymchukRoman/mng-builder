@@ -57,13 +57,13 @@ describe('database', () => {
   it('runs in WAL mode with foreign keys on, at the latest schema version', () => {
     expect(db.pragma('journal_mode', { simple: true })).toBe('wal');
     expect(db.pragma('foreign_keys', { simple: true })).toBe(1);
-    expect(schemaVersion(db)).toBe(3);
+    expect(schemaVersion(db)).toBe(4);
   });
 
   it('migrates idempotently when reopened', () => {
     db.close();
     db = openDatabase(join(dir.path, 'library.sqlite'));
-    expect(schemaVersion(db)).toBe(3);
+    expect(schemaVersion(db)).toBe(4);
   });
 });
 
@@ -223,7 +223,7 @@ describe('migration 2 (W1 Q1: chapters.summary)', () => {
     old.prepare(`INSERT INTO chapters VALUES ('ch_aaaaaaaaaa','mg_aaaaaaaaaa',1,'One','',NULL,'draft',0,'t','t')`).run();
     old.close();
     db = openDatabase(file);
-    expect(schemaVersion(db)).toBe(3);
+    expect(schemaVersion(db)).toBe(4);
     expect(db.prepare(`SELECT summary FROM chapters WHERE id = 'ch_aaaaaaaaaa'`).get()).toEqual({ summary: '' });
     // Task 2 M2: the old row itself survives, and the new column takes a write.
     expect(db.prepare(`SELECT title, number FROM chapters WHERE id = 'ch_aaaaaaaaaa'`).get()).toEqual({ title: 'One', number: 1 });
@@ -257,5 +257,27 @@ describe('migration 3 (W1 Q1 review M8: episode_runs.chapter_summary)', () => {
     expect(repos.episodes.require('er_aaaaaaaaaa').chapterSummary).toBeNull();
     expect(repos.episodes.update('er_aaaaaaaaaa', { chapterSummary: 'Aiko found the cat.' }).chapterSummary).toBe('Aiko found the cat.');
     expect(repos.episodes.require('er_aaaaaaaaaa').chapterSummary).toBe('Aiko found the cat.');
+  });
+});
+
+describe('migration 4 (image models and auto runs)', () => {
+  it('adds a null image model to mangas and chapters written before it, and the auto_runs table', () => {
+    db.close();
+    const file = join(dir.path, 'v3.sqlite');
+    const old = new Database(file);
+    for (const m of MIGRATIONS.slice(0, 3)) old.exec(m.sql);
+    old.pragma('user_version = 3');
+    old.prepare(`INSERT INTO mangas VALUES ('mg_aaaaaaaaaa','M','','en','bw','rtl','{}','{}',NULL,'t','t')`).run();
+    old.prepare(`INSERT INTO chapters (id, manga_id, number, title, synopsis, cover_page_id, status, ord, created_at, updated_at, summary)
+                 VALUES ('ch_aaaaaaaaaa','mg_aaaaaaaaaa',1,'One','',NULL,'draft',0,'t','t','')`).run();
+    old.close();
+    db = openDatabase(file);
+    expect(schemaVersion(db)).toBe(4);
+    expect(db.prepare(`SELECT image_model FROM mangas WHERE id = 'mg_aaaaaaaaaa'`).get()).toEqual({ image_model: null });
+    expect(db.prepare(`SELECT image_model FROM chapters WHERE id = 'ch_aaaaaaaaaa'`).get()).toEqual({ image_model: null });
+    db.prepare(`UPDATE mangas SET image_model = 'flux2' WHERE id = 'mg_aaaaaaaaaa'`).run();
+    db.prepare(`INSERT INTO auto_runs VALUES ('ar_aaaaaaaaaa','mg_aaaaaaaaaa','{}','running','plan',NULL,'[]',0,NULL,'t','t')`).run();
+    db.prepare(`DELETE FROM mangas WHERE id = 'mg_aaaaaaaaaa'`).run();
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM auto_runs`).get()).toEqual({ n: 0 }); // the run goes with its manga
   });
 });

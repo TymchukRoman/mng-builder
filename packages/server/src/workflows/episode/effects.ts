@@ -243,11 +243,22 @@ export function applyScripts({ store, bus }: EffectDeps, chapterId: string, scri
  * English part kept, and a scene with nothing usable left written from the panel's cast (fallbackScene, one warning
  * per step) instead of failing the run. `user` (an edit of the output) is stored verbatim.
  */
-export interface ApplyPromptsOptions { source: 'llm' | 'user' }
+export interface ApplyPromptsOptions {
+  source: 'llm' | 'user';
+  /** The premise's `artTags` (an `llm` answer only): added to every scene of the chapter, the cover's too, unless the scene has them already. */
+  artTags?: string;
+}
+
+/** `scene` with each of the comma-separated `tags` it does not carry yet (case-insensitive) added at the end. */
+export function addArtTags(scene: string, tags: string): string {
+  const have = new Set(scene.split(',').map((t) => t.trim().toLowerCase()));
+  const added = tags.split(',').map((t) => t.trim()).filter((t) => t !== '' && !have.has(t.toLowerCase()));
+  return added.length === 0 ? scene : [scene.trim(), ...added].filter((t) => t !== '').join(', ');
+}
 
 /** Step 5 → panel.prompt (and user edits of it). */
 export function applyPrompts(
-  { store, bus }: EffectDeps, chapterId: string, prompts: PromptsOutput, { source }: ApplyPromptsOptions,
+  { store, bus }: EffectDeps, chapterId: string, prompts: PromptsOutput, { source, artTags = '' }: ApplyPromptsOptions,
 ): void {
   const chapter = store.chapters.require(chapterId);
   const manga = store.mangas.require(chapter.mangaId);
@@ -272,6 +283,7 @@ export function applyPrompts(
           scene = fallbackScene(style, shot, angle, panelCharacters(store, panel, manga.id), panel.script.background, prepare);
           fallbacks.push(p.panelId);
         }
+        if (artTags.trim() !== '') scene = addArtTags(scene, prepare(artTags));
       }
       store.panels.update(p.panelId, { prompt: { scene, negative: p.negative ?? '' } });
     }

@@ -41,7 +41,7 @@ describe('schemas', () => {
 
   it('fill request defaults', () => {
     expect(CreateMangaSchema.parse({ title: 'Oni' })).toEqual({
-      title: 'Oni', synopsis: '', language: 'en', colorMode: 'bw', readingDirection: 'rtl', stylePreset: 'manga-bw',
+      title: 'Oni', synopsis: '', language: 'en', colorMode: 'bw', readingDirection: 'rtl', stylePreset: 'manga-bw', imageModel: null,
     });
     expect(CreateFrameSchema.parse({ kind: 'speech' })).toEqual({
       kind: 'speech', text: '', panelId: null, speakerId: null, rotation: 0, autoFit: true, align: 'center',

@@ -52,7 +52,7 @@ const ROLE = choice(CharacterRoleSchema.options, 'supporting', {
 
 /** One shape per LLM step, following PremiseOutputSchema … PromptsOutputSchema. */
 export const STEP_SHAPES: Readonly<Record<LlmStepName, Shape>> = {
-  premise: object({ title: text(), synopsis: text(), tone: text(), setting: text() }),
+  premise: object({ title: text(), synopsis: text(), tone: text(), setting: text(), notes: text(), artTags: text() }),
   outline: object({
     scenes: list(object({ summary: text(), purpose: text(), location: text(), characterNames: list(text()) }), false),
     newCharacters: list(object({ name: text(), role: ROLE, personality: text(), speechStyle: text(), appearanceTags: text() })),

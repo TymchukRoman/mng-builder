@@ -16,7 +16,9 @@ export type LlmStepPayload =
   | { type: 'panel-prompt'; panelId: string }
   | { type: 'appearance'; characterId: string; description: string }
   /** W1 Q1: the chapter's "what happened", queued when an episode run finishes. */
-  | { type: 'chapter-summary'; chapterId: string; runId: string };
+  | { type: 'chapter-summary'; chapterId: string; runId: string }
+  /** The series plan of an auto-created manga (workflows/auto). */
+  | { type: 'manga-plan'; autoRunId: string };
 
 /** W1 R2: the gpu lane's pause reason when another app holds the GPU memory; only this pause is lifted automatically. */
 export const GPU_BUSY_REASON = 'GPU busy: another app is using GPU memory';

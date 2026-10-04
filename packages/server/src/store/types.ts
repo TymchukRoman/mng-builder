@@ -1,18 +1,20 @@
 import type {
-  Chapter, Character, EpisodeRun, Image, Job, JobKind, JobStatus, Lane, Manga, Page, Panel, Settings, SettingsPatch, TextFrame,
+  AutoRun, Chapter, Character, EpisodeRun, Image, Job, JobKind, JobStatus, Lane, Manga, Page, Panel, Settings, SettingsPatch, TextFrame,
 } from '@manga/shared';
 
 /** The entity minus id/timestamps. The repo assigns a fresh id unless one is supplied (panel ids come from layout leaves; image ids name their file). */
 type NewEntity<T> = Omit<T, 'id' | 'createdAt' | 'updatedAt'> & { id?: string };
-export type NewManga = NewEntity<Manga>;
+/** `imageModel` defaults to null (the routing of Settings), so creators that predate it need not pass it. */
+export type NewManga = Omit<NewEntity<Manga>, 'imageModel'> & { imageModel?: string | null };
 export type NewCharacter = NewEntity<Character>;
 /** `summary` defaults to '' (W1 Q1), so creators that predate it need not pass it. */
-export type NewChapter = Omit<NewEntity<Chapter>, 'summary'> & { summary?: string };
+export type NewChapter = Omit<NewEntity<Chapter>, 'summary' | 'imageModel'> & { summary?: string; imageModel?: string | null };
 export type NewPage = NewEntity<Page>;
 export type NewPanel = NewEntity<Panel>;
 export type NewFrame = NewEntity<TextFrame>;
 export type NewImage = NewEntity<Image>;
 export type NewEpisodeRun = NewEntity<EpisodeRun>;
+export type NewAutoRun = NewEntity<AutoRun>;
 
 export type MangaPatch = Partial<Omit<Manga, 'id' | 'createdAt'>>;
 export type CharacterPatch = Partial<Omit<Character, 'id' | 'mangaId' | 'createdAt'>>;
@@ -22,7 +24,15 @@ export type PanelPatch = Partial<Omit<Panel, 'id' | 'pageId' | 'createdAt'>>;
 export type FramePatch = Partial<Omit<TextFrame, 'id' | 'pageId' | 'createdAt'>>;
 /** `ownerId` is patchable so a merge can move variants to the kept panel. */
 export type ImagePatch = Partial<Pick<Image, 'review' | 'ownerId'>>;
+/** Gallery filters: every field optional, all combined with AND. */
+export interface ImageFilter { mangaId?: string; ownerType?: Image['ownerType']; source?: Image['source'] }
+/** A keyset position in the newest-first order (`created_at DESC, rowid DESC`): rows strictly after it are returned. */
+export interface ImageCursor { createdAt: string; rowid: number }
+export interface ImagePageQuery extends ImageFilter { limit: number; before?: ImageCursor }
+/** An image with its table rowid (the tiebreak of the newest-first order, needed to build the next cursor). */
+export interface ImageRow { image: Image; rowid: number }
 export type EpisodePatch = Partial<Omit<EpisodeRun, 'id' | 'chapterId' | 'createdAt'>>;
+export type AutoRunPatch = Partial<Omit<AutoRun, 'id' | 'mangaId' | 'createdAt'>>;
 export type JobInsert = Omit<Job, 'id' | 'createdAt' | 'startedAt' | 'finishedAt' | 'result' | 'error' | 'attempts' | 'progress' | 'status'>;
 export type JobPatch = Partial<Omit<Job, 'id' | 'createdAt'>>;
 
@@ -65,9 +75,10 @@ export interface Store {
   pages: Repo<Page, NewPage, PagePatch> & { listByChapter(chapterId: string): Page[]; listByManga(mangaId: string): Page[] };
   panels: Repo<Panel, NewPanel, PanelPatch> & { listByPage(pageId: string): Panel[] };
   frames: Repo<TextFrame, NewFrame, FramePatch> & { listByPage(pageId: string): TextFrame[] };
-  images: Repo<Image, NewImage, ImagePatch> & { listByOwner(ownerType: Image['ownerType'], ownerId: string): Image[]; listByManga(mangaId: string): Image[] };
+  images: Repo<Image, NewImage, ImagePatch> & { listByOwner(ownerType: Image['ownerType'], ownerId: string): Image[]; listByManga(mangaId: string): Image[]; listPage(query: ImagePageQuery): ImageRow[]; count(filter: ImageFilter): number };
   jobs: JobRepo;
   episodes: Repo<EpisodeRun, NewEpisodeRun, EpisodePatch> & { latestByChapter(chapterId: string): EpisodeRun | null; listByChapter(chapterId: string): EpisodeRun[] };
+  autoRuns: Repo<AutoRun, NewAutoRun, AutoRunPatch> & { latestByManga(mangaId: string): AutoRun | null; listByStatus(status: AutoRun['status']): AutoRun[] };
   settings: SettingsRepo;
   files: LibraryFiles;
   tx<T>(fn: () => T): T;

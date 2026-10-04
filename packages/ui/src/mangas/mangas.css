@@ -8,3 +8,6 @@
   background: transparent; border: 1px dashed var(--border-3); border-radius: var(--r-sm); color: var(--text-3);
 }
 .cover-card--new:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-wash); }
+
+.auto-manga__chapters > summary { cursor: pointer; color: var(--text-2); font-size: var(--fs-sm); padding: var(--sp-1) 0; }
+.auto-manga__foot { align-items: center; gap: var(--sp-2); }

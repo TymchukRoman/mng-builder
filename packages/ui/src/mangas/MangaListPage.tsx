@@ -30,7 +30,7 @@ export function MangaListPage(): JSX.Element {
           </button>
         </div>
       )}
-      <CreateMangaModal open={creating} onClose={() => setCreating(false)} onCreated={(m) => navigate(`/m/${m.id}`)} />
+      <CreateMangaModal open={creating} onClose={() => setCreating(false)} onCreated={(mangaId) => navigate(`/m/${mangaId}`)} />
     </section>
   );
 }

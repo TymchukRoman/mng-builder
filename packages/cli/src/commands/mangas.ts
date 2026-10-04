@@ -3,8 +3,9 @@ import { readingOrder, STYLE_PRESETS, type Chapter, type Character, type Manga, 
 import type { CliContext } from '../context.js';
 import { CliError } from '../errors.js';
 import { table } from '../format.js';
+import { modelValue, parseModel } from './auto.js';
 
-interface EditOptions { title?: string; synopsis?: string; lang?: string; color?: string; dir?: string; style?: string }
+interface EditOptions { title?: string; synopsis?: string; lang?: string; color?: string; dir?: string; style?: string; model?: string }
 
 function stylePreset(id: string): StylePreset {
   const preset = Object.hasOwn(STYLE_PRESETS, id) ? STYLE_PRESETS[id] : undefined;
@@ -45,7 +46,8 @@ export function registerMangaCommands(program: Command, ctx: () => Promise<CliCo
     .option('--dir <dir>', 'reading direction: rtl or ltr', 'rtl')
     .option('--style <preset>', `style preset: ${Object.keys(STYLE_PRESETS).join(', ')} (default manga-bw; anime-color with --color color)`)
     .option('--synopsis <text>', 'short synopsis', '')
-    .action(async (title: string, opts: { lang: string; color?: string; dir: string; style?: string; synopsis: string }) => {
+    .option('--model <id>', 'image model for every panel of the manga (see: manga models)', parseModel)
+    .action(async (title: string, opts: { lang: string; color?: string; dir: string; style?: string; synopsis: string; model?: string }) => {
       const c = await ctx();
       const presetId = opts.style ?? (opts.color === 'color' ? 'anime-color' : 'manga-bw');
       const manga = await c.api.post<Manga>('/api/mangas', {
@@ -55,6 +57,7 @@ export function registerMangaCommands(program: Command, ctx: () => Promise<CliCo
         ...(opts.color === undefined ? {} : { colorMode: opts.color }),
         readingDirection: opts.dir,
         stylePreset: presetId,
+        ...(opts.model === undefined ? {} : { imageModel: modelValue(opts.model) }),
       });
       const presetMode = Object.hasOwn(STYLE_PRESETS, presetId) ? STYLE_PRESETS[presetId]?.colorMode : undefined;
       if (presetMode !== undefined && presetMode !== manga.colorMode) {
@@ -105,6 +108,7 @@ export function registerMangaCommands(program: Command, ctx: () => Promise<CliCo
     .option('--color <mode>', 'bw or color')
     .option('--dir <dir>', 'reading direction: rtl or ltr (mirrors every page, keeping the story order)')
     .option('--style <preset>', `style preset whose style guide to use: ${Object.keys(STYLE_PRESETS).join(', ')}`)
+    .option('--model <id>', "image model for every panel of the manga (see: manga models); - uses Settings' routing", parseModel)
     .action(async (ref: string, opts: EditOptions) => {
       const patch: Record<string, unknown> = {};
       if (opts.title !== undefined) patch['title'] = opts.title;
@@ -112,6 +116,7 @@ export function registerMangaCommands(program: Command, ctx: () => Promise<CliCo
       if (opts.lang !== undefined) patch['language'] = opts.lang;
       if (opts.color !== undefined) patch['colorMode'] = opts.color;
       if (opts.dir !== undefined) patch['readingDirection'] = opts.dir;
+      if (opts.model !== undefined) patch['imageModel'] = modelValue(opts.model);
       const preset = opts.style === undefined ? undefined : stylePreset(opts.style);
       if (preset !== undefined) patch['styleGuide'] = preset.styleGuide;
       if (Object.keys(patch).length === 0) throw new CliError('nothing to change; pass at least one option (see: manga edit --help)', 2);

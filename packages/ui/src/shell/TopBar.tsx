@@ -2,7 +2,7 @@ import type { JSX } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { useConnection } from '../events';
 import { IconButton } from '../ui/IconButton';
-import { Settings } from '../ui/icons';
+import { Images, Settings } from '../ui/icons';
 import { StatusLoader } from '../ui/StatusLoader';
 import { EngineSwitch } from './EngineSwitch';
 import { GpuPausedChip } from './GpuQueueControl';
@@ -24,6 +24,7 @@ export function TopBar(): JSX.Element {
       <EngineSwitch />
       <JobsIndicator />
       <ThemeToggle />
+      <IconButton icon={Images} label="Gallery" onClick={() => navigate('/gallery')} />
       <IconButton icon={Settings} label="Settings" onClick={() => navigate('/settings')} />
     </header>
   );

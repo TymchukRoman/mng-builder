@@ -1,7 +1,7 @@
 export {
   AlignCenter, AlignLeft, AlignRight, ArrowLeft, ArrowRight, Ban, BookOpen, Braces, Check, ChevronDown, ChevronRight, Circle, CircleCheck,
-  CirclePause, CircleX, Clock, Cloud, Columns2, Copy, Dices, Download, FastForward, File as FileIcon, FileImage, FilePlus2, Files, FileText,
-  Heading1, Image as ImageIcon, ImagePlus, Info, ImageUp, LayoutGrid, ListChecks, LoaderCircle, Lock, LockOpen, Maximize, Merge, MessageCircle,
+  CirclePause, CircleX, Clock, Cloud, Columns2, Copy, Dices, Download, ExternalLink, FastForward, File as FileIcon, FileImage, FilePlus2, Files, FileText,
+  Heading1, Image as ImageIcon, ImagePlus, Images, Info, ImageUp, LayoutGrid, ListChecks, LoaderCircle, Lock, LockOpen, Maximize, Merge, MessageCircle,
   MessageSquareText, Minus, Moon, Move, Pause, Play, Plus, RectangleHorizontal, Redo2, RefreshCw, RotateCcw, Rows2, Save, ScanEye, Settings,
   SlidersHorizontal, Sparkles, Square, Sun, Trash2, TriangleAlert, Type, Undo2, Upload, UserRound, Users, WandSparkles, X, Zap, ZoomIn, ZoomOut,
 } from 'lucide-react';

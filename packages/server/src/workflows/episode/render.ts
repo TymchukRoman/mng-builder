@@ -31,8 +31,8 @@ export interface RetryTarget { cast: CastCount; hasPortraitRefs: boolean; style:
  * a portrait (F31), and the prompt style of the recipe it routes to.
  */
 export function retryTarget(store: Store, settings: Settings, panel: Panel): RetryTarget {
-  const { manga, characters, refCharacters } = panelContext(store, panel.id);
-  const route = routeRecipe({ settings, manga, panel, refCount: refCharacters.length, charCount: characters.length });
+  const { manga, characters, refCharacters, imageModel } = panelContext(store, panel.id);
+  const route = routeRecipe({ settings, manga, panel, refCount: refCharacters.length, charCount: characters.length, imageModel });
   return {
     cast: castCount(characters),
     grownMen: grownMen(characters),
@@ -79,8 +79,8 @@ export function retryPatch(issues: ReviewResult['issues'], settings: Settings, s
  */
 export function estimateRender(store: Store, settings: Settings, manga: Manga, panels: Panel[]): number {
   const renderSeconds = estimateSeconds(panels.flatMap((panel) => {
-    const { characters, refCharacters } = panelContext(store, panel.id);
-    const route = routeRecipe({ settings, manga, panel, refCount: refCharacters.length, charCount: characters.length });
+    const { characters, refCharacters, imageModel } = panelContext(store, panel.id);
+    const route = routeRecipe({ settings, manga, panel, refCount: refCharacters.length, charCount: characters.length, imageModel });
     return route.refineWith ? [route.recipe, route.refineWith] : [route.recipe];
   }));
   const rounds = settings.review.autoInEpisode ? settings.review.rounds : 0;

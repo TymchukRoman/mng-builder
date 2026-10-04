@@ -5,7 +5,7 @@ import type { Store } from '../store/index.js';
 import { defined } from '../util/defined.js';
 import { chapterPages } from './order.js';
 
-export type CreateChapterInput = z.infer<typeof CreateChapterSchema>;
+export type CreateChapterInput = Omit<z.infer<typeof CreateChapterSchema>, 'imageModel'> & { imageModel?: string | null };
 export type UpdateChapterInput = z.infer<typeof UpdateChapterSchema>;
 
 /** number = max + 1 (numbers are never reused), order = after the last chapter. */
@@ -14,7 +14,9 @@ export function createChapter(store: Store, mangaId: string, input: CreateChapte
   const existing = store.chapters.listByManga(mangaId);
   const number = existing.reduce((max, c) => Math.max(max, c.number), 0) + 1;
   const order = existing.reduce((max, c) => Math.max(max, c.order + 1), 0);
-  return store.chapters.create({ mangaId, number, title: input.title, synopsis: input.synopsis, coverPageId: null, status: 'draft', order });
+  return store.chapters.create({
+    mangaId, number, title: input.title, synopsis: input.synopsis, imageModel: input.imageModel ?? null, coverPageId: null, status: 'draft', order,
+  });
 }
 
 /** A number another chapter of the same manga already has is a 409 conflict. */
