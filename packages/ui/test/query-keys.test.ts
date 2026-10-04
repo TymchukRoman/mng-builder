@@ -21,7 +21,7 @@ describe('keysForEntity', () => {
     expect(keysForEntity({ type: 'entity', entity: 'textFrame', id: 'tf_1', op: 'updated', mangaId: 'mg_1' }, lookup)).toEqual([['page', 'pg_8']]);
   });
   it('maps images, settings and pages', () => {
-    expect(keysForEntity({ type: 'entity', entity: 'image', id: 'im_1', op: 'created', mangaId: 'mg_1' }, none)).toEqual([['panelImages'], ['characterImages']]);
+    expect(keysForEntity({ type: 'entity', entity: 'image', id: 'im_1', op: 'created', mangaId: 'mg_1' }, none)).toEqual([['panelImages'], ['characterImages'], ['gallery']]);
     expect(keysForEntity({ type: 'entity', entity: 'settings', id: 'settings', op: 'updated', mangaId: null }, none)).toEqual([['settings'], ['status']]);
     expect(keysForEntity({ type: 'entity', entity: 'page', id: 'pg_1', op: 'deleted', mangaId: 'mg_1' }, none)).toEqual([['page', 'pg_1'], ['pages'], ['missingPanels']]);
     expect(qk.missingPanels('ch_1')).toEqual(['missingPanels', 'ch_1']);

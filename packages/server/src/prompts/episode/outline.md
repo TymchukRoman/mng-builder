@@ -16,6 +16,7 @@ Rules:
   - "appearanceTags": English Danbooru-style tags for the permanent look only. They start with the count tag: "1boy" for a male (a man, boy or old man), "1girl" for a female; "1other" only for a human whose gender is genuinely non-binary or unknown; "no humans" only for an animal or a non-humanoid creature, never for a robot, spirit or other human-like being. An adult man gets "mature male" right after "1boy" (never a boy or a teenager). Then hair, eyes, build (for a man, male traits where they fit ("beard", "stubble", "broad shoulders")), usual outfit (for example "1girl, short black hair, brown eyes, slim, school uniform, sailor collar" or "1boy, mature male, short grey hair, beard, broad shoulders, farmer clothes"). No pose, expression, background, style or quality tags.
 {{appearanceColorRule}}
 - Never invent a new look for an existing character.
+- The premise's "notes" (may be empty) are the author's wishes for the whole chapter (pacing, content to include or avoid, mood). Follow them; they never change who the characters are.
 - "previousChapters" (may be empty) are this manga's earlier chapters, oldest first. This chapter follows them: keep names, facts and open threads consistent, and do not retell them.
 
 Reply with only a JSON object of exactly this shape, with no prose and no code fences:

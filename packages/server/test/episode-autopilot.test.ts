@@ -43,6 +43,23 @@ async function setup(server: M4TestServer, pages: number) {
 }
 
 describe('episode in autopilot (integration, fakes)', { timeout: 120_000 }, () => {
+  it('separates notes from the plot: the premise keeps them and its art tags reach every scene, the cover too', async () => {
+    s = await startM4TestServer();
+    const manga = (await s.api<Manga>('POST', '/api/mangas', { title: 'Notes' })).body;
+    const chapter = (await s.api<Chapter>('POST', `/api/mangas/${manga.id}/chapters`, { title: 'One' })).body;
+    const run = (await s.api<EpisodeRun>('POST', `/api/chapters/${chapter.id}/episode`, {
+      input: { prompt: 'A cat in the rain. Simplistic art style.', notes: 'Keep it short.', pages: 1, previewFirst: false }, mode: 'autopilot',
+    })).body;
+    const done = await finished(s, chapter.id);
+    expect(done.id).toBe(run.id);
+    expect(done.steps[0]!.output).toMatchObject({ notes: 'Keep it short.', artTags: 'simple background, minimal shading' });
+    const ch = (await s.api<Chapter>('GET', `/api/chapters/${chapter.id}`)).body;
+    const pages = [...(await s.api<Page[]>('GET', `/api/chapters/${chapter.id}/pages`)).body.map((p) => p.id), ch.coverPageId!];
+    for (const id of pages) {
+      for (const panel of (await s.api<PageDetail>('GET', `/api/pages/${id}`)).body.panels) expect(panel.prompt.scene).toContain('simple background');
+    }
+  });
+
   it('turns one prompt into a lettered two-page chapter with a cover', async () => {
     s = await startM4TestServer();
     // Slow every render a little so Mika's four outline portraits are still queued when the render step starts (F13).

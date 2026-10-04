@@ -1,4 +1,4 @@
-import type { Manga, Panel, Settings } from '@manga/shared';
+import { applyImageModel, imageModelById, type Manga, type Panel, type Settings } from '@manga/shared';
 import { PermanentError } from '../jobs/index.js';
 import { RECIPES } from './recipes/index.js';
 
@@ -20,15 +20,24 @@ export function refineFor(settings: Settings, manga: Manga, recipeId: string): s
   return manga.colorMode === 'bw' && promptStyleFor(recipeId) === 'natural' ? settings.routing.bwRefine : null;
 }
 
-export function routeRecipe(input: { settings: Settings; manga: Manga; panel: Panel; refCount: number; charCount: number }): { recipe: string; refineWith: string | null } {
-  const { settings, manga, panel, refCount, charCount } = input;
+/**
+ * `imageModel`: the preset the panel's chapter or manga renders with (shared `effectiveImageModel`); its three routes replace
+ * Settings' (a panel's own recipe still wins), and a panel without references then uses the model's own no-character route
+ * instead of the manga style's recipe, so the whole chapter comes from one model.
+ */
+export function routeRecipe(input: {
+  settings: Settings; manga: Manga; panel: Panel; refCount: number; charCount: number; imageModel?: string | null;
+}): { recipe: string; refineWith: string | null } {
+  const { manga, panel, refCount, charCount } = input;
+  const settings = applyImageModel(input.settings, input.imageModel);
   let recipe: string;
   if (panel.recipe) {
     recipe = panel.recipe;
   } else if (refCount === 0) {
     const style = RECIPES[manga.styleGuide.recipe];
     // Upscale works on an existing image, not on generating a new panel from scratch.
-    recipe = style && style.family !== 'sdxl' && style.family !== 'upscale' && !style.requiresRefs ? style.id : settings.routing.noChars;
+    recipe = imageModelById(input.imageModel) === null && style && style.family !== 'sdxl' && style.family !== 'upscale' && !style.requiresRefs
+      ? style.id : settings.routing.noChars;
   } else if (charCount <= 1) {
     recipe = settings.routing.oneChar;
   } else {

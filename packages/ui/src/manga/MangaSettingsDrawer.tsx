@@ -8,6 +8,7 @@ import { AutoText } from '../ui/AutoText';
 import { Drawer } from '../ui/Drawer';
 import { Field } from '../ui/Field';
 import { ArrowLeft, ArrowRight } from '../ui/icons';
+import { ImageModelSelect } from '../ui/ImageModelSelect';
 import { NumberField } from '../ui/NumberField';
 import { Segmented } from '../ui/Segmented';
 import { LoraEditor } from './LoraEditor';
@@ -52,6 +53,13 @@ export function MangaSettingsDrawer({ manga, open, onClose }: { manga: Manga; op
               options={[{ value: 'rtl', label: 'Right to left', icon: ArrowLeft }, { value: 'ltr', label: 'Left to right', icon: ArrowRight }]} />
           </Field>
         </div>
+      </section>
+
+      <section className="drawer-section">
+        <h3>Image model</h3>
+        <Field label="Image model">
+          <ImageModelSelect label="Image model" value={manga.imageModel} inheritLabel="Default (Settings → Routing)" onChange={(imageModel) => save({ imageModel })} />
+        </Field>
       </section>
 
       <section className="drawer-section">

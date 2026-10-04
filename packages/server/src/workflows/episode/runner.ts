@@ -335,7 +335,10 @@ export class EpisodeRunner {
         premise: requireOutput(run, 'premise', PremiseOutputSchema),
       }).scripts;
     }
-    if (name === 'prompts') applyPrompts(fx, run.chapterId, PromptsOutputSchema.parse(output), { source: 'llm' });
+    if (name === 'prompts') {
+      const { artTags } = requireOutput(run, 'premise', PremiseOutputSchema);
+      applyPrompts(fx, run.chapterId, PromptsOutputSchema.parse(output), { source: 'llm', artTags });
+    }
     return output;
   }
 

@@ -14,7 +14,7 @@ export function makeManga(over: Partial<Manga> = {}): Manga {
   return {
     id: 'mg_1', title: 'Test', synopsis: '', language: 'en', colorMode: 'bw', readingDirection: 'rtl',
     pageFormat: DEFAULT_PAGE_FORMAT, styleGuide: { recipe: 'anime', stylePrompt: '', negativePrompt: '', loras: [] },
-    coverPageId: null, createdAt: T, updatedAt: T, ...over,
+    imageModel: null, coverPageId: null, createdAt: T, updatedAt: T, ...over,
   };
 }
 

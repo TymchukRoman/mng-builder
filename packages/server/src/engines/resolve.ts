@@ -44,7 +44,7 @@ export function textTaskOf(job: Pick<Job, 'kind' | 'payload'>): Task | null {
   if (job.kind !== 'llm.step') return null;
   const payload = typeof job.payload === 'object' && job.payload !== null ? (job.payload as { type?: unknown; step?: unknown }) : {};
   if (payload.type === 'panel-prompt' || payload.type === 'appearance') return 'prompts';
-  if (payload.type === 'chapter-summary') return 'story';
+  if (payload.type === 'chapter-summary' || payload.type === 'manga-plan') return 'story';
   if (payload.type === 'episode' && typeof payload.step === 'string' && Object.hasOwn(STEP_TASK, payload.step)) {
     return STEP_TASK[payload.step as keyof typeof STEP_TASK];
   }

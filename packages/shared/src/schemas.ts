@@ -41,6 +41,8 @@ export const MangaSchema = z.object({
   id: IdSchema, title: z.string().min(1), synopsis: z.string(),
   language: LanguageSchema, colorMode: ColorModeSchema, readingDirection: ReadingDirectionSchema,
   pageFormat: PageFormatSchema, styleGuide: StyleGuideSchema,
+  /** The image model (an `IMAGE_MODELS` id) panels of this manga render with; null: the routing of Settings. A chapter's own wins. */
+  imageModel: z.string().nullable().default(null),
   coverPageId: IdSchema.nullable(), ...Timestamps,
 });
 export type Manga = z.infer<typeof MangaSchema>;
@@ -63,6 +65,8 @@ export const ChapterSchema = z.object({
   id: IdSchema, mangaId: IdSchema, number: z.number().int().min(1), title: z.string().min(1), synopsis: z.string(),
   /** W1 Q1: "what happened", written when an episode run finishes; the next chapters' premise and outline read it. */
   summary: z.string().default(''),
+  /** The image model this chapter renders with; null: its manga's, else Settings' routing. */
+  imageModel: z.string().nullable().default(null),
   coverPageId: IdSchema.nullable(), status: ChapterStatusSchema, order: z.number().int().min(0), ...Timestamps,
 });
 export type Chapter = z.infer<typeof ChapterSchema>;
@@ -189,6 +193,11 @@ export const EpisodeInputSchema = z.object({
   pages: z.number().int().min(1).max(30).default(8), tone: z.string().default(''),
   /** W1 Q2: render the cover and page 1 first, then wait. Absent on runs stored before W1, which means off. */
   previewFirst: z.boolean().optional(),
+  /**
+   * Production notes that are not plot, written by the caller (the auto-created manga's plan passes its notes to every chapter).
+   * The `prompt` itself may also carry notes (art style, pacing, things to avoid): the premise step separates them.
+   */
+  notes: z.string().optional(),
 });
 export type EpisodeInput = z.infer<typeof EpisodeInputSchema>;
 export const EpisodeRunStatusSchema = z.enum(['running', 'awaiting-review', 'done', 'failed', 'cancelled', 'paused']);

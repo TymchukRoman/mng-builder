@@ -157,4 +157,26 @@ CREATE TABLE settings (
     // W1 Q1 (review M8): the chapter summary a run wrote, so a later summary never overwrites one the user edited; NULL: none.
     sql: `ALTER TABLE episode_runs ADD COLUMN chapter_summary TEXT;`,
   },
+  {
+    version: 4,
+    // Image models per manga and chapter (NULL: the routing of Settings), and the auto-created manga runs.
+    sql: `
+ALTER TABLE mangas ADD COLUMN image_model TEXT;
+ALTER TABLE chapters ADD COLUMN image_model TEXT;
+CREATE TABLE auto_runs (
+  id TEXT PRIMARY KEY,
+  manga_id TEXT NOT NULL REFERENCES mangas(id) ON DELETE CASCADE,
+  input TEXT NOT NULL,
+  status TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  plan TEXT,
+  chapter_ids TEXT NOT NULL,
+  current_chapter INTEGER NOT NULL,
+  error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_auto_runs_manga ON auto_runs(manga_id);
+`,
+  },
 ];

@@ -10,6 +10,7 @@ import { qk } from '../queryKeys';
 import { ConfirmIconButton } from '../ui/ConfirmIconButton';
 import { IconButton } from '../ui/IconButton';
 import { ImageIcon } from '../ui/icons';
+import { ChapterModelButton } from './ChapterModelButton';
 import { ChapterSummaryButton } from './ChapterSummaryButton';
 
 const THUMB_W = 40;
@@ -35,6 +36,7 @@ export function ChapterRow({ manga, chapter }: { manga: Manga; chapter: Chapter 
         <span className={`status-chip status-chip--${chapter.status}`}>{chapter.status}</span>
       </Link>
       <ChapterSummaryButton chapter={chapter} />
+      <ChapterModelButton chapter={chapter} mangaModel={manga.imageModel} />
       <IconButton icon={ImageIcon} label="Edit chapter cover" onClick={() => navigate(`/m/${manga.id}/c/${chapter.id}/cover`)} />
       <ConfirmIconButton label="Delete chapter" confirmLabel="Click again to delete this chapter" onConfirm={() => remove.mutate()} />
     </li>

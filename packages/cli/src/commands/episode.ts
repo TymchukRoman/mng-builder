@@ -65,7 +65,8 @@ export function registerEpisodeCommands(program: Command, ctx: () => Promise<Cli
   episode.command('start')
     .description('Start an episode run in an empty chapter')
     .argument('<chapter>', 'chapter id or <manga>/<number>')
-    .requiredOption('--prompt <text>', 'what happens in the chapter')
+    .requiredOption('--prompt <text>', 'what happens in the chapter, plus any notes (art style, pacing, things to avoid): the AI separates them')
+    .option('--notes <text>', 'extra notes that are not plot, e.g. "short dialogue"')
     .option('--pages <n>', 'number of pages, 1-30', parsePages, 8)
     .option('--chars <list>', 'characters to use: comma-separated names or ids', parseList)
     .option('--tone <text>', 'tone, e.g. "tense, melancholic"', '')
@@ -73,13 +74,13 @@ export function registerEpisodeCommands(program: Command, ctx: () => Promise<Cli
     .option('--autopilot', 'run every step without stopping at review points; the render still stops after page 1 unless --no-preview '
       + '(continue with "manga episode approve"; with --json, the render step output has "preview": true)')
     .option('--no-preview', 'render everything at once instead of stopping after page 1') // W1 Q2
-    .action(async (chapterRef: string, opts: { prompt: string; pages: number; chars?: string[]; tone: string; autopilot?: boolean; preview: boolean }) => {
+    .action(async (chapterRef: string, opts: { prompt: string; notes?: string; pages: number; chars?: string[]; tone: string; autopilot?: boolean; preview: boolean }) => {
       const c = await ctx();
       const chapter = await c.resolve.chapter(chapterRef);
       const characterIds: string[] = [];
       for (const ref of opts.chars ?? []) characterIds.push((await c.resolve.character(ref, chapter.mangaId)).id);
       const run = await c.api.post<EpisodeRun>(`/api/chapters/${enc(chapter.id)}/episode`, {
-        input: { prompt: opts.prompt, pages: opts.pages, characterIds, tone: opts.tone, previewFirst: opts.preview },
+        input: { prompt: opts.prompt, ...(opts.notes === undefined ? {} : { notes: opts.notes }), pages: opts.pages, characterIds, tone: opts.tone, previewFirst: opts.preview },
         mode: opts.autopilot ? 'autopilot' : 'review',
       });
       // W1 C2: the size of what started. Task 7 minor 4: only once the server accepted it. Task 2 M4: a black-and-white

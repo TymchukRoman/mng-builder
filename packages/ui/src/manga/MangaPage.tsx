@@ -7,6 +7,7 @@ import { BookOpen, Users } from '../ui/icons';
 import { ErrorState } from '../ui/ErrorState';
 import { StatusLoader } from '../ui/StatusLoader';
 import { Tabs } from '../ui/Tabs';
+import { AutoRunPanel } from './AutoRunPanel';
 import { ChaptersTab } from './ChaptersTab';
 import { MangaHeader } from './MangaHeader';
 import { MangaSettingsDrawer } from './MangaSettingsDrawer';
@@ -32,6 +33,7 @@ export function MangaPage(): JSX.Element {
   return (
     <section className="screen">
       <MangaHeader manga={m} onOpenSettings={() => setSettingsOpen(true)} />
+      <AutoRunPanel manga={m} />
       <Tabs<TabId>
         label="Manga sections"
         items={[{ id: 'chapters', label: 'Chapters', icon: BookOpen }, { id: 'characters', label: 'Characters', icon: Users }]}

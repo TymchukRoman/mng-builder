@@ -47,7 +47,7 @@ export function seedRun(store: Store, chapterId: string, opts: SeedRunOptions = 
 }
 
 export const PREMISE: PremiseOutput = {
-  title: 'The Cat in the Rain', synopsis: 'Aiko finds a stray cat and takes it home.', tone: 'gentle', setting: 'A rainy harbour town at dusk',
+  title: 'The Cat in the Rain', synopsis: 'Aiko finds a stray cat and takes it home.', tone: 'gentle', setting: 'A rainy harbour town at dusk', notes: '', artTags: '',
 };
 
 export function outline(names: string[], newCharacters: NewCharacterDraft[] = []): OutlineOutput {

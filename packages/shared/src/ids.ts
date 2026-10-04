@@ -1,4 +1,4 @@
-export type IdPrefix = 'mg' | 'cr' | 'ch' | 'pg' | 'pn' | 'tf' | 'im' | 'jb' | 'er';
+export type IdPrefix = 'mg' | 'cr' | 'ch' | 'pg' | 'pn' | 'tf' | 'im' | 'jb' | 'er' | 'ar';
 
 const ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
 

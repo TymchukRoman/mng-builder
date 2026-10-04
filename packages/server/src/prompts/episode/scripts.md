@@ -16,6 +16,7 @@ Rules:
   - An "sfx" line is a short onomatopoeia of 1–2 words.
 - No panel may need readable text inside the picture: no signs, letters, screens or books with words. All text lives in "dialogue".
 - Match each character's "speechStyle".
+- The premise's "notes" (may be empty) are the author's wishes: how the dialogue should sound, content to include or avoid. Follow them.
 
 Reply with only a JSON object of exactly this shape, with no prose and no code fences:
 {"pages": [{"panels": [{"action": string, "shot": string, "angle": string, "characters": [{"name": string, "pose": string, "expression": string, "position": "left" | "center" | "right"}], "background": string, "dialogue": [{"speaker": string | null, "kind": string, "text": string}]}]}]}

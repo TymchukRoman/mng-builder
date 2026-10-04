@@ -1,5 +1,5 @@
 // packages/server/src/workflows/episode/prompts.ts
-import { loadPrompt } from '../../prompts/load.js';
+import { loadPrompt, type PromptFolder } from '../../prompts/load.js';
 import type { LlmStepName } from './steps.js';
 
 export interface StepPrompt { system: string; user: string }
@@ -11,9 +11,14 @@ const SPLIT = '<!-- user -->';
  * 'summary' is the chapter summary written when a run finishes (W1 Q1).
  */
 export function loadStepPrompt(step: LlmStepName | 'summary'): StepPrompt {
-  const text = loadPrompt(step, 'episode').replace(/\r\n/g, '\n');
+  return loadSplitPrompt(step, 'episode');
+}
+
+/** src/prompts/<folder>/<name>.md split into its system and user parts (the manga plan lives in prompts/manga). */
+export function loadSplitPrompt(name: string, folder: PromptFolder): StepPrompt {
+  const text = loadPrompt(name, folder).replace(/\r\n/g, '\n');
   const at = text.indexOf(SPLIT);
-  if (at < 0) throw new Error(`Episode prompt ${step}.md has no "${SPLIT}" line`);
+  if (at < 0) throw new Error(`Prompt ${folder}/${name}.md has no "${SPLIT}" line`);
   return {
     system: text.slice(0, at).replace('<!-- system -->', '').trim(),
     user: text.slice(at + SPLIT.length).trim(),

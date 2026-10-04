@@ -4,7 +4,7 @@ import {
   type BreakdownPage, type Chapter, type Character, type ColorMode, type EpisodeRun, type Language, type Manga, type OutlineScene, type Panel,
   type PremiseOutput, type PresetInfo, type ScriptsOutput, type Settings,
 } from '@manga/shared';
-import { orderRefs, panelCharacters, refImages } from '../../handlers/context.js';
+import { orderRefs, panelCharacters, panelImageModel, refImages } from '../../handlers/context.js';
 import { RECIPES } from '../../imaging/recipes/index.js';
 import { promptStyleFor, routeRecipe, type PromptStyle } from '../../imaging/route.js';
 import { cameraWording } from '../../prompts/camera.js';
@@ -26,7 +26,8 @@ export interface CharacterBrief { name: string; role: string; personality: strin
 export interface ChapterBrief { number: number; title: string; synopsis: string }
 export interface PremiseContext {
   step: 'premise'; language: Language; manga: { title: string; synopsis: string };
-  request: { prompt: string; tone: string; pages: number }; characters: CharacterBrief[]; previousChapters: ChapterBrief[];
+  /** `notes`: the caller's own production notes (input.notes); the prompt may carry more, which the premise separates. */
+  request: { prompt: string; notes: string; tone: string; pages: number }; characters: CharacterBrief[]; previousChapters: ChapterBrief[];
 }
 /**
  * `otherCharacterNames`: the manga's characters outside this run's cast, so no new character takes one of their names (Task 5 M1).
@@ -38,7 +39,7 @@ export interface OutlineContext {
 }
 /** `request` is the user's own wording, so an explicit panel count or layout in it reaches the step that picks them. */
 export interface BreakdownContext {
-  step: 'breakdown'; pages: number; request: { prompt: string; tone: string };
+  step: 'breakdown'; pages: number; request: { prompt: string; tone: string }; notes: string;
   scenes: Array<{ idx: number; summary: string; purpose: string; location: string }>; presets: PresetInfo[];
 }
 /** `pages` are the pages to write: all of them, or one chunk (F18); `pageRange` says which part of the chapter they are. */
@@ -58,7 +59,7 @@ export interface PromptsPanelBrief {
 }
 /** `panels` are the panels to write: the whole chapter, or one page of it (F18). */
 export interface PromptsContext {
-  step: 'prompts'; colorMode: ColorMode; premise: { title: string; setting: string; tone: string }; panels: PromptsPanelBrief[];
+  step: 'prompts'; colorMode: ColorMode; premise: { title: string; setting: string; tone: string; notes: string }; panels: PromptsPanelBrief[];
   /** W1 Q1: the previous page's actions (pageActions), for visual continuity; absent on page 1 and the cover. */
   previousPage?: string;
 }
@@ -146,7 +147,7 @@ export function panelStyle(store: Store, settings: Settings, manga: Manga, panel
   const cast = panel.refCharacterIds
     .map((id) => characters.find((c) => c.id === id))
     .filter((c): c is Character => c !== undefined);
-  const { recipe } = routeRecipe({ settings, manga, panel, refCount: cast.length, charCount: characters.length });
+  const { recipe } = routeRecipe({ settings, manga, panel, refCount: cast.length, charCount: characters.length, imageModel: panelImageModel(store, manga, panel) });
   const style = promptStyleFor(recipe);
   if (style === 'tags') return { style };
   const imagesOf = (c: Character): string[] => {
@@ -166,7 +167,7 @@ export function buildStepContext(store: Store, run: EpisodeRun, step: LlmStepNam
     case 'premise':
       return {
         step, language: manga.language, manga: { title: manga.title, synopsis: manga.synopsis },
-        request: { prompt: run.input.prompt, tone: run.input.tone, pages: run.input.pages }, characters: chosen.map(brief),
+        request: { prompt: run.input.prompt, notes: run.input.notes ?? '', tone: run.input.tone, pages: run.input.pages }, characters: chosen.map(brief),
         previousChapters: previousChapters(store, chapter),
       };
     case 'outline':
@@ -180,6 +181,7 @@ export function buildStepContext(store: Store, run: EpisodeRun, step: LlmStepNam
       const { scenes } = requireOutput(run, 'outline', OutlineOutputSchema);
       return {
         step, pages: run.input.pages, request: { prompt: run.input.prompt, tone: run.input.tone },
+        notes: requireOutput(run, 'premise', PremiseOutputSchema).notes,
         scenes: scenes.map((s, idx) => ({ idx, summary: s.summary, purpose: s.purpose, location: s.location })),
         presets: PRESET_NAMES.map((name) => ({ name, panelCount: presetPanelCount(name) })),
       };
@@ -200,7 +202,7 @@ export function buildStepContext(store: Store, run: EpisodeRun, step: LlmStepNam
       const nameOf = (id: string): string => store.characters.get(id)?.name ?? 'someone';
       return {
         step, colorMode: manga.colorMode,
-        premise: { title: premise.title, setting: premise.setting, tone: premise.tone },
+        premise: { title: premise.title, setting: premise.setting, tone: premise.tone, notes: premise.notes },
         panels: chapterPanels(store, chapter.id, manga.readingDirection).map(({ panel, pageNumber, isCover }) => ({
           panelId: panel.id, page: pageNumber, isCover, ...panelStyle(store, settings, manga, panel),
           camera: cameraWording(panel.script.shot, panel.script.angle), action: panel.script.action, background: panel.script.background,
@@ -215,12 +217,12 @@ const OPEN = '<context>';
 const CLOSE = '</context>';
 
 /** The JSON escapes every "<" (as \u003c), so a request containing "</context>" cannot end the block early (M4). */
-export function contextBlock(ctx: StepContext): string {
+export function contextBlock(ctx: { step: string }): string {
   return `${OPEN}\n${JSON.stringify(ctx, null, 2).replace(/</g, '\\u003c')}\n${CLOSE}`;
 }
 
 /** Reads the last <context> block: the context always ends the prompt, and user text before it may contain the tags. */
-export function extractContext<T extends StepContext>(prompt: string): T {
+export function extractContext<T extends { step: string }>(prompt: string): T {
   const start = prompt.lastIndexOf(OPEN);
   const end = start < 0 ? -1 : prompt.indexOf(CLOSE, start);
   if (end < 0) throw new Error('prompt has no <context> block');
@@ -234,7 +236,7 @@ const COLOR_RULE: Record<ColorMode, string> = {
 };
 
 /** M4 final S6: the outline's new characters of a black-and-white book are drafted without colours. */
-const APPEARANCE_COLOR_RULE: Record<ColorMode, string> = {
+export const APPEARANCE_COLOR_RULE: Record<ColorMode, string> = {
   bw: '  - The book is black and white: no colours in "appearanceTags" (no "red hair", "blue eyes", "orange fur"); describe hair, eyes and fur by length, style and shade (dark, light, black, white, grey) instead.',
   color: '  - Colours of hair, eyes and outfit are welcome in "appearanceTags".',
 };
@@ -248,6 +250,7 @@ export function templateVars(store: Store, run: EpisodeRun, ctx: StepContext): R
     maxScenes: String(Math.max(2, run.input.pages * 2)),
     maxNewCharacters: String(MAX_NEW_CHARACTERS),
     prompt: run.input.prompt,
+    notes: (run.input.notes ?? '').trim() || 'none',
     tone: run.input.tone.trim() || 'any',
     colorRule: COLOR_RULE[manga.colorMode],
     appearanceColorRule: APPEARANCE_COLOR_RULE[manga.colorMode],

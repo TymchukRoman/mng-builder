@@ -131,7 +131,7 @@ describe('errors and abort helpers', () => {
 
   it('FAKE_RESPONSES covers the M2 and M4 request names', () => {
     expect(Object.keys(FAKE_RESPONSES).sort()).toEqual([
-      'appearance', 'episode.breakdown', 'episode.outline', 'episode.premise', 'episode.prompts', 'episode.scripts', 'episode.summary', 'panel-prompt', 'review',
+      'appearance', 'episode.breakdown', 'episode.outline', 'episode.premise', 'episode.prompts', 'episode.scripts', 'episode.summary', 'manga.plan', 'panel-prompt', 'review',
     ]);
   });
 });

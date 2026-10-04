@@ -1,5 +1,6 @@
 // packages/shared/src/episode.ts
 import { z } from 'zod';
+import { applyImageModel } from './image-models.js';
 import { PRESET_NAMES, presetPanelCount } from './layout/index.js';
 import {
   AngleSchema, CharacterRoleSchema, DialogueKindSchema, EPISODE_STEPS, ShotSchema, StagePositionSchema,
@@ -26,6 +27,17 @@ export const CHAPTER_TITLE_FROM_PREMISE = 'Untitled chapter';
 // ---- 1. premise ----
 export const PremiseOutputSchema = z.object({
   title: z.string().min(1), synopsis: z.string().min(1), tone: z.string(), setting: z.string(),
+  /**
+   * What the request asked for besides the plot, in the book language: pacing, content to include or avoid, how the dialogue
+   * should sound. Written by the premise step from the prompt and `input.notes`; the later steps read it. Premises stored
+   * before notes existed, and an answer that leaves it out, read as ''.
+   */
+  notes: z.string().default(''),
+  /**
+   * English Danbooru-style tags for the look the request asked for ("simplistic artstyle" → "simple background, minimal
+   * shading, thick outlines"); '' when it asked for none. The prompts effect adds them to every panel of the chapter.
+   */
+  artTags: z.string().default(''),
 });
 export type PremiseOutput = z.infer<typeof PremiseOutputSchema>;
 
@@ -349,7 +361,10 @@ export const NATURAL_PROMPT_RECIPES: ReadonlySet<string> = new Set(['qwen-edit-r
  * for a black-and-white book (`colorMode` 'bw') a routed natural-prompt recipe also counts the `routing.bwRefine` pass, as
  * the server's estimateRender does.
  */
-export function estimateChapter(pages: number, settings: Settings, colorMode?: ColorMode): { panels: number; seconds: number } {
+export function estimateChapter(
+  pages: number, settings: Settings, colorMode?: ColorMode, imageModel?: string | null,
+): { panels: number; seconds: number } {
+  settings = applyImageModel(settings, imageModel);
   const panels = Math.round(pages * TYPICAL_PANELS_PER_PAGE);
   const { noChars, oneChar, multiChar, bwRefine } = settings.routing;
   const refine = (recipe: string): string[] =>
@@ -361,7 +376,7 @@ export function estimateChapter(pages: number, settings: Settings, colorMode?: C
 }
 
 /** "8 pages ≈ 36 panels ≈ 37 min" (the AI section and `manga episode start`). */
-export function formatChapterEstimate(pages: number, settings: Settings, colorMode?: ColorMode): string {
-  const { panels, seconds } = estimateChapter(pages, settings, colorMode);
+export function formatChapterEstimate(pages: number, settings: Settings, colorMode?: ColorMode, imageModel?: string | null): string {
+  const { panels, seconds } = estimateChapter(pages, settings, colorMode, imageModel);
   return `${pages} ${pages === 1 ? 'page' : 'pages'} ≈ ${panels} panels ≈ ${formatEstimate(seconds).replace(/^~/, '')}`;
 }

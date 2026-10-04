@@ -106,7 +106,7 @@ describe('step contexts', () => {
   it('premise context carries the request and the chosen cast, without appearance', () => {
     const { run } = fullWorld();
     const ctx = buildStepContext(lib.store, run, 'premise') as PremiseContext;
-    expect(ctx.request).toEqual({ prompt: 'A lost cat in the rain', tone: 'gentle', pages: 2 });
+    expect(ctx.request).toEqual({ prompt: 'A lost cat in the rain', notes: '', tone: 'gentle', pages: 2 });
     expect(ctx.characters).toEqual([{ name: 'Aiko', role: 'main', personality: '', speechStyle: '' }]);
     expect(contextBlock(ctx)).not.toContain('short black hair');
   });
@@ -238,7 +238,7 @@ describe('step contexts', () => {
     const ctx = buildStepContext(lib.store, run, 'premise');
     const vars = templateVars(lib.store, run, ctx);
     const prompt = renderTemplate(loadStepPrompt('premise').user, vars);
-    expect(prompt).toContain(`Request: ${text}`);
+    expect(prompt).toContain(`Request (plot and notes): ${text}`);
     expect(extractContext<PremiseContext>(prompt).request.prompt).toBe(text);
   });
 

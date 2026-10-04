@@ -4,6 +4,7 @@ import { parsePositiveInt } from '../args.js';
 import type { CliContext } from '../context.js';
 import { CliError } from '../errors.js';
 import { table } from '../format.js';
+import { modelValue, parseModel } from './auto.js';
 import { jobLine } from './jobs.js';
 
 export function registerChapterCommands(program: Command, ctx: () => Promise<CliContext>): void {
@@ -15,10 +16,11 @@ export function registerChapterCommands(program: Command, ctx: () => Promise<Cli
     .argument('<manga>', 'id or title')
     .argument('<title>', 'the title; "Untitled chapter" leaves it to the premise of a later "manga episode start"')
     .option('--synopsis <text>', 'synopsis', '')
-    .action(async (mangaRef: string, title: string, opts: { synopsis: string }) => {
+    .option('--model <id>', "image model for this chapter's panels (see: manga models)", parseModel)
+    .action(async (mangaRef: string, title: string, opts: { synopsis: string; model?: string }) => {
       const c = await ctx();
       const manga = await c.resolve.manga(mangaRef);
-      const created = await c.api.post<Chapter>(`/api/mangas/${manga.id}/chapters`, { title, synopsis: opts.synopsis });
+      const created = await c.api.post<Chapter>(`/api/mangas/${manga.id}/chapters`, { title, synopsis: opts.synopsis, ...(opts.model === undefined ? {} : { imageModel: modelValue(opts.model) }) });
       c.out(created, () => `created ${created.id}  #${created.number}  ${created.title}`);
     });
 
@@ -41,12 +43,14 @@ export function registerChapterCommands(program: Command, ctx: () => Promise<Cli
     .option('--synopsis <text>', 'synopsis')
     .option('--summary <text>', 'summary (later chapters read it)')
     .option('--number <n>', 'chapter number (must be free in the manga)', parsePositiveInt)
-    .action(async (ref: string, opts: { title?: string; synopsis?: string; summary?: string; number?: number }) => {
+    .option('--model <id>', "image model for this chapter's panels (see: manga models); - uses the manga's", parseModel)
+    .action(async (ref: string, opts: { title?: string; synopsis?: string; summary?: string; number?: number; model?: string }) => {
       const patch: Record<string, unknown> = {};
       if (opts.title !== undefined) patch['title'] = opts.title;
       if (opts.synopsis !== undefined) patch['synopsis'] = opts.synopsis;
       if (opts.summary !== undefined) patch['summary'] = opts.summary;
       if (opts.number !== undefined) patch['number'] = opts.number;
+      if (opts.model !== undefined) patch['imageModel'] = modelValue(opts.model);
       if (Object.keys(patch).length === 0) throw new CliError('nothing to change; pass at least one option (see: manga chapter edit --help)', 2);
       const c = await ctx();
       const target = await c.resolve.chapter(ref);

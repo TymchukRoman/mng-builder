@@ -8,9 +8,11 @@ export interface AiChapterInput {
   open: boolean; prompt: string; pages: number; tone: string; characterIds: string[]; autopilot: boolean;
   /** W1 Q2: render the cover and page 1 first, then wait for Continue. */
   previewFirst: boolean;
+  /** The image model of this chapter; null: the manga's (or Settings' routing). Set on the chapter before its episode starts. */
+  imageModel: string | null;
 }
 
-export const EMPTY_AI_INPUT: AiChapterInput = { open: false, prompt: '', pages: 8, tone: '', characterIds: [], autopilot: false, previewFirst: true };
+export const EMPTY_AI_INPUT: AiChapterInput = { open: false, prompt: '', pages: 8, tone: '', characterIds: [], autopilot: false, previewFirst: true, imageModel: null };
 
 /** EpisodeInputSchema allows 1..30 pages; an unreadable number falls back to the default 8. */
 export function clampPages(n: number): number {
@@ -44,8 +46,13 @@ export function toStartEpisode(v: AiChapterInput): StartEpisodeBody | null {
 export function makeStart(
   v: AiChapterInput,
   post: (path: string, body: StartEpisodeBody) => Promise<unknown>,
+  patch?: (path: string, body: { imageModel: string }) => Promise<unknown>,
 ): ((chapterId: string) => Promise<void>) | null {
   const body = toStartEpisode(v);
   if (!body) return null;
-  return async (chapterId) => { await post(`/api/chapters/${seg(chapterId)}/episode`, body); };
+  return async (chapterId) => {
+    // The model goes on the chapter first, so the episode's prompts and images already route through it.
+    if (v.imageModel !== null && patch) await patch(`/api/chapters/${seg(chapterId)}`, { imageModel: v.imageModel });
+    await post(`/api/chapters/${seg(chapterId)}/episode`, body);
+  };
 }

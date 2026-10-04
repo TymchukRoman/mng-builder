@@ -3,6 +3,7 @@ import { createBrowserRouter } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
 import { ChapterPage } from './chapter/ChapterPage';
 import { CoverPage } from './chapter/CoverPage';
+import { GalleryPage } from './gallery/GalleryPage';
 import { MangaPage } from './manga/MangaPage';
 import { MangaListPage } from './mangas/MangaListPage';
 import { RenderPage } from './render/RenderPage';
@@ -22,6 +23,7 @@ const router = createBrowserRouter([
       { path: 'm/:mangaId/cover', element: <CoverPage /> },
       { path: 'm/:mangaId/c/:chapterId', element: <ChapterPage /> },
       { path: 'm/:mangaId/c/:chapterId/cover', element: <CoverPage /> },
+      { path: 'gallery', element: <GalleryPage /> },
       { path: 'settings', element: <SettingsPage /> },
     ],
   },

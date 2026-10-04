@@ -51,7 +51,9 @@ export function panelPromptStep(services: HandlerServices): LlmStepHandler {
     if (payload.type !== 'panel-prompt') throw new PermanentError(`panel-prompt step received a "${payload.type}" payload`);
     const pc = panelContext(ctx.store, payload.panelId);
     const settings = ctx.store.settings.get();
-    const { recipe } = routeRecipe({ settings, manga: pc.manga, panel: pc.panel, refCount: pc.refCharacters.length, charCount: pc.characters.length });
+    const { recipe } = routeRecipe({
+      settings, manga: pc.manga, panel: pc.panel, refCount: pc.refCharacters.length, charCount: pc.characters.length, imageModel: pc.imageModel,
+    });
     const style = promptStyleFor(recipe);
     const engine = services.engines.forLane(ctx.job.lane); // I1: the job's lane decides the engine
     ctx.progress('Writing the image prompt');

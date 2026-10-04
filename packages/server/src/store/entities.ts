@@ -1,12 +1,12 @@
 import {
-  ChapterSchema, CharacterSchema, EpisodeRunSchema, ImageSchema, MangaSchema, PageSchema, PanelSchema, TextFrameSchema,
-  type Chapter, type Character, type EpisodeRun, type Image, type Manga, type Page, type Panel, type TextFrame,
+  AutoRunSchema, ChapterSchema, CharacterSchema, EpisodeRunSchema, ImageSchema, MangaSchema, PageSchema, PanelSchema, TextFrameSchema,
+  type AutoRun, type Chapter, type Character, type EpisodeRun, type Image, type Manga, type Page, type Panel, type TextFrame,
 } from '@manga/shared';
 import type { Db } from './db.js';
 import { TableRepo } from './table.js';
 import type {
-  ChapterPatch, CharacterPatch, EpisodePatch, FramePatch, ImagePatch, MangaPatch, NewChapter, NewCharacter,
-  NewEpisodeRun, NewFrame, NewImage, NewManga, NewPage, NewPanel, PagePatch, PanelPatch,
+  AutoRunPatch, NewAutoRun, ChapterPatch, CharacterPatch, EpisodePatch, FramePatch, ImagePatch, MangaPatch, NewChapter, NewCharacter,
+  ImageFilter, ImagePageQuery, ImageRow, NewEpisodeRun, NewFrame, NewImage, NewManga, NewPage, NewPanel, PagePatch, PanelPatch,
 } from './types.js';
 
 const TIMESTAMPS = { createdAt: 'created_at', updatedAt: 'updated_at' } as const;
@@ -18,7 +18,7 @@ export class MangaRepo extends TableRepo<Manga, NewManga, MangaPatch> {
       columns: {
         id: 'id', title: 'title', synopsis: 'synopsis', language: 'language', colorMode: 'color_mode',
         readingDirection: 'reading_direction', pageFormat: ['page_format', 'json'], styleGuide: ['style_guide', 'json'],
-        coverPageId: 'cover_page_id', ...TIMESTAMPS,
+        imageModel: 'image_model', coverPageId: 'cover_page_id', ...TIMESTAMPS,
       },
     }, now);
   }
@@ -50,7 +50,7 @@ export class ChapterRepo extends TableRepo<Chapter, NewChapter, ChapterPatch> {
       table: 'chapters', entity: 'chapter', prefix: 'ch', schema: ChapterSchema, hasUpdatedAt: true, orderBy: 'ord, number, rowid',
       columns: {
         id: 'id', mangaId: 'manga_id', number: 'number', title: 'title', synopsis: 'synopsis', summary: 'summary',
-        coverPageId: 'cover_page_id', status: 'status', order: 'ord', ...TIMESTAMPS,
+        imageModel: 'image_model', coverPageId: 'cover_page_id', status: 'status', order: 'ord', ...TIMESTAMPS,
       },
     }, now);
   }
@@ -133,6 +133,35 @@ export class ImageRepo extends TableRepo<Image, NewImage, ImagePatch> {
   listByManga(mangaId: string): Image[] {
     return this.listWhere('manga_id = ?', mangaId);
   }
+
+  /** One page of images, newest first (`created_at DESC, rowid DESC`), strictly after `before`. */
+  listPage({ limit, before, ...filter }: ImagePageQuery): ImageRow[] {
+    const { clauses, params } = imageWhere(filter);
+    if (before !== undefined) {
+      clauses.push('(created_at < ? OR (created_at = ? AND rowid < ?))');
+      params.push(before.createdAt, before.createdAt, before.rowid);
+    }
+    const where = clauses.length === 0 ? '1 = 1' : clauses.join(' AND ');
+    const rows = this.db.prepare(`SELECT *, rowid AS _rowid FROM images WHERE ${where} ORDER BY created_at DESC, rowid DESC LIMIT ?`)
+      .all(...params, limit) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({ image: this.decode(row), rowid: Number(row['_rowid']) }));
+  }
+
+  /** How many images match the filter. */
+  count(filter: ImageFilter): number {
+    const { clauses, params } = imageWhere(filter);
+    const where = clauses.length === 0 ? '1 = 1' : clauses.join(' AND ');
+    return (this.db.prepare(`SELECT COUNT(*) AS n FROM images WHERE ${where}`).get(...params) as { n: number }).n;
+  }
+}
+
+function imageWhere(filter: ImageFilter): { clauses: string[]; params: unknown[] } {
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  if (filter.mangaId !== undefined) { clauses.push('manga_id = ?'); params.push(filter.mangaId); }
+  if (filter.ownerType !== undefined) { clauses.push('owner_type = ?'); params.push(filter.ownerType); }
+  if (filter.source !== undefined) { clauses.push('source = ?'); params.push(filter.source); }
+  return { clauses, params };
 }
 
 export class EpisodeRepo extends TableRepo<EpisodeRun, NewEpisodeRun, EpisodePatch> {
@@ -155,6 +184,27 @@ export class EpisodeRepo extends TableRepo<EpisodeRun, NewEpisodeRun, EpisodePat
   }
 }
 
+export class AutoRunRepo extends TableRepo<AutoRun, NewAutoRun, AutoRunPatch> {
+  constructor(db: Db, now: () => string) {
+    super(db, {
+      table: 'auto_runs', entity: 'auto run', prefix: 'ar', schema: AutoRunSchema, hasUpdatedAt: true, orderBy: 'created_at, rowid',
+      columns: {
+        id: 'id', mangaId: 'manga_id', input: ['input', 'json'], status: 'status', stage: 'stage', plan: ['plan', 'json'],
+        chapterIds: ['chapter_ids', 'json'], currentChapter: 'current_chapter', error: 'error', ...TIMESTAMPS,
+      },
+    }, now);
+  }
+
+  latestByManga(mangaId: string): AutoRun | null {
+    return this.firstWhere('manga_id = ?', 'created_at DESC, rowid DESC', mangaId);
+  }
+
+  /** Runs in this status, oldest first (boot resumes the running ones). */
+  listByStatus(status: AutoRun['status']): AutoRun[] {
+    return this.listWhere('status = ?', status);
+  }
+}
+
 export interface EntityRepos {
   mangas: MangaRepo;
   characters: CharacterRepo;
@@ -164,6 +214,7 @@ export interface EntityRepos {
   frames: FrameRepo;
   images: ImageRepo;
   episodes: EpisodeRepo;
+  autoRuns: AutoRunRepo;
 }
 
 export function createEntityRepos(db: Db, now: () => string): EntityRepos {
@@ -176,5 +227,6 @@ export function createEntityRepos(db: Db, now: () => string): EntityRepos {
     frames: new FrameRepo(db, now),
     images: new ImageRepo(db, now),
     episodes: new EpisodeRepo(db, now),
+    autoRuns: new AutoRunRepo(db, now),
   };
 }

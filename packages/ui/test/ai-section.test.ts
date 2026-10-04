@@ -11,7 +11,7 @@ describe('AI section model', () => {
   });
 
   it('builds the StartEpisode body', () => {
-    expect(toStartEpisode({ open: true, prompt: '  A cat in the rain ', pages: 3, tone: ' gentle ', characterIds: ['cr_a'], autopilot: true, previewFirst: true })).toEqual({
+    expect(toStartEpisode({ open: true, prompt: '  A cat in the rain ', pages: 3, tone: ' gentle ', characterIds: ['cr_a'], autopilot: true, previewFirst: true, imageModel: null })).toEqual({
       input: { prompt: 'A cat in the rain', pages: 3, tone: 'gentle', characterIds: ['cr_a'], previewFirst: true }, mode: 'autopilot',
     });
     expect(toStartEpisode({ ...EMPTY_AI_INPUT, open: true, prompt: 'x' })?.mode).toBe('review');
@@ -52,6 +52,16 @@ describe('AI section model', () => {
       expect(makeStart({ ...filled, open: false }, post)).toBeNull();
       expect(makeStart({ ...filled, prompt: '  ' }, post)).toBeNull();
       expect(post).not.toHaveBeenCalled();
+    });
+
+    it('puts a chosen image model on the chapter before the episode starts', async () => {
+      const calls: string[] = [];
+      const start = makeStart({ ...filled, imageModel: 'flux2' }, async (path) => { calls.push(`post ${path}`); }, async (path, body) => { calls.push(`patch ${path} ${body.imageModel}`); });
+      await start?.('ch_abc');
+      expect(calls).toEqual(['patch /api/chapters/ch_abc flux2', 'post /api/chapters/ch_abc/episode']);
+      calls.length = 0;
+      await makeStart(filled, async (path) => { calls.push(`post ${path}`); }, async () => { calls.push('patch'); })?.('ch_abc');
+      expect(calls).toEqual(['post /api/chapters/ch_abc/episode']);
     });
 
     it('posts the exact body to the chapter episode path', async () => {

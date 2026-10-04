@@ -5,6 +5,7 @@ import '../episode/episode.css';
 import { cx } from '../lib/cx';
 import { useCharacters, useManga, useSettings } from '../queries';
 import { Field } from '../ui/Field';
+import { ImageModelSelect } from '../ui/ImageModelSelect';
 import { IconButton } from '../ui/IconButton';
 import { FastForward, ScanEye, Sparkles, Users } from '../ui/icons';
 import { EMPTY_AI_INPUT, makeStart, parsePages, toggleId, type AiChapterInput } from './aiSection';
@@ -26,7 +27,7 @@ export function CreateChapterAiSection({ mangaId, onChange }: CreateChapterAiSec
   const [value, setValue] = useState<AiChapterInput>(EMPTY_AI_INPUT);
   const set = (patch: Partial<AiChapterInput>): void => setValue((v) => ({ ...v, ...patch }));
 
-  useEffect(() => { onChange(makeStart(value, (path, body) => api.post<EpisodeRun>(path, body))); }, [value, onChange]);
+  useEffect(() => { onChange(makeStart(value, (path, body) => api.post<EpisodeRun>(path, body), (path, body) => api.patch(path, body))); }, [value, onChange]);
 
   return (
     <div className="ai-section" data-testid="ai-section">
@@ -63,7 +64,7 @@ export function AiSectionBody({ mangaId, value, set }: AiSectionBodyProps): JSX.
     <div className="stack ai-section__body">
       <textarea
         ref={promptRef} className="textarea" rows={3} aria-label="Episode prompt" value={value.prompt}
-        placeholder="What happens in this chapter?" onChange={(e) => set({ prompt: e.target.value })}
+        placeholder="What happens in this chapter? Add notes too: art style, pacing, things to avoid." onChange={(e) => set({ prompt: e.target.value })}
       />
       <div className="row ai-section__row">
         <Field label="Pages" inline>
@@ -86,7 +87,13 @@ export function AiSectionBody({ mangaId, value, set }: AiSectionBodyProps): JSX.
         <IconButton icon={ScanEye} size="sm" active={value.previewFirst} tipSide="top" label="Preview page 1 first"
           onClick={() => set({ previewFirst: !value.previewFirst })} />
       </div>
-      {settings.data && <span className="ai-section__estimate" data-testid="ai-estimate">{formatChapterEstimate(value.pages, settings.data, manga.data?.colorMode)}</span>}
+      <Field label="Image model" inline>
+        <ImageModelSelect
+          compact label="Image model" value={value.imageModel} onChange={(imageModel) => set({ imageModel })}
+          inheritLabel={manga.data?.imageModel ? 'Same as the manga' : 'Default (Settings → Routing)'}
+        />
+      </Field>
+      {settings.data && <span className="ai-section__estimate" data-testid="ai-estimate">{formatChapterEstimate(value.pages, settings.data, manga.data?.colorMode, value.imageModel ?? manga.data?.imageModel ?? null)}</span>}
       {list.length > 0 && (
         <div className="ai-section__chars" role="group" aria-label="Characters">
           <span className="ai-section__chars-icon" data-tip="Characters in this episode" data-tip-side="top"><Users size={14} aria-hidden /></span>

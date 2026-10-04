@@ -1,5 +1,6 @@
 import { Command, CommanderError } from 'commander';
 import { registerAiCommands } from './commands/ai.js';
+import { registerAutoCommands } from './commands/auto.js';
 import { registerChapterCommands } from './commands/chapters.js';
 import { registerCharacterCommands } from './commands/characters.js';
 import { registerEpisodeCommands } from './commands/episode.js';
@@ -45,6 +46,7 @@ export function buildProgram(io: CliIo = processIo, factory: ContextFactory = de
   registerQueueCommands(program, ctx);
   registerAiCommands(program, ctx);
   registerEpisodeCommands(program, ctx);
+  registerAutoCommands(program, ctx);
   registerExportCommands(program, ctx);
   registerTextAutoCommand(program, ctx);
   return program;

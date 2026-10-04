@@ -15,9 +15,9 @@ export async function generatePanelImage(
   ctx: JobContext, services: HandlerServices, p: Extract<ImageGeneratePayload, { target: 'panel' }>,
 ): Promise<ImageGenerateResult> {
   const { store, bus } = ctx;
-  const { panel, page, manga, characters, refCharacters } = panelContext(store, p.panelId);
+  const { panel, page, manga, characters, refCharacters, imageModel } = panelContext(store, p.panelId);
   const settings = store.settings.get();
-  const route = routeRecipe({ settings, manga, panel, refCount: refCharacters.length, charCount: characters.length });
+  const route = routeRecipe({ settings, manga, panel, refCount: refCharacters.length, charCount: characters.length, imageModel });
   const recipeId = p.recipe ?? route.recipe;
   const recipe = RECIPES[recipeId];
   if (!recipe) throw new PermanentError(`Unknown recipe "${recipeId}"`);
@@ -49,7 +49,7 @@ export async function generatePanelImage(
   };
 
   const first = await generateImage(deps, {
-    ...base, recipe: recipeId, prompt, negative, width, height, loras: styleLoras(manga, recipeId, subject.count),
+    ...base, recipe: recipeId, prompt, negative, width, height, loras: styleLoras(manga, recipeId, subject.count, imageModel),
     refImageIds: pickRefs(store, recipe, refCharacters).map((r) => r.imageId), initImageId: null, denoise: null,
   }, io);
   emitEntity(bus, 'image', first.id, 'created', manga.id);
@@ -64,7 +64,7 @@ export async function generatePanelImage(
     });
     active = await generateImage(deps, {
       ...base, recipe: refineWith, prompt: refine.prompt, negative: refine.negative, width: first.width, height: first.height,
-      loras: styleLoras(manga, refineWith, subject.count), refImageIds: [], initImageId: first.id, denoise: REFINE_DENOISE,
+      loras: styleLoras(manga, refineWith, subject.count, imageModel), refImageIds: [], initImageId: first.id, denoise: REFINE_DENOISE,
     }, io);
     emitEntity(bus, 'image', active.id, 'created', manga.id);
   }
